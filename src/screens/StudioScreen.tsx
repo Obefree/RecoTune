@@ -128,7 +128,7 @@ function TrackRow({ track, index, isSolo, soloPos, soloDur, onSoloToggle, onSeek
         <Ionicons name="pencil-outline" size={15} color="#555" />
       </TouchableOpacity>
       <TouchableOpacity onPress={() => onDelete(track)} style={styles.iconBtn}>
-        <Ionicons name="trash-outline" size={15} color="#444" />
+        <Ionicons name="trash-outline" size={15} color="#c0392b" />
       </TouchableOpacity>
     </View>
   );
@@ -599,12 +599,19 @@ function normArr(arr){
     <TouchableOpacity
       style={[styles.sessionItem, activeSession?.id === item.id && styles.sessionItemActive]}
       onPress={() => { setActiveSession(item); killSolo(); killAllSounds(); }}
-      onLongPress={() => { setRenameTarget({ type: 'session', id: item.id }); setRenameText(item.name); }}
+      onLongPress={() =>
+        Alert.alert(item.name, 'Выберите действие', [
+          { text: 'Переименовать', onPress: () => { setRenameTarget({ type: 'session', id: item.id }); setRenameText(item.name); } },
+          { text: 'Удалить сессию', style: 'destructive', onPress: () => deleteSession(item.id) },
+          { text: 'Отмена', style: 'cancel' },
+        ])
+      }
+      delayLongPress={400}
       activeOpacity={0.8}
     >
       <View style={styles.sessionInfo}>
         <Text style={styles.sessionName}>{item.name}</Text>
-        <Text style={styles.sessionMeta}>{item.tracks.length} / {MAX_TRACKS} tracks</Text>
+        <Text style={styles.sessionMeta}>{item.tracks.length} / {MAX_TRACKS} tracks · удерж. для меню</Text>
       </View>
       <View style={styles.sessionDots}>
         {item.tracks.slice(0, 6).map((t, i) => (
@@ -613,7 +620,7 @@ function normArr(arr){
         {item.tracks.length > 6 && <Text style={styles.moreDots}>+{item.tracks.length - 6}</Text>}
       </View>
       <TouchableOpacity onPress={() => deleteSession(item.id)} style={styles.deleteBtn}>
-        <Ionicons name="trash-outline" size={18} color="#444" />
+        <Ionicons name="trash-outline" size={18} color="#c0392b" />
       </TouchableOpacity>
     </TouchableOpacity>
   );
