@@ -1,10 +1,11 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, useWindowDimensions,
+  ActivityIndicator, Alert, TextInput,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -152,6 +153,10 @@ export default function ChordsScreen() {
   const [songResult, setSongResult]   = useState<AuddResult | null>(null);
   const [showChordBrowser, setShowChordBrowser] = useState(false);
   const [chordUrl, setChordUrl]       = useState('');
+  const [ytUrl, setYtUrl]             = useState('');
+  const [ytLoading, setYtLoading]     = useState(false);
+  const [fileLoading, setFileLoading] = useState(false);
+  const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt'>('mic');
 
   const wvRef     = useRef<WebView>(null);
   const recRef    = useRef<Audio.Recording | null>(null);
@@ -289,6 +294,67 @@ export default function ChordsScreen() {
     setShowChordBrowser(true);
   }
 
+  /* ── File picker → AudD ── */
+  async function pickFileAndIdentify() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['audio/*', 'video/mp4', 'video/mpeg'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      setFileLoading(true);
+      setSongResult(null);
+
+      const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const form = new FormData();
+      (form as any).append('api_token', 'test');
+      (form as any).append('audio', base64);
+
+      const res  = await fetch('https://api.audd.io/', { method: 'POST', body: form as any });
+      const data = await res.json();
+
+      if (data.status === 'success' && data.result) {
+        setSongResult(data.result as AuddResult);
+      } else {
+        Alert.alert('Не распознано', 'Трек не найден в базе AudD. Попробуйте другой файл.');
+      }
+    } catch (e) {
+      Alert.alert('Ошибка', String(e));
+    }
+    setFileLoading(false);
+  }
+
+  /* ── YouTube URL → oEmbed title → chord search ── */
+  async function handleYouTube() {
+    const url = ytUrl.trim();
+    if (!url) return;
+    setYtLoading(true);
+    try {
+      // Extract video ID from various YouTube URL formats
+      const match = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+      if (!match) throw new Error('Не удалось найти ID видео. Вставьте ссылку вида youtube.com/watch?v=...');
+      const videoId = match[1];
+
+      // Get title via YouTube oEmbed (no API key needed)
+      const oembed = await fetch(
+        `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+      );
+      if (!oembed.ok) throw new Error('Видео не найдено или недоступно');
+      const info = await oembed.json();
+      const title    = info.title   as string;
+      const author   = (info.author_name as string).replace(/\s*-\s*Topic$/, '');
+
+      setSongResult({ title, artist: author });
+    } catch (e) {
+      Alert.alert('Ошибка YouTube', String(e));
+    }
+    setYtLoading(false);
+  }
+
   /* ─── UI ─── */
   const col = chordColor(confidence);
 
@@ -395,37 +461,112 @@ export default function ChordsScreen() {
 
       {/* ── IDENTIFY MODE ── */}
       {mode === 'identify' && (
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 14 }}>
-          <View style={styles.identCard}>
-            <Ionicons name="musical-notes" size={40} color="#7c4dff" style={{ alignSelf: 'center', marginBottom: 8 }} />
-            <Text style={styles.identTitle}>Распознавание трека</Text>
-            <Text style={styles.identSub}>
-              Поднесите телефон к музыке и нажмите кнопку.{'\n'}
-              Запись займёт 10 секунд, затем будет отправлена в AudD.
-            </Text>
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 12 }}>
 
-            {isRecognizing ? (
-              <View style={styles.recProgress}>
-                <ActivityIndicator color="#7c4dff" size="large" />
-                <Text style={styles.recSecs}>{recSecs} / 10 с</Text>
-                <Text style={styles.recNote}>Идёт запись...</Text>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => {
-                  if (timerRef.current) clearInterval(timerRef.current);
-                  stopRec();
-                  setIsRecognizing(false);
-                }}>
-                  <Text style={styles.cancelText}>Отмена</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity style={styles.identBtn} onPress={startIdentify} activeOpacity={0.8}>
-                <Ionicons name="ear" size={22} color="#fff" />
-                <Text style={styles.identBtnText}>СЛУШАТЬ И РАСПОЗНАТЬ</Text>
+          {/* Source selector */}
+          <View style={styles.sourceRow}>
+            {([['mic', 'ear', 'Микрофон'], ['file', 'document', 'Файл'], ['yt', 'logo-youtube', 'YouTube']] as const).map(([src, icon, label]) => (
+              <TouchableOpacity
+                key={src}
+                style={[styles.srcBtn, identSource === src && styles.srcBtnActive]}
+                onPress={() => { setIdentSource(src); setSongResult(null); }}
+              >
+                <Ionicons name={icon as any} size={18} color={identSource === src ? '#0a0a0f' : '#555'} />
+                <Text style={[styles.srcLabel, identSource === src && { color: '#0a0a0f' }]}>{label}</Text>
               </TouchableOpacity>
-            )}
+            ))}
           </View>
 
-          {/* Result */}
+          {/* MIC SOURCE */}
+          {identSource === 'mic' && (
+            <View style={styles.identCard}>
+              <Text style={styles.identTitle}>Слушать через микрофон</Text>
+              <Text style={styles.identSub}>
+                Поднесите телефон к колонке/инструменту.{'\n'}
+                Запись 10 секунд → отправка в AudD.
+              </Text>
+              {isRecognizing ? (
+                <View style={styles.recProgress}>
+                  <ActivityIndicator color="#7c4dff" size="large" />
+                  <Text style={styles.recSecs}>{recSecs} / 10 с</Text>
+                  <Text style={styles.recNote}>Идёт запись...</Text>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => {
+                    if (timerRef.current) clearInterval(timerRef.current);
+                    stopRec(); setIsRecognizing(false);
+                  }}>
+                    <Text style={styles.cancelText}>Отмена</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity style={styles.identBtn} onPress={startIdentify} activeOpacity={0.8}>
+                  <Ionicons name="ear" size={22} color="#fff" />
+                  <Text style={styles.identBtnText}>СЛУШАТЬ И РАСПОЗНАТЬ</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* FILE SOURCE */}
+          {identSource === 'file' && (
+            <View style={styles.identCard}>
+              <Text style={styles.identTitle}>Загрузить аудиофайл</Text>
+              <Text style={styles.identSub}>
+                Выберите MP3, AAC, WAV или любой аудиофайл с устройства.{'\n'}
+                Файл будет отправлен в AudD для распознавания.
+              </Text>
+              {fileLoading ? (
+                <View style={styles.recProgress}>
+                  <ActivityIndicator color="#7c4dff" size="large" />
+                  <Text style={styles.recNote}>Распознавание...</Text>
+                </View>
+              ) : (
+                <TouchableOpacity style={[styles.identBtn, { backgroundColor: '#ff980088' }]} onPress={pickFileAndIdentify} activeOpacity={0.8}>
+                  <Ionicons name="folder-open" size={22} color="#fff" />
+                  <Text style={styles.identBtnText}>ВЫБРАТЬ ФАЙЛ</Text>
+                </TouchableOpacity>
+              )}
+              <View style={styles.noticeRow}>
+                <Ionicons name="information-circle-outline" size={14} color="#333" />
+                <Text style={styles.noticeText}>
+                  Звук из других приложений перехватить нельзя — ограничение Android/iOS.
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* YOUTUBE SOURCE */}
+          {identSource === 'yt' && (
+            <View style={styles.identCard}>
+              <Text style={styles.identTitle}>YouTube ссылка</Text>
+              <Text style={styles.identSub}>
+                Вставьте ссылку на видео — получим название и найдём аккорды.
+              </Text>
+              <TextInput
+                style={styles.urlInput}
+                placeholder="https://youtube.com/watch?v=..."
+                placeholderTextColor="#333"
+                value={ytUrl}
+                onChangeText={setYtUrl}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+              {ytLoading ? (
+                <ActivityIndicator color="#ff0000" style={{ marginTop: 12 }} />
+              ) : (
+                <TouchableOpacity
+                  style={[styles.identBtn, { backgroundColor: '#ff000099' }]}
+                  onPress={handleYouTube}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="logo-youtube" size={22} color="#fff" />
+                  <Text style={styles.identBtnText}>НАЙТИ ПО ССЫЛКЕ</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* Result — shared for all sources */}
           {songResult && (
             <View style={styles.resultCard}>
               <View style={styles.resultHeader}>
@@ -434,8 +575,11 @@ export default function ChordsScreen() {
               </View>
               <Text style={styles.resultTitle}>{songResult.title}</Text>
               <Text style={styles.resultArtist}>{songResult.artist}</Text>
-              {songResult.album && <Text style={styles.resultMeta}>{songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0, 4)}` : ''}</Text>}
-
+              {songResult.album && (
+                <Text style={styles.resultMeta}>
+                  {songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0, 4)}` : ''}
+                </Text>
+              )}
               <View style={styles.resultActions}>
                 <TouchableOpacity
                   style={styles.chordsBtn}
@@ -445,14 +589,22 @@ export default function ChordsScreen() {
                   <Ionicons name="search" size={16} color="#fff" />
                   <Text style={styles.chordsBtnText}>Найти аккорды</Text>
                 </TouchableOpacity>
-
+                <TouchableOpacity
+                  style={[styles.chordsBtn, { backgroundColor: '#ff980033', borderColor: '#ff980066' }]}
+                  onPress={() => {
+                    const q = encodeURIComponent(`${songResult.artist} ${songResult.title} tabs ultimate guitar`);
+                    setChordUrl(`https://duckduckgo.com/?q=${q}&ia=web`);
+                    setShowChordBrowser(true);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="musical-note" size={16} color="#ff9800" />
+                  <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>Ultimate Guitar</Text>
+                </TouchableOpacity>
                 {songResult.song_link ? (
                   <TouchableOpacity
-                    style={[styles.chordsBtn, { backgroundColor: '#1db95444' }]}
-                    onPress={() => {
-                      setChordUrl(songResult.song_link!);
-                      setShowChordBrowser(true);
-                    }}
+                    style={[styles.chordsBtn, { backgroundColor: '#1db95422', borderColor: '#1db95444' }]}
+                    onPress={() => { setChordUrl(songResult.song_link!); setShowChordBrowser(true); }}
                     activeOpacity={0.8}
                   >
                     <Ionicons name="link" size={16} color="#1db954" />
@@ -464,7 +616,7 @@ export default function ChordsScreen() {
           )}
 
           <Text style={styles.hint}>
-            Используется AudD Music Recognition API (бесплатный tier).{'\n'}
+            AudD Music Recognition API (бесплатный tier, ~100 запросов/день).{'\n'}
             Интернет-соединение обязательно.
           </Text>
         </ScrollView>
@@ -520,17 +672,26 @@ const styles = StyleSheet.create({
 
   hint:       { color: '#2a2a3a', fontSize: 11, textAlign: 'center', lineHeight: 18 },
 
+  /* Source selector */
+  sourceRow:   { flexDirection: 'row', gap: 8 },
+  srcBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: '#333', backgroundColor: '#111118' },
+  srcBtnActive:{ backgroundColor: '#7c4dff', borderColor: '#7c4dff' },
+  srcLabel:    { color: '#555', fontSize: 11, fontWeight: '700' },
+
   /* Identify mode */
-  identCard:  { backgroundColor: '#111118', borderRadius: 18, padding: 24, borderWidth: 1, borderColor: '#1e1e28', gap: 8 },
-  identTitle: { color: '#ccc', fontSize: 16, fontWeight: '700', textAlign: 'center' },
-  identSub:   { color: '#444', fontSize: 12, textAlign: 'center', lineHeight: 18 },
-  identBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#7c4dff', borderRadius: 14, paddingVertical: 14, marginTop: 8 },
+  identCard:   { backgroundColor: '#111118', borderRadius: 18, padding: 20, borderWidth: 1, borderColor: '#1e1e28', gap: 10 },
+  identTitle:  { color: '#ccc', fontSize: 15, fontWeight: '700' },
+  identSub:    { color: '#444', fontSize: 12, lineHeight: 18 },
+  identBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#7c4dff', borderRadius: 14, paddingVertical: 14, marginTop: 4 },
   identBtnText:{ color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 1.5 },
-  recProgress:{ alignItems: 'center', gap: 8, paddingVertical: 12 },
-  recSecs:    { color: '#7c4dff', fontSize: 32, fontWeight: '900' },
-  recNote:    { color: '#555', fontSize: 12 },
-  cancelBtn:  { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#333', marginTop: 4 },
-  cancelText: { color: '#555', fontSize: 12 },
+  recProgress: { alignItems: 'center', gap: 8, paddingVertical: 12 },
+  recSecs:     { color: '#7c4dff', fontSize: 32, fontWeight: '900' },
+  recNote:     { color: '#555', fontSize: 12 },
+  cancelBtn:   { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: '#333', marginTop: 4 },
+  cancelText:  { color: '#555', fontSize: 12 },
+  urlInput:    { backgroundColor: '#0a0a0f', borderRadius: 10, borderWidth: 1, borderColor: '#333', color: '#ccc', fontSize: 13, paddingHorizontal: 12, paddingVertical: 10 },
+  noticeRow:   { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 },
+  noticeText:  { flex: 1, color: '#2a2a3a', fontSize: 10, lineHeight: 15 },
 
   resultCard:  { backgroundColor: '#111118', borderRadius: 18, padding: 20, borderWidth: 1, borderColor: '#00e67622', gap: 4 },
   resultHeader:{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
