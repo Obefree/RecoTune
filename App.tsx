@@ -11,6 +11,7 @@ import RecorderScreen from './src/screens/RecorderScreen';
 import StudioScreen from './src/screens/StudioScreen';
 import PlayerScreen from './src/screens/PlayerScreen';
 import VideoScreen from './src/screens/VideoScreen';
+import ChordsScreen from './src/screens/ChordsScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -71,11 +72,13 @@ function AppInner() {
                 Studio:   ['layers', 'layers-outline'],
                 Player:   ['headset', 'headset-outline'],
                 Video:    ['film', 'film-outline'],
+                Chords:   ['guitar', 'guitar-outline'],
               };
               const [on, off] = icons[route.name] ?? ['ellipse', 'ellipse-outline'];
               const iconName = focused ? on : off;
               const activeColor = route.name === 'Player' ? '#7c4dff'
-                : route.name === 'Video' ? '#40c4ff' : ACTIVE;
+                : route.name === 'Video'   ? '#40c4ff'
+                : route.name === 'Chords'  ? '#ff9800' : ACTIVE;
               return (
                 <View style={{
                   width: 36, height: 26, alignItems: 'center', justifyContent: 'center',
@@ -89,6 +92,7 @@ function AppInner() {
             tabBarActiveTintColor: (() => {
               if (route.name === 'Player') return '#7c4dff';
               if (route.name === 'Video')  return '#40c4ff';
+              if (route.name === 'Chords') return '#ff9800';
               return ACTIVE;
             })(),
           })}
@@ -98,6 +102,7 @@ function AppInner() {
           <Tab.Screen name="Studio"   component={StudioScreen} />
           <Tab.Screen name="Player"   component={PlayerScreen} />
           <Tab.Screen name="Video"    component={VideoScreen} />
+          <Tab.Screen name="Chords"   component={ChordsScreen} />
         </Tab.Navigator>
       </NavigationContainer>
       <StatusBar style="light" />
