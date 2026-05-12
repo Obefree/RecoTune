@@ -37,11 +37,15 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
+type SortMode = 'default' | 'az' | 'za' | 'fav';
+
 export default function PlayerScreen() {
   const [libTab, setLibTab]           = useState<'device' | 'recordings'>('device');
   const [deviceTracks, setDeviceTracks] = useState<Track[]>([]);
   const [recTracks, setRecTracks]     = useState<Track[]>([]);
   const [loadingLib, setLoadingLib]   = useState(false);
+  const [favorites, setFavorites]     = useState<Set<string>>(new Set());
+  const [sortMode, setSortMode]       = useState<SortMode>('default');
 
   // Playback state
   const [queue, setQueue]             = useState<Track[]>([]);
@@ -248,17 +252,58 @@ export default function PlayerScreen() {
 
   useFocusEffect(useCallback(() => () => { killSound(); }, [killSound]));
 
+  /* ─── Favorites ─── */
+  const toggleFav = useCallback((id: string) => {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  /* ─── Delete from list ─── */
+  const deleteTrack = useCallback((id: string) => {
+    setDeviceTracks(prev => prev.filter(t => t.id !== id));
+    setRecTracks(prev => prev.filter(t => t.id !== id));
+    setFavorites(prev => { const n = new Set(prev); n.delete(id); return n; });
+  }, []);
+
+  /* ─── Sort ─── */
+  function applySort(tracks: Track[], mode: SortMode, favs: Set<string>): Track[] {
+    const arr = [...tracks];
+    if (mode === 'az')  return arr.sort((a, b) => a.title.localeCompare(b.title));
+    if (mode === 'za')  return arr.sort((a, b) => b.title.localeCompare(a.title));
+    if (mode === 'fav') return arr.sort((a, b) => (favs.has(b.id) ? 1 : 0) - (favs.has(a.id) ? 1 : 0));
+    return arr;
+  }
+
+  const cycleSortMode = useCallback(() => {
+    setSortMode(m => m === 'default' ? 'az' : m === 'az' ? 'za' : m === 'za' ? 'fav' : 'default');
+  }, []);
+
   /* ─── Render ─── */
   const currentTrack = queueIdx >= 0 && queueIdx < queue.length ? queue[queueIdx] : null;
-  const activeTracks = libTab === 'device' ? deviceTracks : recTracks;
+  const rawTracks    = libTab === 'device' ? deviceTracks : recTracks;
+  const activeTracks = applySort(rawTracks, sortMode, favorites);
 
   const renderTrack = ({ item, index }: { item: Track; index: number }) => {
     const playing = currentTrack?.id === item.id;
+    const isFav   = favorites.has(item.id);
     return (
       <TouchableOpacity
-        style={[styles.trackRow, playing && styles.trackRowActive]}
+        style={[styles.trackRow, playing && styles.trackRowActive, isFav && styles.trackRowFav]}
         onPress={() => enqueueAll(activeTracks, index)}
+        onLongPress={() => Alert.alert(
+          item.title,
+          undefined,
+          [
+            { text: isFav ? '★ Убрать из избранного' : '☆ В избранное', onPress: () => toggleFav(item.id) },
+            { text: '🗑 Удалить из списка', style: 'destructive', onPress: () => deleteTrack(item.id) },
+            { text: 'Отмена', style: 'cancel' },
+          ]
+        )}
         activeOpacity={0.75}
+        delayLongPress={400}
       >
         <View style={[styles.trackIcon, { backgroundColor: playing ? '#7c4dff22' : '#1a1a24' }]}>
           <Ionicons
@@ -275,9 +320,12 @@ export default function PlayerScreen() {
             <Text style={styles.trackArtist} numberOfLines={1}>{item.artist}</Text>
           )}
         </View>
-        {item.duration != null && (
+        {item.duration != null && item.duration > 0 && (
           <Text style={styles.trackDur}>{fmtMs(item.duration)}</Text>
         )}
+        <TouchableOpacity onPress={() => toggleFav(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name={isFav ? 'star' : 'star-outline'} size={18} color={isFav ? '#ffb300' : '#333'} />
+        </TouchableOpacity>
       </TouchableOpacity>
     );
   };
@@ -403,6 +451,24 @@ export default function PlayerScreen() {
         </TouchableOpacity>
       )}
 
+      {/* Sort bar */}
+      {activeTracks.length > 1 && (
+        <View style={styles.sortRow}>
+          <Ionicons name="funnel-outline" size={12} color="#333" />
+          <TouchableOpacity onPress={cycleSortMode} style={styles.sortBtn}>
+            <Text style={styles.sortBtnText}>
+              {sortMode === 'default' ? 'По умолчанию' :
+               sortMode === 'az'      ? 'А → Я' :
+               sortMode === 'za'      ? 'Я → А' : '★ Избранное'}
+            </Text>
+            <Ionicons name="chevron-forward" size={11} color="#555" />
+          </TouchableOpacity>
+          {favorites.size > 0 && (
+            <Text style={styles.favCount}>★ {favorites.size}</Text>
+          )}
+        </View>
+      )}
+
       {/* Track list */}
       <FlatList
         data={activeTracks}
@@ -472,13 +538,17 @@ const styles = StyleSheet.create({
   list: { flex: 1, paddingHorizontal: 12 },
   emptyText: { color: '#333', fontSize: 13, textAlign: 'center', marginTop: 40 },
 
-  trackRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#111118', borderRadius: 12, padding: 10, marginBottom: 7, borderWidth: 1, borderColor: '#1e1e28' },
+  trackRow:       { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#111118', borderRadius: 12, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#1e1e28' },
   trackRowActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff08' },
-  trackIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  trackInfo: { flex: 1 },
-  trackTitle: { color: '#ccc', fontSize: 13, fontWeight: '600' },
-  trackArtist: { color: '#444', fontSize: 11, marginTop: 2 },
-  trackDur: { color: '#333', fontSize: 11 },
+  trackRowFav:    { borderColor: '#ffb30033' },
+  trackIcon:      { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  trackInfo:      { flex: 1 },
+  trackTitle:     { color: '#ccc', fontSize: 13, fontWeight: '600' },
+  trackArtist:    { color: '#444', fontSize: 11, marginTop: 2 },
+  trackDur:       { color: '#333', fontSize: 11 },
 
-  /* Spotify */
+  sortRow:        { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingBottom: 4 },
+  sortBtn:        { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#1a1a24', borderRadius: 8 },
+  sortBtnText:    { color: '#555', fontSize: 10, fontWeight: '700' },
+  favCount:       { marginLeft: 'auto' as any, color: '#ffb300', fontSize: 10, fontWeight: '700' },
 });
