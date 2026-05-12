@@ -7,6 +7,7 @@ import { Audio, AVPlaybackStatus } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SeekBar from '../components/SeekBar';
 import {
   RecQuality, QUALITY_PRESETS, DEFAULT_QUALITY,
@@ -32,6 +33,7 @@ function fmtDate(ts: number) {
 }
 
 export default function RecorderScreen() {
+  const insets = useSafeAreaInsets();
   const [recordings, setRecordings]   = useState<Recording[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recDur, setRecDur]           = useState(0);
@@ -309,7 +311,7 @@ export default function RecorderScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
       <View style={styles.titleRow}>
         <Text style={styles.title}>Recorder</Text>
         {!isRecording && (
@@ -422,7 +424,7 @@ export default function RecorderScreen() {
 }
 
 const styles = StyleSheet.create({
-  container:  { flex: 1, backgroundColor: '#0a0a0f', paddingTop: 16 },
+  container:  { flex: 1, backgroundColor: '#0a0a0f' },
   titleRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 16, paddingHorizontal: 16 },
   title:      { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600' },
   qualityChip:{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 5, backgroundColor: '#7c4dff18', borderRadius: 10, borderWidth: 1, borderColor: '#7c4dff44' },

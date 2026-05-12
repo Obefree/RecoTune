@@ -9,6 +9,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WebView from 'react-native-webview';
 
 /* ─── Types ─── */
@@ -135,6 +136,7 @@ function TrackRow({ track, index, isSolo, soloPos, soloDur, onSoloToggle, onSeek
 
 /* ─── Main screen ─── */
 export default function StudioScreen() {
+  const insets = useSafeAreaInsets();
   const [sessions, setSessions]           = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [isRecording, setIsRecording]     = useState(false);
@@ -618,7 +620,7 @@ function normArr(arr){
 
   /* ── Render ── */
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
       <Text style={styles.title}>Studio</Text>
 
       {/* Sessions */}
@@ -935,7 +937,7 @@ function normArr(arr){
 
 /* ─── Styles ─── */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0f', paddingTop: 16, paddingHorizontal: 16 },
+  container: { flex: 1, backgroundColor: '#0a0a0f', paddingHorizontal: 16 },
   title: { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600', textAlign: 'center', marginBottom: 14 },
 
   section: { backgroundColor: '#111118', borderRadius: 20, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#222' },
