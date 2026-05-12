@@ -1,12 +1,11 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Linking, PanResponder, useWindowDimensions,
+  PanResponder, useWindowDimensions,
 } from 'react-native';
 import { Video, AVPlaybackStatus } from 'expo-av';
-import * as MediaLibrary from 'expo-media-library';
+import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 
 interface VideoItem {
   id: string;
@@ -32,7 +31,6 @@ export default function VideoScreen() {
 
   const [videos, setVideos]           = useState<VideoItem[]>([]);
   const [current, setCurrent]         = useState<VideoItem | null>(null);
-  const [perm, setPerm]               = useState<'granted' | 'denied' | 'unknown'>('unknown');
   const [loading, setLoading]         = useState(false);
   const [isPlaying, setIsPlaying]     = useState(false);
   const [pos, setPos]                 = useState(0);
@@ -55,60 +53,30 @@ export default function VideoScreen() {
     },
   })).current;
 
-  /* ─── Load videos ─── */
-  const loadVideos = useCallback(async () => {
+  /* ─── Pick video files via DocumentPicker ─── */
+  const pickVideos = useCallback(async () => {
     setLoading(true);
     try {
-      // Request only video permission (SDK 54 granular permissions)
-      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['video'] as any);
-      setPerm(status === 'granted' ? 'granted' : 'denied');
-      if (status !== 'granted') { setLoading(false); return; }
-
-      let all: MediaLibrary.Asset[] = [];
-      let after: string | undefined;
-      do {
-        const page = await MediaLibrary.getAssetsAsync({
-          mediaType: MediaLibrary.MediaType.video,
-          first: 200,
-          after,
-          sortBy: [MediaLibrary.SortBy.creationTime, false],
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['video/*'],
+        multiple: true,
+        copyToCacheDirectory: false,
+      });
+      if (!result.canceled) {
+        const picked: VideoItem[] = result.assets.map(a => ({
+          id: a.uri,
+          uri: a.uri,
+          title: (a.name ?? a.uri.split('/').pop() ?? 'Video').replace(/\.[^.]+$/, ''),
+          duration: 0,
+        }));
+        setVideos(prev => {
+          const existing = new Set(prev.map(v => v.uri));
+          return [...prev, ...picked.filter(v => !existing.has(v.uri))];
         });
-        all = [...all, ...page.assets];
-        after = page.hasNextPage ? page.endCursor : undefined;
-      } while (after);
-
-      const items: VideoItem[] = [];
-      for (const a of all) {
-        try {
-          const info = await MediaLibrary.getAssetInfoAsync(a);
-          items.push({
-            id: a.id,
-            uri: info.localUri ?? info.uri,
-            title: a.filename.replace(/\.[^.]+$/, ''),
-            duration: Math.round(a.duration * 1000),
-            width: a.width, height: a.height,
-          });
-        } catch {
-          items.push({
-            id: a.id, uri: a.uri,
-            title: a.filename.replace(/\.[^.]+$/, ''),
-            duration: Math.round(a.duration * 1000),
-            width: a.width, height: a.height,
-          });
-        }
       }
-      setVideos(items);
-    } catch {
-      // Permission not available in Expo Go — silently show empty state
-      setPerm('denied');
-    }
+    } catch {}
     setLoading(false);
   }, []);
-
-  useFocusEffect(useCallback(() => {
-    loadVideos();
-    return () => {};
-  }, [loadVideos]));
 
   /* ─── Playback status ─── */
   const onPlaybackStatus = useCallback((st: AVPlaybackStatus) => {
@@ -244,17 +212,11 @@ export default function VideoScreen() {
 
       {/* ── Video list ── */}
       <View style={styles.listHeader}>
-        <Text style={styles.listTitle}>VIDEOS ON DEVICE ({videos.length})</Text>
-        {perm === 'denied' && (
-          <TouchableOpacity onPress={() => Linking.openSettings()}>
-            <Text style={styles.permLink}>Allow access →</Text>
-          </TouchableOpacity>
-        )}
-        {perm === 'granted' && (
-          <TouchableOpacity onPress={loadVideos}>
-            <Ionicons name="refresh" size={16} color="#555" />
-          </TouchableOpacity>
-        )}
+        <Text style={styles.listTitle}>ВИДЕО ({videos.length})</Text>
+        <TouchableOpacity onPress={pickVideos} style={styles.addBtn}>
+          <Ionicons name="add-circle-outline" size={22} color="#40c4ff" />
+          <Text style={styles.addBtnText}>Добавить</Text>
+        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -264,24 +226,11 @@ export default function VideoScreen() {
         style={styles.list}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyText}>
-              {loading ? 'Загрузка…' : perm === 'denied'
-                ? 'Нет доступа к медиабиблиотеке'
-                : 'Видео не найдены'}
-            </Text>
-            {!loading && perm === 'denied' && (
-              <TouchableOpacity onPress={() => Linking.openSettings()} style={styles.permBtn}>
-                <Text style={styles.permLink}>Открыть настройки →</Text>
-              </TouchableOpacity>
-            )}
-            {!loading && perm === 'granted' && videos.length === 0 && (
-              <Text style={styles.hintText}>
-                Видео ищутся в галерее (DCIM, Movies, Download).{'\n'}
-                Нажмите ↻ чтобы обновить.
-              </Text>
-            )}
-          </View>
+          <TouchableOpacity style={styles.emptyWrap} onPress={pickVideos}>
+            <Ionicons name="add-circle" size={48} color="#40c4ff33" />
+            <Text style={styles.emptyText}>Нажмите чтобы выбрать видеофайлы</Text>
+            <Text style={styles.hintText}>MP4, MKV, MOV и другие форматы</Text>
+          </TouchableOpacity>
         }
       />
     </View>
@@ -330,13 +279,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 8,
   },
   listTitle: { color: '#444', fontSize: 10, letterSpacing: 2, fontWeight: '700' },
-  permLink: { color: '#ff5252', fontSize: 10, fontWeight: '700' },
+  addBtn:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  addBtnText:{ color: '#40c4ff', fontSize: 12, fontWeight: '700' },
 
   list: { flex: 1, paddingHorizontal: 10 },
   emptyWrap: { alignItems: 'center', paddingTop: 40, gap: 10 },
   emptyText: { color: '#444', fontSize: 13, textAlign: 'center' },
   hintText:  { color: '#333', fontSize: 11, textAlign: 'center', lineHeight: 18 },
-  permBtn:   { marginTop: 4 },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#111118', borderRadius: 12, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#1e1e28' },
   rowActive: { borderColor: '#40c4ff44', backgroundColor: '#40c4ff08' },

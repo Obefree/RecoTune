@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Alert, Linking, PanResponder, useWindowDimensions,
+  Alert, PanResponder,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
-import * as MediaLibrary from 'expo-media-library';
+import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -41,7 +41,6 @@ export default function PlayerScreen() {
   const [libTab, setLibTab]           = useState<'device' | 'recordings'>('device');
   const [deviceTracks, setDeviceTracks] = useState<Track[]>([]);
   const [recTracks, setRecTracks]     = useState<Track[]>([]);
-  const [perm, setPerm]               = useState<'granted' | 'denied' | 'unknown'>('unknown');
   const [loadingLib, setLoadingLib]   = useState(false);
 
   // Playback state
@@ -84,54 +83,28 @@ export default function PlayerScreen() {
     })
   ).current;
 
-  /* ─── Load device audio ─── */
-  const loadDeviceAudio = useCallback(async () => {
-    setLoadingLib(true);
+  /* ─── Pick audio files via DocumentPicker ─── */
+  const pickAudioFiles = useCallback(async () => {
     try {
-      // Request only audio permission (SDK 54 granular permissions)
-      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['audio'] as any);
-      setPerm(status === 'granted' ? 'granted' : 'denied');
-      if (status !== 'granted') { setLoadingLib(false); return; }
-
-      let all: MediaLibrary.Asset[] = [];
-      let after: string | undefined;
-      do {
-        const page = await MediaLibrary.getAssetsAsync({
-          mediaType: MediaLibrary.MediaType.audio,
-          first: 200,
-          after,
-          sortBy: [MediaLibrary.SortBy.creationTime, false],
-        });
-        all = [...all, ...page.assets];
-        after = page.hasNextPage ? page.endCursor : undefined;
-      } while (after);
-
-      const tracks: Track[] = [];
-      for (const a of all) {
-        try {
-          const info = await MediaLibrary.getAssetInfoAsync(a);
-          const uri  = info.localUri ?? info.uri;
-          tracks.push({
-            id: a.id, uri,
-            title: a.filename.replace(/\.[^.]+$/, ''),
-            duration: Math.round(a.duration * 1000),
-            source: 'device',
-          });
-        } catch {
-          tracks.push({
-            id: a.id, uri: a.uri,
-            title: a.filename.replace(/\.[^.]+$/, ''),
-            duration: Math.round(a.duration * 1000),
-            source: 'device',
-          });
-        }
-      }
-      setDeviceTracks(tracks);
-    } catch {
-      // Permission not available in Expo Go — silently show empty state
-      setPerm('denied');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'audio/*',
+        multiple: true,
+        copyToCacheDirectory: false,
+      });
+      if (result.canceled) return;
+      const picked: Track[] = result.assets.map(a => ({
+        id: a.uri,
+        uri: a.uri,
+        title: (a.name ?? a.uri.split('/').pop() ?? 'Track').replace(/\.[^.]+$/, ''),
+        source: 'device' as const,
+      }));
+      setDeviceTracks(prev => {
+        const existing = new Set(prev.map(t => t.uri));
+        return [...prev, ...picked.filter(t => !existing.has(t.uri))];
+      });
+    } catch (e) {
+      Alert.alert('Ошибка', String(e));
     }
-    setLoadingLib(false);
   }, []);
 
   /* ─── Load app recordings ─── */
@@ -156,9 +129,8 @@ export default function PlayerScreen() {
 
   useFocusEffect(useCallback(() => {
     loadRecordings();
-    loadDeviceAudio();
     return () => {};
-  }, [loadDeviceAudio, loadRecordings]));
+  }, [loadRecordings]));
 
   /* ─── Kill sound ─── */
   const killSound = useCallback(async () => {
@@ -400,9 +372,9 @@ export default function PlayerScreen() {
           onPress={() => setLibTab('device')}
           style={[styles.tabBtn, libTab === 'device' && styles.tabBtnActive]}
         >
-          <Ionicons name="phone-portrait-outline" size={14} color={libTab === 'device' ? '#7c4dff' : '#555'} />
+          <Ionicons name="folder-open-outline" size={14} color={libTab === 'device' ? '#7c4dff' : '#555'} />
           <Text style={[styles.tabBtnText, libTab === 'device' && { color: '#7c4dff' }]}>
-            DEVICE ({deviceTracks.length})
+            ФАЙЛЫ ({deviceTracks.length})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -411,25 +383,23 @@ export default function PlayerScreen() {
         >
           <Ionicons name="mic-outline" size={14} color={libTab === 'recordings' ? '#7c4dff' : '#555'} />
           <Text style={[styles.tabBtnText, libTab === 'recordings' && { color: '#7c4dff' }]}>
-            RECORDINGS ({recTracks.length})
+            ЗАПИСИ ({recTracks.length})
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={libTab === 'device' ? loadDeviceAudio : loadRecordings}
-          style={styles.refreshBtn}>
-          <Ionicons name={loadingLib ? 'hourglass-outline' : 'refresh'} size={16} color="#555" />
-        </TouchableOpacity>
+        {libTab === 'device' ? (
+          <TouchableOpacity onPress={pickAudioFiles} style={styles.refreshBtn}>
+            <Ionicons name="add-circle-outline" size={22} color="#7c4dff" />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={loadRecordings} style={styles.refreshBtn}>
+            <Ionicons name="refresh" size={16} color="#555" />
+          </TouchableOpacity>
+        )}
       </View>
-      {libTab === 'device' && deviceTracks.length === 0 && perm === 'granted' && !loadingLib && (
-        <Text style={styles.sourceHint}>
-          Ищутся аудиофайлы в медиабиблиотеке Android/iOS (Музыка, Downloads, Voice Memos и др.)
-        </Text>
-      )}
-
-      {/* Permission warning */}
-      {libTab === 'device' && perm === 'denied' && (
-        <TouchableOpacity style={styles.permBanner} onPress={() => Linking.openSettings()}>
-          <Ionicons name="alert-circle-outline" size={18} color="#ff5252" />
-          <Text style={styles.permText}>Media permission denied — tap to open Settings</Text>
+      {libTab === 'device' && deviceTracks.length === 0 && (
+        <TouchableOpacity style={styles.sourceHintBtn} onPress={pickAudioFiles}>
+          <Ionicons name="add-circle" size={36} color="#7c4dff44" />
+          <Text style={styles.sourceHint}>Нажмите + чтобы добавить аудиофайлы{'\n'}(MP3, AAC, FLAC, WAV и др.)</Text>
         </TouchableOpacity>
       )}
 
@@ -442,21 +412,10 @@ export default function PlayerScreen() {
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <Text style={styles.emptyText}>
-            {loadingLib ? 'Loading…' : libTab === 'device' ? 'No audio files found' : 'No recordings yet'}
+            {libTab === 'recordings' ? 'Записей пока нет' : ''}
           </Text>
         }
       />
-
-      {/* Spotify note */}
-      <View style={styles.spotifyRow}>
-        <Ionicons name="logo-google-playstore" size={14} color="#1db954" />
-        <Text style={styles.spotifyText}>
-          Spotify: прямой стриминг доступен только в production build.{' '}
-        </Text>
-        <TouchableOpacity onPress={() => Linking.openURL('spotify://')}>
-          <Text style={styles.spotifyLink}>Открыть Spotify →</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -507,10 +466,8 @@ const styles = StyleSheet.create({
   tabBtnActive: { backgroundColor: '#1e1e2e' },
   tabBtnText:   { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 1 },
   refreshBtn:   { paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
-  sourceHint:   { color: '#333', fontSize: 10, textAlign: 'center', marginHorizontal: 16, marginBottom: 4 },
-
-  permBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, margin: 12, padding: 12, backgroundColor: '#ff525218', borderRadius: 12, borderWidth: 1, borderColor: '#ff525244' },
-  permText: { color: '#ff5252', fontSize: 12, flex: 1 },
+  sourceHintBtn:{ alignItems: 'center', gap: 8, padding: 32 },
+  sourceHint:   { color: '#333', fontSize: 12, textAlign: 'center', lineHeight: 18 },
 
   list: { flex: 1, paddingHorizontal: 12 },
   emptyText: { color: '#333', fontSize: 13, textAlign: 'center', marginTop: 40 },
@@ -524,7 +481,4 @@ const styles = StyleSheet.create({
   trackDur: { color: '#333', fontSize: 11 },
 
   /* Spotify */
-  spotifyRow: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: 10, paddingHorizontal: 14 },
-  spotifyText: { color: '#333', fontSize: 10, flex: 1 },
-  spotifyLink: { color: '#1db954', fontSize: 10, fontWeight: '700' },
 });

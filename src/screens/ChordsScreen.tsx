@@ -135,7 +135,6 @@ const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
 
 export default function ChordsScreen() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
 
   const [mode, setMode]               = useState<'live' | 'identify'>('live');
   const [liveActive, setLiveActive]   = useState(false);

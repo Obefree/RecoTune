@@ -72,7 +72,7 @@ function AppInner() {
                 Studio:   ['layers', 'layers-outline'],
                 Player:   ['headset', 'headset-outline'],
                 Video:    ['film', 'film-outline'],
-                Chords:   ['guitar', 'guitar-outline'],
+                Chords:   ['musical-note', 'musical-note-outline'],
               };
               const [on, off] = icons[route.name] ?? ['ellipse', 'ellipse-outline'];
               const iconName = focused ? on : off;
