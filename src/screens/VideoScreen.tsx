@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Linking, PanResponder, useWindowDimensions, Alert,
+  Linking, PanResponder, useWindowDimensions,
 } from 'react-native';
 import { Video, AVPlaybackStatus } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
@@ -59,8 +59,8 @@ export default function VideoScreen() {
   const loadVideos = useCallback(async () => {
     setLoading(true);
     try {
-      // requestPermissionsAsync returns immediately if already granted (no dialog)
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // Request only video permission (SDK 54 granular permissions)
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['video'] as any);
       setPerm(status === 'granted' ? 'granted' : 'denied');
       if (status !== 'granted') { setLoading(false); return; }
 
@@ -98,8 +98,9 @@ export default function VideoScreen() {
         }
       }
       setVideos(items);
-    } catch (e) {
-      Alert.alert('Ошибка загрузки видео', String(e));
+    } catch {
+      // Permission not available in Expo Go — silently show empty state
+      setPerm('denied');
     }
     setLoading(false);
   }, []);

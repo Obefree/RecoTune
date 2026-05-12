@@ -88,8 +88,8 @@ export default function PlayerScreen() {
   const loadDeviceAudio = useCallback(async () => {
     setLoadingLib(true);
     try {
-      // requestPermissionsAsync returns immediately if already granted (no dialog)
-      const { status } = await MediaLibrary.requestPermissionsAsync();
+      // Request only audio permission (SDK 54 granular permissions)
+      const { status } = await MediaLibrary.requestPermissionsAsync(false, ['audio'] as any);
       setPerm(status === 'granted' ? 'granted' : 'denied');
       if (status !== 'granted') { setLoadingLib(false); return; }
 
@@ -127,8 +127,9 @@ export default function PlayerScreen() {
         }
       }
       setDeviceTracks(tracks);
-    } catch (e) {
-      Alert.alert('Ошибка медиа', String(e));
+    } catch {
+      // Permission not available in Expo Go — silently show empty state
+      setPerm('denied');
     }
     setLoadingLib(false);
   }, []);
