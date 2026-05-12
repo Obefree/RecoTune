@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Linking, PanResponder, useWindowDimensions,
+  Linking, PanResponder, useWindowDimensions, Alert,
 } from 'react-native';
 import { Video, AVPlaybackStatus } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
@@ -57,21 +57,28 @@ export default function VideoScreen() {
 
   /* ─── Load videos ─── */
   const loadVideos = useCallback(async () => {
-    if (perm === 'denied') return;
     setLoading(true);
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    setPerm(status);
-    if (status !== 'granted') { setLoading(false); return; }
-
     try {
+      // Check first without dialog; request only if needed
+      const cur = await MediaLibrary.getPermissionsAsync();
+      let granted = cur.status === 'granted';
+      if (!granted) {
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        granted = status === 'granted';
+        setPerm(granted ? 'granted' : 'denied');
+      } else {
+        setPerm('granted');
+      }
+      if (!granted) { setLoading(false); return; }
+
       let all: MediaLibrary.Asset[] = [];
       let after: string | undefined;
       do {
         const page = await MediaLibrary.getAssetsAsync({
-          mediaType: 'video',
+          mediaType: MediaLibrary.MediaType.video,
           first: 200,
           after,
-          sortBy: MediaLibrary.SortBy.creationTime,
+          sortBy: [MediaLibrary.SortBy.creationTime, false],
         });
         all = [...all, ...page.assets];
         after = page.hasNextPage ? page.endCursor : undefined;
@@ -86,8 +93,7 @@ export default function VideoScreen() {
             uri: info.localUri ?? info.uri,
             title: a.filename.replace(/\.[^.]+$/, ''),
             duration: Math.round(a.duration * 1000),
-            width: a.width,
-            height: a.height,
+            width: a.width, height: a.height,
           });
         } catch {
           items.push({
@@ -99,14 +105,16 @@ export default function VideoScreen() {
         }
       }
       setVideos(items);
-    } catch {}
+    } catch (e) {
+      Alert.alert('Ошибка загрузки видео', String(e));
+    }
     setLoading(false);
-  }, [perm]);
+  }, []);
 
   useFocusEffect(useCallback(() => {
-    if (perm === 'unknown') loadVideos();
+    loadVideos();
     return () => {};
-  }, [perm]));
+  }, [loadVideos]));
 
   /* ─── Playback status ─── */
   const onPlaybackStatus = useCallback((st: AVPlaybackStatus) => {
@@ -262,9 +270,24 @@ export default function VideoScreen() {
         style={styles.list}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            {loading ? 'Loading…' : perm === 'denied' ? 'Permission required' : 'No videos found'}
-          </Text>
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyText}>
+              {loading ? 'Загрузка…' : perm === 'denied'
+                ? 'Нет доступа к медиабиблиотеке'
+                : 'Видео не найдены'}
+            </Text>
+            {!loading && perm === 'denied' && (
+              <TouchableOpacity onPress={() => Linking.openSettings()} style={styles.permBtn}>
+                <Text style={styles.permLink}>Открыть настройки →</Text>
+              </TouchableOpacity>
+            )}
+            {!loading && perm === 'granted' && videos.length === 0 && (
+              <Text style={styles.hintText}>
+                Видео ищутся в галерее (DCIM, Movies, Download).{'\n'}
+                Нажмите ↻ чтобы обновить.
+              </Text>
+            )}
+          </View>
         }
       />
     </View>
@@ -316,7 +339,10 @@ const styles = StyleSheet.create({
   permLink: { color: '#ff5252', fontSize: 10, fontWeight: '700' },
 
   list: { flex: 1, paddingHorizontal: 10 },
-  emptyText: { color: '#333', fontSize: 13, textAlign: 'center', marginTop: 40 },
+  emptyWrap: { alignItems: 'center', paddingTop: 40, gap: 10 },
+  emptyText: { color: '#444', fontSize: 13, textAlign: 'center' },
+  hintText:  { color: '#333', fontSize: 11, textAlign: 'center', lineHeight: 18 },
+  permBtn:   { marginTop: 4 },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#111118', borderRadius: 12, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#1e1e28' },
   rowActive: { borderColor: '#40c4ff44', backgroundColor: '#40c4ff08' },

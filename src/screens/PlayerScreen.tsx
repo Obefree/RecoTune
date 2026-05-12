@@ -87,11 +87,18 @@ export default function PlayerScreen() {
   /* ─── Load device audio ─── */
   const loadDeviceAudio = useCallback(async () => {
     setLoadingLib(true);
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    setPerm(status as 'granted' | 'denied' | 'unknown');
-    if (status !== 'granted') { setLoadingLib(false); return; }
-
     try {
+      const cur = await MediaLibrary.getPermissionsAsync();
+      let granted = cur.status === 'granted';
+      if (!granted) {
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        granted = status === 'granted';
+        setPerm(granted ? 'granted' : 'denied');
+      } else {
+        setPerm('granted');
+      }
+      if (!granted) { setLoadingLib(false); return; }
+
       let all: MediaLibrary.Asset[] = [];
       let after: string | undefined;
       do {
@@ -99,13 +106,12 @@ export default function PlayerScreen() {
           mediaType: MediaLibrary.MediaType.audio,
           first: 200,
           after,
-          sortBy: [[MediaLibrary.SortBy.default, false]],
+          sortBy: [MediaLibrary.SortBy.creationTime, false],
         });
         all = [...all, ...page.assets];
         after = page.hasNextPage ? page.endCursor : undefined;
       } while (after);
 
-      // getAssetInfoAsync gives localUri which is playable on Android
       const tracks: Track[] = [];
       for (const a of all) {
         try {
@@ -128,7 +134,7 @@ export default function PlayerScreen() {
       }
       setDeviceTracks(tracks);
     } catch (e) {
-      Alert.alert('Media error', String(e));
+      Alert.alert('Ошибка медиа', String(e));
     }
     setLoadingLib(false);
   }, []);
@@ -155,9 +161,9 @@ export default function PlayerScreen() {
 
   useFocusEffect(useCallback(() => {
     loadRecordings();
-    if (perm === 'unknown') loadDeviceAudio();
+    loadDeviceAudio();
     return () => {};
-  }, [perm]));
+  }, [loadDeviceAudio, loadRecordings]));
 
   /* ─── Kill sound ─── */
   const killSound = useCallback(async () => {
