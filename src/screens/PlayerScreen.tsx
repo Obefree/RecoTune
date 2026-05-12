@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Alert, Linking, PanResponder,
+  Alert, Linking, PanResponder, useWindowDimensions,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
@@ -10,7 +10,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
 const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
-const { width } = Dimensions.get('window');
 
 interface Track {
   id: string;

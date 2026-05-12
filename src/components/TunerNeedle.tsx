@@ -1,29 +1,20 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, Dimensions, Text, Animated } from 'react-native';
+import { View, StyleSheet, Text, Animated, useWindowDimensions } from 'react-native';
 
-const { width } = Dimensions.get('window');
-const W = width - 32;
-const H = W * 0.58;
-const R = H * 0.92; // radius of the arc
-
-// Convert cents (-50..+50) to angle degrees (-50deg..+50deg)
 function centsToAngle(cents: number) {
   return (cents / 50) * 50;
 }
 
-// A tick at a given angle from center bottom
-function Tick({ angle, length, thick, color }: { angle: number; length: number; thick: number; color: string }) {
+function Tick({ angle, length, thick, color, W, H }: {
+  angle: number; length: number; thick: number; color: string; W: number; H: number;
+}) {
   return (
     <View
       pointerEvents="none"
       style={{
-        position: 'absolute',
-        bottom: 0,
-        left: W / 2 - thick / 2,
-        width: thick,
-        height: length,
-        backgroundColor: color,
-        borderRadius: thick / 2,
+        position: 'absolute', bottom: 0,
+        left: W / 2 - thick / 2, width: thick, height: length,
+        backgroundColor: color, borderRadius: thick / 2,
         transformOrigin: `${thick / 2}px ${H}px`,
         transform: [{ rotate: `${angle}deg` }],
       } as any}
@@ -31,25 +22,19 @@ function Tick({ angle, length, thick, color }: { angle: number; length: number; 
   );
 }
 
-// Curved label at a given angle
-function ArcLabel({ angle, text, color }: { angle: number; text: string; color: string }) {
-  const rad  = (angle * Math.PI) / 180;
-  const r2   = R - 22;
-  // from the center-bottom pivot
-  const cx   = W / 2 + r2 * Math.sin(rad);
-  const cy   = H    - r2 * Math.cos(rad);
+function ArcLabel({ angle, text, color, W, H, R }: {
+  angle: number; text: string; color: string; W: number; H: number; R: number;
+}) {
+  const rad = (angle * Math.PI) / 180;
+  const r2  = R - 22;
+  const cx  = W / 2 + r2 * Math.sin(rad);
+  const cy  = H     - r2 * Math.cos(rad);
   return (
     <Text
       pointerEvents="none"
       style={{
-        position: 'absolute',
-        left: cx - 12,
-        top:  cy - 8,
-        width: 24,
-        textAlign: 'center',
-        color,
-        fontSize: 9,
-        fontWeight: '700',
+        position: 'absolute', left: cx - 12, top: cy - 8,
+        width: 24, textAlign: 'center', color, fontSize: 9, fontWeight: '700',
       }}
     >
       {text}
@@ -63,6 +48,11 @@ interface Props {
 }
 
 export default function TunerNeedle({ cents, color }: Props) {
+  const { width } = useWindowDimensions();
+  const W = width - 32;
+  const H = W * 0.58;
+  const R = H * 0.92;
+
   const rotation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -120,11 +110,11 @@ export default function TunerNeedle({ cents, color }: Props) {
       {/* Arc line */}
       {/* Color zones background — drawn with thin ticks along the arc */}
       {ticks.map(([a, len, thick, col], i) => (
-        <Tick key={i} angle={a} length={len} thick={thick} color={col} />
+        <Tick key={i} angle={a} length={len} thick={thick} color={col} W={W} H={H} />
       ))}
 
       {labels.map(([a, txt, col]) => (
-        <ArcLabel key={txt} angle={a} text={txt} color={col} />
+        <ArcLabel key={txt} angle={a} text={txt} color={col} W={W} H={H} R={R} />
       ))}
 
       {/* FLAT / SHARP text */}

@@ -1,16 +1,11 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { HistoryPoint } from './FrequencyChart';
 
-const { width } = Dimensions.get('window');
-const STRIP_H   = 68;
-const RANGE     = 300;           // fixed ±300¢
-const PAD_L     = 30;            // space for y-labels
-// scroll(16*2) + mainCard(8*2) + yAxis + gap
-const STRIP_W   = width - 32 - 16 - PAD_L - 6;
-const MAX_PTS   = 80;
-// Anchor: latest point at 60% so label has room on the right
-const ANCHOR_X  = STRIP_W * 0.60;
+const STRIP_H = 68;
+const RANGE   = 300;
+const PAD_L   = 30;
+const MAX_PTS = 80;
 
 function centsToY(cents: number): number {
   const c = Math.max(-RANGE, Math.min(RANGE, cents));
@@ -30,6 +25,10 @@ interface Props {
 }
 
 export default function MiniCentsStrip({ history }: Props) {
+  const { width } = useWindowDimensions();
+  const STRIP_W   = width - 32 - 16 - PAD_L - 6;
+  const ANCHOR_X  = STRIP_W * 0.60;
+
   const pts  = history.slice(-MAX_PTS);
   const ptW  = STRIP_W / (MAX_PTS - 1);
   const xOf  = (i: number) => ANCHOR_X - (pts.length - 1 - i) * ptW;

@@ -1,14 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { View, StyleSheet, Text, Dimensions, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 
-const { width } = Dimensions.get('window');
 const PADDING_LEFT = 44;
-// scroll(16*2) + mainCard(8*2) + yAxis + extra gap
-const CHART_W  = width - 32 - 16 - PADDING_LEFT - 6;
-const CHART_H  = 220;
-const MAX_POINTS = 80;
-// Latest point anchored at 60% — older points trail to the left
-const ANCHOR_X = CHART_W * 0.60;
+const CHART_H      = 220;
+const MAX_POINTS   = 80;
 
 const A4_FREQ = 440;
 const A4_MIDI = 69;
@@ -70,12 +65,15 @@ function midiToY(midi: number, center: number, semiRange: number) {
 
 /* ─── Component ─── */
 export default function FrequencyChart({ history, active }: Props) {
+  const { width }  = useWindowDimensions();
+  const CHART_W    = width - 32 - 16 - PADDING_LEFT - 6;
+  const ANCHOR_X   = CHART_W * 0.60;
+
   const [mode,       setMode]      = useState<'cents' | 'pitch'>('cents');
   const [centZoomI,  setCentZoomI] = useState(0);
   const [pitchZoomI, setPitchZoomI]= useState(1);  // default 2 oct
 
   const pts  = history.slice(-MAX_POINTS);
-  // Fixed spacing; latest point always at ANCHOR_X, older ones trail left
   const ptW  = CHART_W / (MAX_POINTS - 1);
   const xOf  = (i: number) => ANCHOR_X - (pts.length - 1 - i) * ptW;
 
