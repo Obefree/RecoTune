@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "RecoTune",
+    "slug": "RecoTune",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "RecoTune needs microphone access for the tuner and recorder.",
+        "NSPhotoLibraryUsageDescription": "RecoTune needs access to your media library to browse and play audio and video files."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VIDEO"
+      ],
+      "edgeToEdgeEnabled": false,
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "RecoTune needs microphone access for the tuner and recorder."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "RecoTune needs access to your media library.",
+          "savePhotosPermission": "Allow RecoTune to save files.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
+    ]
+  }
+}

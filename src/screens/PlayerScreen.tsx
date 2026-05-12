@@ -1,0 +1,530 @@
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, FlatList,
+  Alert, Linking, PanResponder,
+} from 'react-native';
+import { Audio, AVPlaybackStatus } from 'expo-av';
+import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
+
+const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
+const { width } = Dimensions.get('window');
+
+interface Track {
+  id: string;
+  uri: string;
+  title: string;
+  artist?: string;
+  duration?: number;   // ms
+  source: 'device' | 'recording';
+}
+
+function fmtMs(ms: number) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+}
+function fmtSec(s: number) {
+  return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+export default function PlayerScreen() {
+  const [libTab, setLibTab]           = useState<'device' | 'recordings'>('device');
+  const [deviceTracks, setDeviceTracks] = useState<Track[]>([]);
+  const [recTracks, setRecTracks]     = useState<Track[]>([]);
+  const [perm, setPerm]               = useState<'granted' | 'denied' | 'unknown'>('unknown');
+  const [loadingLib, setLoadingLib]   = useState(false);
+
+  // Playback state
+  const [queue, setQueue]             = useState<Track[]>([]);
+  const [queueIdx, setQueueIdx]       = useState(-1);
+  const [isShuffled, setIsShuffled]   = useState(false);
+  const [isPlaying, setIsPlaying]     = useState(false);
+  const [pos, setPos]                 = useState(0);    // seconds
+  const [dur, setDur]                 = useState(0);    // seconds
+  const [repeat, setRepeat]           = useState<'none' | 'one' | 'all'>('all');
+
+  const soundRef     = useRef<Audio.Sound | null>(null);
+  const busyRef      = useRef(false);
+  const queueRef     = useRef(queue);
+  const idxRef       = useRef(queueIdx);
+  const repeatRef    = useRef(repeat);
+  const durRef       = useRef(dur);
+  const seekBarWidth = useRef(1);
+
+  useEffect(() => { queueRef.current = queue;    }, [queue]);
+  useEffect(() => { idxRef.current   = queueIdx; }, [queueIdx]);
+  useEffect(() => { repeatRef.current = repeat;  }, [repeat]);
+  useEffect(() => { durRef.current    = dur;     }, [dur]);
+
+  // PanResponder for seek bar drag
+  const seekPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder:  () => true,
+      onPanResponderGrant: (e) => {
+        const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekBarWidth.current));
+        const s = soundRef.current;
+        if (s && durRef.current > 0) s.setPositionAsync(pct * durRef.current * 1000).catch(() => {});
+      },
+      onPanResponderMove: (e) => {
+        const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekBarWidth.current));
+        const s = soundRef.current;
+        if (s && durRef.current > 0) s.setPositionAsync(pct * durRef.current * 1000).catch(() => {});
+      },
+    })
+  ).current;
+
+  /* ─── Load device audio ─── */
+  const loadDeviceAudio = useCallback(async () => {
+    setLoadingLib(true);
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    setPerm(status as 'granted' | 'denied' | 'unknown');
+    if (status !== 'granted') { setLoadingLib(false); return; }
+
+    try {
+      let all: MediaLibrary.Asset[] = [];
+      let after: string | undefined;
+      do {
+        const page = await MediaLibrary.getAssetsAsync({
+          mediaType: MediaLibrary.MediaType.audio,
+          first: 200,
+          after,
+          sortBy: [[MediaLibrary.SortBy.default, false]],
+        });
+        all = [...all, ...page.assets];
+        after = page.hasNextPage ? page.endCursor : undefined;
+      } while (after);
+
+      // getAssetInfoAsync gives localUri which is playable on Android
+      const tracks: Track[] = [];
+      for (const a of all) {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(a);
+          const uri  = info.localUri ?? info.uri;
+          tracks.push({
+            id: a.id, uri,
+            title: a.filename.replace(/\.[^.]+$/, ''),
+            duration: Math.round(a.duration * 1000),
+            source: 'device',
+          });
+        } catch {
+          tracks.push({
+            id: a.id, uri: a.uri,
+            title: a.filename.replace(/\.[^.]+$/, ''),
+            duration: Math.round(a.duration * 1000),
+            source: 'device',
+          });
+        }
+      }
+      setDeviceTracks(tracks);
+    } catch (e) {
+      Alert.alert('Media error', String(e));
+    }
+    setLoadingLib(false);
+  }, []);
+
+  /* ─── Load app recordings ─── */
+  const loadRecordings = useCallback(async () => {
+    try {
+      await FileSystem.makeDirectoryAsync(RECORDINGS_DIR, { intermediates: true });
+      const files = await FileSystem.readDirectoryAsync(RECORDINGS_DIR);
+      const tracks: Track[] = files
+        .filter(f => /\.(m4a|wav|mp3|caf|mp4)$/i.test(f))
+        .map(f => {
+          const ts = parseInt(f.replace(/\D/g, '').slice(0, 13)) || 0;
+          return {
+            id: f, uri: RECORDINGS_DIR + f,
+            title: f.replace(/\.[^.]+$/, ''),
+            artist: 'My Recording',
+            source: 'recording' as const,
+          };
+        });
+      setRecTracks(tracks.reverse());
+    } catch {}
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    loadRecordings();
+    if (perm === 'unknown') loadDeviceAudio();
+    return () => {};
+  }, [perm]));
+
+  /* ─── Kill sound ─── */
+  const killSound = useCallback(async () => {
+    const s = soundRef.current;
+    soundRef.current = null;
+    if (s) { try { await s.stopAsync(); await s.unloadAsync(); } catch {} }
+    setIsPlaying(false); setPos(0); setDur(0);
+  }, []);
+
+  /* ─── Play a track at queue index ─── */
+  const playAt = useCallback(async (idx: number) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    const q = queueRef.current;
+    if (idx < 0 || idx >= q.length) { busyRef.current = false; return; }
+
+    await killSound();
+    setQueueIdx(idx); idxRef.current = idx;
+
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+      });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: q[idx].uri },
+        { shouldPlay: true },
+        (status: AVPlaybackStatus) => {
+          if (!status.isLoaded) return;
+          setPos(Math.floor((status.positionMillis ?? 0) / 1000));
+          setDur(Math.floor((status.durationMillis ?? 0) / 1000));
+          setIsPlaying(status.isPlaying);
+          if (status.didJustFinish) {
+            // Auto-advance
+            const curIdx = idxRef.current;
+            const curQ   = queueRef.current;
+            const rep    = repeatRef.current;
+            if (rep === 'one') {
+              sound.replayAsync().catch(() => {});
+            } else if (curIdx + 1 < curQ.length) {
+              playAt(curIdx + 1);
+            } else if (rep === 'all' && curQ.length > 0) {
+              playAt(0);
+            }
+          }
+        }
+      );
+      soundRef.current = sound;
+      setIsPlaying(true);
+    } catch (e) {
+      Alert.alert('Playback error', String(e));
+    }
+    busyRef.current = false;
+  }, [killSound]);
+
+  /* ─── Controls ─── */
+  const togglePlay = useCallback(async () => {
+    const s = soundRef.current;
+    if (!s) {
+      if (queueRef.current.length > 0) playAt(Math.max(0, idxRef.current));
+      return;
+    }
+    const st = await s.getStatusAsync() as AVPlaybackStatus;
+    if (!st.isLoaded) return;
+    if (st.isPlaying) await s.pauseAsync(); else await s.playAsync();
+  }, [playAt]);
+
+  const playNext = useCallback(() => {
+    const idx = idxRef.current, q = queueRef.current;
+    if (idx + 1 < q.length) playAt(idx + 1);
+    else if (repeatRef.current === 'all') playAt(0);
+  }, [playAt]);
+
+  const playPrev = useCallback(() => {
+    const idx = idxRef.current;
+    if (idx > 0) playAt(idx - 1);
+  }, [playAt]);
+
+
+  /* ─── Build queue from track list ─── */
+  const enqueueAll = useCallback((tracks: Track[], startIdx: number) => {
+    const q = isShuffled
+      ? (() => {
+          const s = shuffle(tracks);
+          // Move the tapped track to front
+          const item = tracks[startIdx];
+          const fi = s.findIndex(t => t.id === item.id);
+          if (fi >= 0) { s.splice(fi, 1); s.unshift(item); }
+          return s;
+        })()
+      : [...tracks];
+    const playIdx = isShuffled ? 0 : startIdx;
+    setQueue(q); queueRef.current = q;
+    playAt(playIdx);
+  }, [isShuffled, playAt]);
+
+  const toggleShuffle = useCallback(() => {
+    setIsShuffled(v => {
+      const next = !v;
+      if (queueRef.current.length > 0) {
+        const cur = queueRef.current[idxRef.current];
+        const newQ = next ? shuffle(queueRef.current) : [...queueRef.current].sort((a, b) => a.title.localeCompare(b.title));
+        const newIdx = newQ.findIndex(t => t.id === cur?.id);
+        setQueue(newQ); queueRef.current = newQ;
+        setQueueIdx(newIdx); idxRef.current = newIdx;
+      }
+      return next;
+    });
+  }, []);
+
+  const cycleRepeat = useCallback(() => {
+    setRepeat(r => r === 'none' ? 'all' : r === 'all' ? 'one' : 'none');
+  }, []);
+
+  useFocusEffect(useCallback(() => () => { killSound(); }, [killSound]));
+
+  /* ─── Render ─── */
+  const currentTrack = queueIdx >= 0 && queueIdx < queue.length ? queue[queueIdx] : null;
+  const activeTracks = libTab === 'device' ? deviceTracks : recTracks;
+
+  const renderTrack = ({ item, index }: { item: Track; index: number }) => {
+    const playing = currentTrack?.id === item.id;
+    return (
+      <TouchableOpacity
+        style={[styles.trackRow, playing && styles.trackRowActive]}
+        onPress={() => enqueueAll(activeTracks, index)}
+        activeOpacity={0.75}
+      >
+        <View style={[styles.trackIcon, { backgroundColor: playing ? '#7c4dff22' : '#1a1a24' }]}>
+          <Ionicons
+            name={playing && isPlaying ? 'musical-note' : 'musical-notes-outline'}
+            size={18}
+            color={playing ? '#7c4dff' : '#555'}
+          />
+        </View>
+        <View style={styles.trackInfo}>
+          <Text style={[styles.trackTitle, playing && { color: '#7c4dff' }]} numberOfLines={1}>
+            {item.title}
+          </Text>
+          {item.artist && (
+            <Text style={styles.trackArtist} numberOfLines={1}>{item.artist}</Text>
+          )}
+        </View>
+        {item.duration != null && (
+          <Text style={styles.trackDur}>{fmtMs(item.duration)}</Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+
+      {/* ── Now Playing ── */}
+      <View style={styles.nowPlaying}>
+        <View style={styles.npArt}>
+          <Ionicons name="musical-notes" size={36} color="#7c4dff66" />
+        </View>
+        <View style={styles.npInfo}>
+          <Text style={styles.npTitle} numberOfLines={1}>
+            {currentTrack?.title ?? 'No track selected'}
+          </Text>
+          <Text style={styles.npArtist} numberOfLines={1}>
+            {currentTrack?.artist ?? (currentTrack ? 'Device Audio' : 'Tap a track to play')}
+          </Text>
+        </View>
+
+        {/* Seek bar — drag to scrub */}
+        <View style={styles.seekRow}>
+          <Text style={styles.seekTime}>{fmtSec(pos)}</Text>
+          <View
+            style={styles.seekTrack}
+            onLayout={e => { seekBarWidth.current = e.nativeEvent.layout.width; }}
+            {...seekPan.panHandlers}
+          >
+            <View style={styles.seekBg} />
+            <View style={[styles.seekFill, { width: dur > 0 ? `${(pos / dur) * 100}%` : '0%' }]} />
+            <View style={[styles.seekThumb, { left: dur > 0 ? `${(pos / dur) * 100}%` : '0%' }]} />
+          </View>
+          <Text style={styles.seekTime}>{fmtSec(dur)}</Text>
+        </View>
+
+        {/* Controls */}
+        <View style={styles.controls}>
+          <TouchableOpacity onPress={cycleRepeat} style={styles.ctrlSm}>
+            <Ionicons
+              name={repeat === 'one' ? 'repeat' : 'repeat-outline'}
+              size={26}
+              color={repeat !== 'none' ? '#7c4dff' : '#555'}
+            />
+            {repeat === 'one' && <Text style={styles.ctrlBadge}>1</Text>}
+            <Text style={[styles.ctrlLabel, repeat !== 'none' && { color: '#7c4dff' }]}>
+              {repeat === 'none' ? 'Off' : repeat === 'all' ? 'All' : 'One'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={playPrev} style={styles.ctrl}>
+            <Ionicons name="play-skip-back" size={34} color={currentTrack ? '#ccc' : '#333'} />
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={togglePlay} style={styles.playBtn}>
+            <Ionicons
+              name={isPlaying ? 'pause' : 'play'}
+              size={36}
+              color="#fff"
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={playNext} style={styles.ctrl}>
+            <Ionicons name="play-skip-forward" size={34} color={currentTrack ? '#ccc' : '#333'} />
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={toggleShuffle} style={styles.ctrlSm}>
+            <Ionicons
+              name="shuffle"
+              size={26}
+              color={isShuffled ? '#00e676' : '#555'}
+            />
+            <Text style={[styles.ctrlLabel, isShuffled && { color: '#00e676' }]}>
+              {isShuffled ? 'On' : 'Off'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Queue info */}
+        {queue.length > 0 && (
+          <Text style={styles.queueInfo}>
+            {queueIdx + 1} / {queue.length}  ·  {isShuffled ? '🔀 Shuffle' : '▶ In order'}  ·  {
+              repeat === 'none' ? '↩ No repeat' : repeat === 'all' ? '🔁 Repeat all' : '🔂 Repeat one'
+            }
+          </Text>
+        )}
+      </View>
+
+      {/* ── Library tabs ── */}
+      <View style={styles.tabRow}>
+        <TouchableOpacity
+          onPress={() => setLibTab('device')}
+          style={[styles.tabBtn, libTab === 'device' && styles.tabBtnActive]}
+        >
+          <Ionicons name="phone-portrait-outline" size={14} color={libTab === 'device' ? '#7c4dff' : '#555'} />
+          <Text style={[styles.tabBtnText, libTab === 'device' && { color: '#7c4dff' }]}>
+            DEVICE ({deviceTracks.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setLibTab('recordings')}
+          style={[styles.tabBtn, libTab === 'recordings' && styles.tabBtnActive]}
+        >
+          <Ionicons name="mic-outline" size={14} color={libTab === 'recordings' ? '#7c4dff' : '#555'} />
+          <Text style={[styles.tabBtnText, libTab === 'recordings' && { color: '#7c4dff' }]}>
+            RECORDINGS ({recTracks.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={libTab === 'device' ? loadDeviceAudio : loadRecordings}
+          style={styles.refreshBtn}>
+          <Ionicons name={loadingLib ? 'hourglass-outline' : 'refresh'} size={16} color="#555" />
+        </TouchableOpacity>
+      </View>
+      {libTab === 'device' && deviceTracks.length === 0 && perm === 'granted' && !loadingLib && (
+        <Text style={styles.sourceHint}>
+          Ищутся аудиофайлы в медиабиблиотеке Android/iOS (Музыка, Downloads, Voice Memos и др.)
+        </Text>
+      )}
+
+      {/* Permission warning */}
+      {libTab === 'device' && perm === 'denied' && (
+        <TouchableOpacity style={styles.permBanner} onPress={() => Linking.openSettings()}>
+          <Ionicons name="alert-circle-outline" size={18} color="#ff5252" />
+          <Text style={styles.permText}>Media permission denied — tap to open Settings</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Track list */}
+      <FlatList
+        data={activeTracks}
+        keyExtractor={t => t.id}
+        renderItem={renderTrack}
+        style={styles.list}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>
+            {loadingLib ? 'Loading…' : libTab === 'device' ? 'No audio files found' : 'No recordings yet'}
+          </Text>
+        }
+      />
+
+      {/* Spotify note */}
+      <View style={styles.spotifyRow}>
+        <Ionicons name="logo-google-playstore" size={14} color="#1db954" />
+        <Text style={styles.spotifyText}>
+          Spotify: прямой стриминг доступен только в production build.{' '}
+        </Text>
+        <TouchableOpacity onPress={() => Linking.openURL('spotify://')}>
+          <Text style={styles.spotifyLink}>Открыть Spotify →</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0a0a0f' },
+
+  /* Now playing */
+  nowPlaying: {
+    backgroundColor: '#111118', margin: 12, borderRadius: 20,
+    padding: 16, borderWidth: 1, borderColor: '#1e1e28', alignItems: 'center',
+  },
+  npArt: {
+    width: 72, height: 72, borderRadius: 16, backgroundColor: '#1a1a2a',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 10,
+    borderWidth: 1, borderColor: '#2a2a3a',
+  },
+  npInfo: { width: '100%', alignItems: 'center', marginBottom: 10 },
+  npTitle: { color: '#e0e0e0', fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  npArtist: { color: '#555', fontSize: 12, marginTop: 3 },
+
+  seekRow: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', marginBottom: 16 },
+  seekTime: { color: '#666', fontSize: 11, width: 36, textAlign: 'center' },
+  seekTrack: { flex: 1, height: 28, justifyContent: 'center' },
+  seekBg:    { position: 'absolute', left: 0, right: 0, height: 4, backgroundColor: '#2a2a3a', borderRadius: 2 },
+  seekFill:  { position: 'absolute', left: 0, height: 4, backgroundColor: '#7c4dff', borderRadius: 2 },
+  seekThumb: { position: 'absolute', width: 16, height: 16, borderRadius: 8, backgroundColor: '#7c4dff', top: -6, marginLeft: -8 },
+
+  controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-evenly', width: '100%', marginBottom: 8 },
+  ctrl:   { padding: 12 },
+  ctrlSm: { alignItems: 'center', padding: 10, minWidth: 52, position: 'relative' },
+  ctrlBadge: { position: 'absolute', top: 6, right: 6, color: '#7c4dff', fontSize: 8, fontWeight: '900' },
+  ctrlLabel: { color: '#555', fontSize: 9, fontWeight: '700', marginTop: 2, letterSpacing: 0.5 },
+  playBtn: {
+    width: 68, height: 68, borderRadius: 34, backgroundColor: '#7c4dff',
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#7c4dff', shadowOpacity: 0.5, shadowRadius: 12, elevation: 6,
+  },
+  queueInfo: { color: '#333', fontSize: 10, letterSpacing: 0.5, marginTop: 2 },
+
+  /* Library */
+  tabRow: {
+    flexDirection: 'row', marginHorizontal: 12, marginBottom: 4,
+    backgroundColor: '#111118', borderRadius: 14, overflow: 'hidden',
+    borderWidth: 1, borderColor: '#1e1e28',
+  },
+  tabBtn:       { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 11 },
+  tabBtnActive: { backgroundColor: '#1e1e2e' },
+  tabBtnText:   { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  refreshBtn:   { paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
+  sourceHint:   { color: '#333', fontSize: 10, textAlign: 'center', marginHorizontal: 16, marginBottom: 4 },
+
+  permBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, margin: 12, padding: 12, backgroundColor: '#ff525218', borderRadius: 12, borderWidth: 1, borderColor: '#ff525244' },
+  permText: { color: '#ff5252', fontSize: 12, flex: 1 },
+
+  list: { flex: 1, paddingHorizontal: 12 },
+  emptyText: { color: '#333', fontSize: 13, textAlign: 'center', marginTop: 40 },
+
+  trackRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#111118', borderRadius: 12, padding: 10, marginBottom: 7, borderWidth: 1, borderColor: '#1e1e28' },
+  trackRowActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff08' },
+  trackIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  trackInfo: { flex: 1 },
+  trackTitle: { color: '#ccc', fontSize: 13, fontWeight: '600' },
+  trackArtist: { color: '#444', fontSize: 11, marginTop: 2 },
+  trackDur: { color: '#333', fontSize: 11 },
+
+  /* Spotify */
+  spotifyRow: { flexDirection: 'row', alignItems: 'center', gap: 5, padding: 10, paddingHorizontal: 14 },
+  spotifyText: { color: '#333', fontSize: 10, flex: 1 },
+  spotifyLink: { color: '#1db954', fontSize: 10, fontWeight: '700' },
+});
