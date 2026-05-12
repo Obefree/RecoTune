@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, TextInput,
+  ActivityIndicator, Alert, TextInput, Platform,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -155,11 +155,19 @@ export default function ChordsScreen() {
   const [ytUrl, setYtUrl]             = useState('');
   const [ytLoading, setYtLoading]     = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
-  const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt'>('mic');
+  const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt' | 'manual'>('mic');
+  // Lyrics
+  const [lyrics, setLyrics]           = useState<string | null>(null);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [showFullLyrics, setShowFullLyrics] = useState(false);
+  // Manual search
+  const [manualArtist, setManualArtist] = useState('');
+  const [manualTitle, setManualTitle]   = useState('');
 
-  const wvRef     = useRef<WebView>(null);
-  const recRef    = useRef<Audio.Recording | null>(null);
-  const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wvRef      = useRef<WebView>(null);
+  const recRef     = useRef<Audio.Recording | null>(null);
+  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollRef  = useRef<ScrollView>(null);
 
   /* ── stop live on blur ── */
   useFocusEffect(useCallback(() => {
@@ -271,7 +279,7 @@ export default function ChordsScreen() {
       const data = await res.json();
 
       if (data.status === 'success' && data.result) {
-        setSongResult(data.result as AuddResult);
+        setResultAndFetch(data.result as AuddResult);
       } else {
         setSongResult(null);
         Alert.alert('Не распознано', 'Попробуйте ещё раз или дольше держите инструмент у микрофона.');
@@ -287,9 +295,32 @@ export default function ChordsScreen() {
     } catch {}
   }
 
+  /* ── Fetch lyrics from lyrics.ovh (free, no auth) ── */
+  async function fetchLyrics(artist: string, title: string) {
+    setLyrics(null);
+    setLyricsLoading(true);
+    try {
+      const res  = await fetch(
+        `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`
+      );
+      const data = await res.json();
+      if (!data.error && data.lyrics) {
+        setLyrics(data.lyrics.trim());
+      }
+    } catch {}
+    setLyricsLoading(false);
+  }
+
+  function setResultAndFetch(r: AuddResult) {
+    setSongResult(r);
+    fetchLyrics(r.artist, r.title);
+    // scroll to top so result is visible
+    setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 200);
+  }
+
   function openChords(artist: string, title: string) {
-    const q = encodeURIComponent(`${artist} ${title} chords`);
-    setChordUrl(`https://duckduckgo.com/?q=${q}&ia=web`);
+    const q = encodeURIComponent(`${artist} ${title}`);
+    setChordUrl(`https://www.ultimate-guitar.com/search.php?search_type=title&value=${q}`);
     setShowChordBrowser(true);
   }
 
@@ -317,9 +348,9 @@ export default function ChordsScreen() {
       const data = await res.json();
 
       if (data.status === 'success' && data.result) {
-        setSongResult(data.result as AuddResult);
+        setResultAndFetch(data.result as AuddResult);
       } else {
-        Alert.alert('Не распознано', 'Трек не найден в базе AudD. Попробуйте другой файл.');
+        Alert.alert('Не распознано', 'Трек не найден в базе AudD. Попробуйте другой файл или введите название вручную.');
       }
     } catch (e) {
       Alert.alert('Ошибка', String(e));
@@ -347,11 +378,19 @@ export default function ChordsScreen() {
       const title    = info.title   as string;
       const author   = (info.author_name as string).replace(/\s*-\s*Topic$/, '');
 
-      setSongResult({ title, artist: author });
+      setResultAndFetch({ title, artist: author });
     } catch (e) {
       Alert.alert('Ошибка YouTube', String(e));
     }
     setYtLoading(false);
+  }
+
+  /* ── Manual search ── */
+  function handleManualSearch() {
+    const a = manualArtist.trim();
+    const t = manualTitle.trim();
+    if (!a && !t) return;
+    setResultAndFetch({ artist: a || 'Unknown', title: t || 'Unknown' });
   }
 
   /* ─── UI ─── */
@@ -460,17 +499,93 @@ export default function ChordsScreen() {
 
       {/* ── IDENTIFY MODE ── */}
       {mode === 'identify' && (
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 16, gap: 12 }}>
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ padding: 14, gap: 12 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* ── RESULT (shown first when found) ── */}
+          {songResult && (
+            <View style={styles.resultCard}>
+              <View style={styles.resultHeader}>
+                <Ionicons name="checkmark-circle" size={20} color="#00e676" />
+                <Text style={styles.resultFound}>НАЙДЕНО</Text>
+                <TouchableOpacity onPress={() => { setSongResult(null); setLyrics(null); }} style={{ marginLeft: 'auto' as any }}>
+                  <Ionicons name="close" size={18} color="#444" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.resultTitle}>{songResult.title}</Text>
+              <Text style={styles.resultArtist}>{songResult.artist}</Text>
+              {songResult.album && (
+                <Text style={styles.resultMeta}>
+                  {songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0, 4)}` : ''}
+                </Text>
+              )}
 
-          {/* Source selector */}
+              {/* Action buttons */}
+              <View style={styles.resultActions}>
+                <TouchableOpacity
+                  style={styles.chordsBtn}
+                  onPress={() => openChords(songResult.artist, songResult.title)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="musical-note" size={15} color="#fff" />
+                  <Text style={styles.chordsBtnText}>Аккорды (UG)</Text>
+                </TouchableOpacity>
+                {songResult.song_link ? (
+                  <TouchableOpacity
+                    style={[styles.chordsBtn, { backgroundColor: '#1db95422', borderColor: '#1db95444' }]}
+                    onPress={() => { setChordUrl(songResult.song_link!); setShowChordBrowser(true); }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="link" size={15} color="#1db954" />
+                    <Text style={[styles.chordsBtnText, { color: '#1db954' }]}>Открыть</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {/* Lyrics section */}
+              <View style={styles.lyricsWrap}>
+                <View style={styles.lyricsHeader}>
+                  <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
+                  {lyrics && (
+                    <TouchableOpacity onPress={() => setShowFullLyrics(v => !v)}>
+                      <Text style={styles.lyricsToggle}>{showFullLyrics ? 'Свернуть' : 'Развернуть'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {lyricsLoading ? (
+                  <ActivityIndicator color="#555" size="small" style={{ marginTop: 8 }} />
+                ) : lyrics ? (
+                  <Text
+                    style={styles.lyricsText}
+                    numberOfLines={showFullLyrics ? undefined : 8}
+                  >
+                    {lyrics}
+                  </Text>
+                ) : (
+                  <Text style={styles.lyricsEmpty}>Текст не найден</Text>
+                )}
+              </View>
+            </View>
+          )}
+
+          {/* ── SOURCE SELECTOR ── */}
           <View style={styles.sourceRow}>
-            {([['mic', 'ear', 'Микрофон'], ['file', 'document', 'Файл'], ['yt', 'logo-youtube', 'YouTube']] as const).map(([src, icon, label]) => (
+            {([
+              ['mic',    'ear',          'Слушать'],
+              ['file',   'document',     'Файл'],
+              ['yt',     'logo-youtube', 'YouTube'],
+              ['manual', 'create',       'Вручную'],
+            ] as const).map(([src, icon, label]) => (
               <TouchableOpacity
                 key={src}
                 style={[styles.srcBtn, identSource === src && styles.srcBtnActive]}
-                onPress={() => { setIdentSource(src); setSongResult(null); }}
+                onPress={() => setIdentSource(src)}
               >
-                <Ionicons name={icon as any} size={18} color={identSource === src ? '#0a0a0f' : '#555'} />
+                <Ionicons name={icon as any} size={15} color={identSource === src ? '#0a0a0f' : '#555'} />
                 <Text style={[styles.srcLabel, identSource === src && { color: '#0a0a0f' }]}>{label}</Text>
               </TouchableOpacity>
             ))}
@@ -479,16 +594,13 @@ export default function ChordsScreen() {
           {/* MIC SOURCE */}
           {identSource === 'mic' && (
             <View style={styles.identCard}>
-              <Text style={styles.identTitle}>Слушать через микрофон</Text>
               <Text style={styles.identSub}>
-                Поднесите телефон к колонке/инструменту.{'\n'}
-                Запись 10 секунд → отправка в AudD.
+                Поднесите телефон к колонке — запись 10 с → отправка в AudD.
               </Text>
               {isRecognizing ? (
                 <View style={styles.recProgress}>
                   <ActivityIndicator color="#7c4dff" size="large" />
                   <Text style={styles.recSecs}>{recSecs} / 10 с</Text>
-                  <Text style={styles.recNote}>Идёт запись...</Text>
                   <TouchableOpacity style={styles.cancelBtn} onPress={() => {
                     if (timerRef.current) clearInterval(timerRef.current);
                     stopRec(); setIsRecognizing(false);
@@ -508,38 +620,25 @@ export default function ChordsScreen() {
           {/* FILE SOURCE */}
           {identSource === 'file' && (
             <View style={styles.identCard}>
-              <Text style={styles.identTitle}>Загрузить аудиофайл</Text>
-              <Text style={styles.identSub}>
-                Выберите MP3, AAC, WAV или любой аудиофайл с устройства.{'\n'}
-                Файл будет отправлен в AudD для распознавания.
-              </Text>
+              <Text style={styles.identSub}>Выберите MP3, AAC, WAV с устройства — отправка в AudD.</Text>
               {fileLoading ? (
                 <View style={styles.recProgress}>
                   <ActivityIndicator color="#7c4dff" size="large" />
                   <Text style={styles.recNote}>Распознавание...</Text>
                 </View>
               ) : (
-                <TouchableOpacity style={[styles.identBtn, { backgroundColor: '#ff980088' }]} onPress={pickFileAndIdentify} activeOpacity={0.8}>
+                <TouchableOpacity style={[styles.identBtn, { backgroundColor: '#ff980099' }]} onPress={pickFileAndIdentify} activeOpacity={0.8}>
                   <Ionicons name="folder-open" size={22} color="#fff" />
                   <Text style={styles.identBtnText}>ВЫБРАТЬ ФАЙЛ</Text>
                 </TouchableOpacity>
               )}
-              <View style={styles.noticeRow}>
-                <Ionicons name="information-circle-outline" size={14} color="#333" />
-                <Text style={styles.noticeText}>
-                  Звук из других приложений перехватить нельзя — ограничение Android/iOS.
-                </Text>
-              </View>
             </View>
           )}
 
           {/* YOUTUBE SOURCE */}
           {identSource === 'yt' && (
             <View style={styles.identCard}>
-              <Text style={styles.identTitle}>YouTube ссылка</Text>
-              <Text style={styles.identSub}>
-                Вставьте ссылку на видео — получим название и найдём аккорды.
-              </Text>
+              <Text style={styles.identSub}>Вставьте ссылку YouTube — получим название и текст.</Text>
               <TextInput
                 style={styles.urlInput}
                 placeholder="https://youtube.com/watch?v=..."
@@ -549,15 +648,13 @@ export default function ChordsScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
+                returnKeyType="search"
+                onSubmitEditing={handleYouTube}
               />
               {ytLoading ? (
-                <ActivityIndicator color="#ff0000" style={{ marginTop: 12 }} />
+                <ActivityIndicator color="#ff0000" style={{ marginTop: 10 }} />
               ) : (
-                <TouchableOpacity
-                  style={[styles.identBtn, { backgroundColor: '#ff000099' }]}
-                  onPress={handleYouTube}
-                  activeOpacity={0.8}
-                >
+                <TouchableOpacity style={[styles.identBtn, { backgroundColor: '#cc000099' }]} onPress={handleYouTube} activeOpacity={0.8}>
                   <Ionicons name="logo-youtube" size={22} color="#fff" />
                   <Text style={styles.identBtnText}>НАЙТИ ПО ССЫЛКЕ</Text>
                 </TouchableOpacity>
@@ -565,58 +662,39 @@ export default function ChordsScreen() {
             </View>
           )}
 
-          {/* Result — shared for all sources */}
-          {songResult && (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Ionicons name="checkmark-circle" size={22} color="#00e676" />
-                <Text style={styles.resultFound}>Найдено!</Text>
-              </View>
-              <Text style={styles.resultTitle}>{songResult.title}</Text>
-              <Text style={styles.resultArtist}>{songResult.artist}</Text>
-              {songResult.album && (
-                <Text style={styles.resultMeta}>
-                  {songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0, 4)}` : ''}
-                </Text>
-              )}
-              <View style={styles.resultActions}>
-                <TouchableOpacity
-                  style={styles.chordsBtn}
-                  onPress={() => openChords(songResult.artist, songResult.title)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="search" size={16} color="#fff" />
-                  <Text style={styles.chordsBtnText}>Найти аккорды</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.chordsBtn, { backgroundColor: '#ff980033', borderColor: '#ff980066' }]}
-                  onPress={() => {
-                    const q = encodeURIComponent(`${songResult.artist} ${songResult.title} tabs ultimate guitar`);
-                    setChordUrl(`https://duckduckgo.com/?q=${q}&ia=web`);
-                    setShowChordBrowser(true);
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="musical-note" size={16} color="#ff9800" />
-                  <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>Ultimate Guitar</Text>
-                </TouchableOpacity>
-                {songResult.song_link ? (
-                  <TouchableOpacity
-                    style={[styles.chordsBtn, { backgroundColor: '#1db95422', borderColor: '#1db95444' }]}
-                    onPress={() => { setChordUrl(songResult.song_link!); setShowChordBrowser(true); }}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="link" size={16} color="#1db954" />
-                    <Text style={[styles.chordsBtnText, { color: '#1db954' }]}>Открыть</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
+          {/* MANUAL SOURCE */}
+          {identSource === 'manual' && (
+            <View style={styles.identCard}>
+              <Text style={styles.identSub}>Введите исполнителя и название — найдём текст и аккорды.</Text>
+              <TextInput
+                style={styles.urlInput}
+                placeholder="Исполнитель (напр. The Beatles)"
+                placeholderTextColor="#333"
+                value={manualArtist}
+                onChangeText={setManualArtist}
+                autoCorrect={false}
+                returnKeyType="next"
+              />
+              <TextInput
+                style={[styles.urlInput, { marginTop: 8 }]}
+                placeholder="Название трека"
+                placeholderTextColor="#333"
+                value={manualTitle}
+                onChangeText={setManualTitle}
+                autoCorrect={false}
+                returnKeyType="search"
+                onSubmitEditing={handleManualSearch}
+              />
+              <TouchableOpacity style={[styles.identBtn, { marginTop: 8 }]} onPress={handleManualSearch} activeOpacity={0.8}>
+                <Ionicons name="search" size={22} color="#fff" />
+                <Text style={styles.identBtnText}>НАЙТИ ТЕКСТ И АККОРДЫ</Text>
+              </TouchableOpacity>
             </View>
           )}
 
           <Text style={styles.hint}>
-            AudD Music Recognition API (бесплатный tier, ~100 запросов/день).{'\n'}
-            Интернет-соединение обязательно.
+            Текст: lyrics.ovh (бесплатно) · Аккорды: Ultimate Guitar{'\n'}
+            AudD: ~100 распознаваний/день бесплатно
           </Text>
         </ScrollView>
       )}
@@ -692,15 +770,22 @@ const styles = StyleSheet.create({
   noticeRow:   { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 4 },
   noticeText:  { flex: 1, color: '#2a2a3a', fontSize: 10, lineHeight: 15 },
 
-  resultCard:  { backgroundColor: '#111118', borderRadius: 18, padding: 20, borderWidth: 1, borderColor: '#00e67622', gap: 4 },
-  resultHeader:{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  resultFound: { color: '#00e676', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  resultTitle: { color: '#fff', fontSize: 20, fontWeight: '800' },
-  resultArtist:{ color: '#7c4dff', fontSize: 14, fontWeight: '600' },
-  resultMeta:  { color: '#444', fontSize: 12 },
-  resultActions:{ flexDirection: 'row', gap: 8, marginTop: 12, flexWrap: 'wrap' },
-  chordsBtn:   { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#7c4dff44', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#7c4dff44' },
-  chordsBtnText:{ color: '#fff', fontSize: 13, fontWeight: '700' },
+  resultCard:  { backgroundColor: '#111118', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#00e67622', gap: 4 },
+  resultHeader:{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  resultFound: { color: '#00e676', fontSize: 10, fontWeight: '700', letterSpacing: 2 },
+  resultTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  resultArtist:{ color: '#7c4dff', fontSize: 13, fontWeight: '600' },
+  resultMeta:  { color: '#444', fontSize: 11 },
+  resultActions:{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
+  chordsBtn:   { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#7c4dff44', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#7c4dff44' },
+  chordsBtnText:{ color: '#fff', fontSize: 12, fontWeight: '700' },
+
+  lyricsWrap:  { marginTop: 12, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 10 },
+  lyricsHeader:{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  lyricsLabel: { color: '#333', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
+  lyricsToggle:{ color: '#555', fontSize: 11 },
+  lyricsText:  { color: '#777', fontSize: 12, lineHeight: 20 },
+  lyricsEmpty: { color: '#2a2a3a', fontSize: 11, fontStyle: 'italic' },
 
   /* Chord browser */
   browserHeader:{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#1e1e28' },
