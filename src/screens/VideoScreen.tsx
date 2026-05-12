@@ -59,17 +59,10 @@ export default function VideoScreen() {
   const loadVideos = useCallback(async () => {
     setLoading(true);
     try {
-      // Check first without dialog; request only if needed
-      const cur = await MediaLibrary.getPermissionsAsync();
-      let granted = cur.status === 'granted';
-      if (!granted) {
-        const { status } = await MediaLibrary.requestPermissionsAsync();
-        granted = status === 'granted';
-        setPerm(granted ? 'granted' : 'denied');
-      } else {
-        setPerm('granted');
-      }
-      if (!granted) { setLoading(false); return; }
+      // requestPermissionsAsync returns immediately if already granted (no dialog)
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      setPerm(status === 'granted' ? 'granted' : 'denied');
+      if (status !== 'granted') { setLoading(false); return; }
 
       let all: MediaLibrary.Asset[] = [];
       let after: string | undefined;

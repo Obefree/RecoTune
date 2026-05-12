@@ -209,12 +209,17 @@ export default function TunerScreen() {
 
         {/* ── Signal + Start/Stop ── */}
         <View style={styles.controlRow}>
-          {/* Signal bar */}
+          {/* Signal bar + dB */}
           <View style={styles.signalWrap}>
             <Text style={styles.signalLabel}>SIG</Text>
             <View style={styles.signalTrack}>
               <Animated.View style={[styles.signalBar, { width: signalWidth }]} />
             </View>
+            <Text style={styles.signalDb}>
+              {signalLevel > 0
+                ? `${Math.round(20 * Math.log10(signalLevel))} dB`
+                : '–∞ dB'}
+            </Text>
           </View>
 
           {/* Button */}
@@ -339,6 +344,7 @@ const styles = StyleSheet.create({
   signalLabel:{ color: '#444', fontSize: 9, letterSpacing: 1.5, fontWeight: '700', width: 24 },
   signalTrack:{ flex: 1, height: 4, backgroundColor: '#1e1e28', borderRadius: 2, overflow: 'hidden' },
   signalBar:  { height: 4, backgroundColor: '#00e676', borderRadius: 2 },
+  signalDb:   { color: '#444', fontSize: 10, fontWeight: '600', width: 52, textAlign: 'right' },
   btn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#1e1e28', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 50, borderWidth: 1, borderColor: '#2a2a38' },
   btnActive:  { backgroundColor: '#00e676', borderColor: '#00e676' },
   btnText:    { color: '#e0e0e0', fontSize: 13, fontWeight: '700', letterSpacing: 2 },

@@ -88,16 +88,10 @@ export default function PlayerScreen() {
   const loadDeviceAudio = useCallback(async () => {
     setLoadingLib(true);
     try {
-      const cur = await MediaLibrary.getPermissionsAsync();
-      let granted = cur.status === 'granted';
-      if (!granted) {
-        const { status } = await MediaLibrary.requestPermissionsAsync();
-        granted = status === 'granted';
-        setPerm(granted ? 'granted' : 'denied');
-      } else {
-        setPerm('granted');
-      }
-      if (!granted) { setLoadingLib(false); return; }
+      // requestPermissionsAsync returns immediately if already granted (no dialog)
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      setPerm(status === 'granted' ? 'granted' : 'denied');
+      if (status !== 'granted') { setLoadingLib(false); return; }
 
       let all: MediaLibrary.Asset[] = [];
       let after: string | undefined;
