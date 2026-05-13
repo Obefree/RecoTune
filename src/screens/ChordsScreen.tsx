@@ -400,7 +400,7 @@ export default function ChordsScreen() {
           const last = prev[prev.length - 1];
           if (msg.chord !== last && msg.chord !== '?') {
             const next = [...prev, msg.chord];
-            return next.length > 14 ? next.slice(-14) : next;
+            return next.length > 60 ? next.slice(-60) : next;
           }
           return prev;
         });
@@ -470,7 +470,7 @@ export default function ChordsScreen() {
   /* ── Identify ── */
   async function startIdentify() {
     if (isRecognizing) return;
-    setSongResult(null); setShowChordBrowser(false);
+    setSongResult(null);
     try {
       const perm = await Audio.requestPermissionsAsync();
       if (perm.status !== 'granted') { Alert.alert('Нет доступа к микрофону'); return; }
@@ -509,12 +509,26 @@ export default function ChordsScreen() {
       (form as any).append('api_token', 'test');
       (form as any).append('audio', base64);
       (form as any).append('return', 'timecode');
-      const res  = await fetch('https://api.audd.io/', { method: 'POST', body: form as any });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        const res = await fetch('https://api.audd.io/', { method: 'POST', body: form as any });
+        data = await res.json();
+      } catch (netErr) {
+        Alert.alert('Нет интернета', 'Проверьте подключение и попробуйте снова. Также можно найти песню вручную.');
+        return;
+      }
       if (data.status === 'success' && data.result) {
         setResultAndFetch(data.result as AuddResult);
+      } else if (data.status === 'error' && data.error?.error_code === 901) {
+        Alert.alert(
+          'Лимит API',
+          'Бесплатный токен AudD исчерпан (~3 запроса/день).\n\nИспользуйте вкладку "Вручную" — введите исполнителя и название.'
+        );
       } else {
-        Alert.alert('Не распознано', 'Попробуйте ещё раз или дольше держите инструмент у микрофона.');
+        Alert.alert(
+          'Не распознано',
+          'Песня не найдена в базе AudD.\n\nСовет: поднесите телефон ближе к колонке, уберите шум. Или найдите вручную.'
+        );
       }
     } catch (e) { Alert.alert('Ошибка распознавания', String(e)); }
     setIsRecognizing(false); setRecSecs(0);
@@ -687,67 +701,114 @@ export default function ChordsScreen() {
 
       {/* ── LIVE MODE ── */}
       {mode === 'live' && (
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ padding: 16, gap: 12 }}>
-          <View style={styles.chordCard}>
+        <View style={{ flex: 1 }}>
+
+          {/* Current chord — big */}
+          <View style={styles.liveTop}>
             <Text style={[styles.chordBig, { color: col }]}>{chord}</Text>
-            <Text style={styles.chordKey}>{key || (liveActive ? 'Анализ...' : 'Нажмите Start')}</Text>
+            <Text style={styles.chordKey}>{key || (liveActive ? 'Слушаю...' : 'Нажмите ▶ START')}</Text>
             {notes.length > 0 && (
               <View style={styles.notesRow}>
                 {notes.map((n, i) => (
-                  <View key={i} style={styles.notePill}>
-                    <Text style={styles.noteText}>{n}</Text>
-                  </View>
+                  <View key={i} style={styles.notePill}><Text style={styles.noteText}>{n}</Text></View>
                 ))}
               </View>
             )}
-            <View style={styles.confRow}>
-              <Text style={styles.confLabel}>Точность</Text>
-              <View style={styles.confTrack}>
-                <View style={[styles.confBar, {
-                  width: `${Math.min(100, Math.max(0, (confidence / 4) * 100))}%`,
-                  backgroundColor: col,
-                }]} />
+            {liveActive && (
+              <View style={styles.confRow}>
+                <Text style={styles.confLabel}>Уверенность</Text>
+                <View style={styles.confTrack}>
+                  <View style={[styles.confBar, {
+                    width: `${Math.min(100, Math.max(0, (confidence / 4) * 100))}%`,
+                    backgroundColor: col,
+                  }]} />
+                </View>
               </View>
-            </View>
+            )}
           </View>
 
-          {history.length > 0 && (
-            <View style={styles.histWrap}>
-              <Text style={styles.histLabel}>ИСТОРИЯ</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
-                <View style={styles.histRow}>
-                  {history.map((c, i) => (
-                    <View key={i} style={[styles.histPill, i === history.length - 1 && styles.histPillActive]}>
-                      <Text style={[styles.histPillText, i === history.length - 1 && { color: '#00e676' }]}>{c}</Text>
-                    </View>
-                  ))}
-                </View>
-              </ScrollView>
-            </View>
-          )}
-
+          {/* Error */}
           {liveError && (
-            <View style={styles.liveErrorCard}>
+            <View style={[styles.liveErrorCard, { marginHorizontal: 14 }]}>
               <Ionicons name="alert-circle" size={18} color="#ff5252" />
               <Text style={styles.liveErrorText}>{liveError}</Text>
             </View>
           )}
 
-          <TouchableOpacity
-            style={[styles.mainBtn, liveActive && styles.mainBtnStop]}
-            onPress={liveActive ? stopLive : startLive}
-            activeOpacity={0.8}
-          >
-            <Ionicons name={liveActive ? 'stop-circle' : 'mic-circle'} size={28} color="#fff" />
-            <Text style={styles.mainBtnText}>{liveActive ? 'STOP' : 'START'}</Text>
-          </TouchableOpacity>
+          {/* Accumulated chord sequence */}
+          <View style={styles.liveSeqCard}>
+            <View style={styles.liveSeqHeader}>
+              <Text style={styles.liveSeqTitle}>ОБНАРУЖЕННЫЕ АККОРДЫ</Text>
+              {history.length > 0 && (
+                <TouchableOpacity onPress={() => setHistory([])} style={{ padding: 4 }}>
+                  <Ionicons name="trash-outline" size={14} color="#444" />
+                </TouchableOpacity>
+              )}
+            </View>
 
-          <Text style={styles.hint}>
-            Играйте аккорды на гитаре рядом с микрофоном.{'\n'}
-            Алгоритм: хромаграмма + шаблонное сопоставление.
+            {history.length === 0 ? (
+              <Text style={styles.liveSeqEmpty}>
+                {liveActive
+                  ? 'Играйте аккорды — они появятся здесь...'
+                  : 'Нажмите START и играйте на гитаре.\nАккорды накопятся здесь для практики.'}
+              </Text>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false} style={styles.liveSeqScroll}>
+                <View style={styles.liveSeqRow}>
+                  {history.map((c, i) => (
+                    <View key={i} style={[styles.liveSeqPill, i === history.length - 1 && styles.liveSeqPillLast]}>
+                      <Text style={[styles.liveSeqPillText, i === history.length - 1 && { color: '#00e676' }]}>{c}</Text>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Save to Practice button */}
+            {history.length >= 2 && (
+              <TouchableOpacity
+                style={styles.liveSaveBtn}
+                onPress={() => {
+                  const seq = history.join(' ');
+                  setPracticeInput(seq);
+                  parsePracticeInput(seq);
+                  setPracticeChordIdx(0);
+                  switchMode('practice');
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="arrow-forward-circle" size={20} color="#fff" />
+                <Text style={styles.liveSaveBtnText}>ОТПРАВИТЬ В ПРАКТИКУ</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* START / STOP */}
+          <View style={styles.liveActions}>
+            <TouchableOpacity
+              style={[styles.mainBtn, liveActive && styles.mainBtnStop, { flex: 1 }]}
+              onPress={liveActive ? stopLive : startLive}
+              activeOpacity={0.8}
+            >
+              <Ionicons name={liveActive ? 'stop-circle' : 'mic-circle'} size={26} color="#fff" />
+              <Text style={styles.mainBtnText}>{liveActive ? 'STOP' : '▶ START'}</Text>
+            </TouchableOpacity>
+
+            {history.length > 0 && !liveActive && (
+              <TouchableOpacity
+                style={styles.liveClearBtn}
+                onPress={() => { setHistory([]); setChord('—'); setKey(''); setNotes([]); }}
+              >
+                <Ionicons name="refresh" size={20} color="#555" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={[styles.hint, { textAlign: 'center', margin: 12, marginTop: 0 }]}>
+            Подключите гитару или поднесите к колонке.{'\n'}
+            Алгоритм: хромаграмма · точность ~70% для чистого сигнала.
           </Text>
-        </ScrollView>
+        </View>
       )}
 
       {/* ── PRACTICE MODE ── */}
@@ -1230,6 +1291,22 @@ const styles = StyleSheet.create({
   mainBtnStop:{ backgroundColor: '#ff525288' },
   mainBtnText:{ color: '#fff', fontWeight: '800', fontSize: 14, letterSpacing: 1 },
   hint:       { color: '#333', fontSize: 11, textAlign: 'center', lineHeight: 18, marginTop: 4 },
+
+  /* Live mode layout */
+  liveTop:    { alignItems: 'center', paddingVertical: 16, paddingHorizontal: 16, backgroundColor: '#0a0a0f', borderBottomWidth: 1, borderColor: '#1e1e28' },
+  liveSeqCard:{ flex: 1, margin: 12, marginBottom: 8, backgroundColor: '#111118', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#1e1e28' },
+  liveSeqHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  liveSeqTitle:  { color: '#333', fontSize: 9, letterSpacing: 2 },
+  liveSeqEmpty:  { color: '#333', fontSize: 13, textAlign: 'center', lineHeight: 20, flex: 1, paddingVertical: 20 },
+  liveSeqScroll: { flex: 1 },
+  liveSeqRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 4 },
+  liveSeqPill:       { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a3a' },
+  liveSeqPillLast:   { backgroundColor: '#00e67622', borderColor: '#00e67655' },
+  liveSeqPillText:   { color: '#aaa', fontSize: 16, fontWeight: '700' },
+  liveSaveBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#7c4dff', borderRadius: 12, padding: 12, marginTop: 10 },
+  liveSaveBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 },
+  liveActions:   { flexDirection: 'row', gap: 10, paddingHorizontal: 14, marginBottom: 8 },
+  liveClearBtn:  { backgroundColor: '#1a1a24', borderRadius: 14, padding: 14, alignItems: 'center', justifyContent: 'center', width: 54 },
 
   /* Practice mode — chord input */
   progInput:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
