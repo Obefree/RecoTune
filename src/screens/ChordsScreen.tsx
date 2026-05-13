@@ -710,10 +710,10 @@ export default function ChordsScreen() {
     setPracticeInput(song.chords);
     parsePracticeInput(song.chords);
     setPracticeChordIdx(0);
+    setLyricsEditMode(false); // always show view mode after picking
     setShowLibrary(false);
     if (song.lyrics) {
       setPracticeLyrics(song.lyrics);
-      setLyricsEditMode(false);
     } else {
       setPracticeLyrics('');
       fetchLyrics(song.artist, song.title);
@@ -834,11 +834,11 @@ export default function ChordsScreen() {
             </View>
           )}
 
-          {/* ── Chord segments list ── main content, flex:1 */}
+          {/* ── Chord log — scrollable, flex:1, NO overlapping buttons inside ── */}
           <View style={styles.liveSegOuter}>
             <View style={styles.liveSeqHeader}>
               <Text style={styles.liveSeqTitle}>
-                {liveActive ? '● ЗАПИСЬ АККОРДОВ' : 'ОБНАРУЖЕННЫЕ АККОРДЫ'}
+                {liveActive ? '● ЗАПИСЬ' : 'АККОРДЫ'}
               </Text>
               {segments.length > 0 && (
                 <TouchableOpacity onPress={() => setSegments([])} style={{ padding: 6 }}>
@@ -852,31 +852,49 @@ export default function ChordsScreen() {
                 <Ionicons name="mic-outline" size={32} color="#1e1e28" />
                 <Text style={styles.liveSeqEmpty}>
                   {liveActive
-                    ? 'Играйте — аккорды появятся\nкогда звук стабилизируется (~0.7с)'
-                    : 'Нажмите START и играйте.\nКаждый стабильный аккорд будет записан.'}
+                    ? 'Играйте — аккорды появятся\nпо мере распознавания'
+                    : 'Нажмите СТАРТ и играйте.\nАккорды появятся один за другим.'}
                 </Text>
               </View>
             ) : (
               <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ padding: 10, gap: 6 }}>
+                contentContainerStyle={{ padding: 12, paddingBottom: 6 }}>
                 {(() => {
                   const maxDur = Math.max(...segments.map(s => s.durationMs), 1);
-                  return segments.map((seg, i) => (
-                    <View key={i} style={styles.liveSegRow}>
-                      <Text style={[styles.liveSegChord, i === segments.length - 1 && liveActive && { color: '#00e676' }]}>
-                        {seg.chord}
-                      </Text>
-                      <View style={styles.liveSegBarWrap}>
-                        <View style={[styles.liveSegBar, { width: `${Math.max(8, (seg.durationMs / maxDur) * 100)}%` as any }]} />
+                  return segments.map((seg, i) => {
+                    const isLast = i === segments.length - 1;
+                    return (
+                      <View key={i} style={[styles.liveSegRow, isLast && { opacity: liveActive ? 0.8 : 1 }]}>
+                        <Text style={[styles.liveSegChord, isLast && liveActive && { color: '#00e676' }]}>
+                          {seg.chord}
+                        </Text>
+                        <View style={styles.liveSegBarWrap}>
+                          <View style={[styles.liveSegBar, {
+                            width: `${Math.max(6, (seg.durationMs / maxDur) * 100)}%` as any,
+                            backgroundColor: isLast && liveActive ? '#00e67677' : '#7c4dff66',
+                          }]} />
+                        </View>
+                        <Text style={styles.liveSegDur}>{(seg.durationMs / 1000).toFixed(1)}s</Text>
                       </View>
-                      <Text style={styles.liveSegDur}>{(seg.durationMs / 1000).toFixed(1)}s</Text>
-                    </View>
-                  ));
+                    );
+                  });
                 })()}
               </ScrollView>
             )}
+          </View>
 
-            {segments.length >= 2 && (
+          {/* ── Action bar — СТАРТ + В ПРАКТИКУ (no overlap) ── */}
+          <View style={styles.liveActions}>
+            <TouchableOpacity
+              style={[styles.mainBtn, liveActive && styles.mainBtnStop, { flex: 1 }]}
+              onPress={liveActive ? stopLive : startLive}
+              activeOpacity={0.8}
+            >
+              <Ionicons name={liveActive ? 'stop-circle' : 'mic-circle'} size={24} color="#fff" />
+              <Text style={styles.mainBtnText}>{liveActive ? '■ СТОП' : '▶ СТАРТ'}</Text>
+            </TouchableOpacity>
+
+            {segments.length >= 2 && !liveActive && (
               <TouchableOpacity
                 style={styles.liveSaveBtn}
                 onPress={() => {
@@ -884,28 +902,17 @@ export default function ChordsScreen() {
                   setPracticeInput(seq);
                   parsePracticeInput(seq);
                   setPracticeChordIdx(0);
+                  setPracticeLyrics('');
                   switchMode('practice');
                 }}
                 activeOpacity={0.8}
               >
                 <Ionicons name="arrow-forward-circle" size={20} color="#fff" />
-                <Text style={styles.liveSaveBtnText}>В ПРАКТИКУ ({segments.length} аккордов)</Text>
+                <Text style={styles.liveSaveBtnText}>В ПРАКТИКУ</Text>
               </TouchableOpacity>
             )}
-          </View>
 
-          {/* ── START / STOP — always visible at bottom ── */}
-          <View style={styles.liveActions}>
-            <TouchableOpacity
-              style={[styles.mainBtn, liveActive && styles.mainBtnStop, { flex: 1 }]}
-              onPress={liveActive ? stopLive : startLive}
-              activeOpacity={0.8}
-            >
-              <Ionicons name={liveActive ? 'stop-circle' : 'mic-circle'} size={26} color="#fff" />
-              <Text style={styles.mainBtnText}>{liveActive ? '■ СТОП' : '▶ СТАРТ'}</Text>
-            </TouchableOpacity>
-
-            {segments.length > 0 && !liveActive && (
+            {segments.length > 0 && (
               <TouchableOpacity
                 style={styles.liveClearBtn}
                 onPress={() => { setSegments([]); setChord('—'); setKey(''); setNotes([]); }}
@@ -915,8 +922,8 @@ export default function ChordsScreen() {
             )}
           </View>
 
-          <Text style={[styles.hint, { textAlign: 'center', marginHorizontal: 12, marginBottom: 10 }]}>
-            Аккорд фиксируется после ~0.7с стабильного звука.{'\n'}Тихие паузы игнорируются.
+          <Text style={[styles.hint, { textAlign: 'center', marginHorizontal: 12, marginBottom: 8 }]}>
+            Аккорд фиксируется после ~0.7с стабильного звука
           </Text>
         </View>
       )}
@@ -1033,12 +1040,20 @@ export default function ChordsScreen() {
           {/* ── LYRICS SHEET — takes all remaining space ── */}
           <View style={styles.lyricsPanel}>
             <View style={styles.lyricsPanelHeader}>
-              <Text style={styles.lyricsPanelTitle}>
-                {lyricsEditMode ? 'РЕДАКТИРОВАТЬ ТЕКСТ' : 'ТЕКСТ С АККОРДАМИ'}
-              </Text>
-              <TouchableOpacity onPress={() => setLyricsEditMode(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Ionicons name={lyricsEditMode ? 'eye-outline' : 'create-outline'} size={15} color="#555" />
-                <Text style={{ color: '#555', fontSize: 10 }}>{lyricsEditMode ? 'просмотр' : 'ред.'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lyricsPanelTitle}>
+                  {lyricsEditMode ? 'РЕДАКТИРОВАТЬ' : practiceLyrics ? 'ТЕКСТ + АККОРДЫ' : 'ТЕКСТ'}
+                </Text>
+                {!practiceLyrics && !lyricsEditMode && (
+                  <Text style={{ color: '#333', fontSize: 9, marginTop: 1 }}>
+                    Выберите из БАЗЫ или нажмите ред.
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => setLyricsEditMode(v => !v)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4 }}>
+                <Ionicons name={lyricsEditMode ? 'eye-outline' : 'create-outline'} size={16} color="#666" />
+                <Text style={{ color: '#666', fontSize: 11 }}>{lyricsEditMode ? 'просмотр' : 'ред.'}</Text>
               </TouchableOpacity>
             </View>
 
@@ -1431,10 +1446,10 @@ const styles = StyleSheet.create({
   liveSegBarWrap:{ flex: 1, height: 8, backgroundColor: '#1a1a24', borderRadius: 4 },
   liveSegBar:    { height: 8, backgroundColor: '#7c4dff88', borderRadius: 4 },
   liveSegDur:    { color: '#444', fontSize: 11, width: 34, textAlign: 'right' },
-  liveSaveBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#7c4dff', borderRadius: 0, padding: 14, margin: 0 },
-  liveSaveBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 },
-  liveActions:   { flexDirection: 'row', gap: 10, padding: 12, paddingBottom: 10, borderTopWidth: 1, borderColor: '#1a1a24' },
-  liveClearBtn:  { backgroundColor: '#1a1a24', borderRadius: 14, padding: 14, alignItems: 'center', justifyContent: 'center', width: 54 },
+  liveSaveBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#7c4dff', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 14 },
+  liveSaveBtnText: { color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 0.3 },
+  liveActions:   { flexDirection: 'row', gap: 8, padding: 10, paddingBottom: 10, borderTopWidth: 1, borderColor: '#1a1a24' },
+  liveClearBtn:  { backgroundColor: '#1a1a24', borderRadius: 14, padding: 14, alignItems: 'center', justifyContent: 'center', width: 50 },
 
   /* Practice mode — chord input */
   progInput:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
