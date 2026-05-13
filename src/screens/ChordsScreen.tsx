@@ -159,6 +159,137 @@ window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd===
 
 const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
 
+/* ─── Guitar chord fingering database ─────────────────────────────────────
+ * frets[i] → string order: E6 A5 D4 G3 B2 e1
+ * -1 = muted, 0 = open, N = fret number
+ * barre = fret number of barre bar (if any)
+ * ─────────────────────────────────────────────────────────────────────── */
+const CHORD_DB: Record<string, { frets: number[]; barre?: number }> = {
+  'C':    { frets: [-1,3,2,0,1,0] },    'Cm':   { frets: [-1,3,5,5,4,3], barre:3 },
+  'C7':   { frets: [-1,3,2,3,1,0] },    'Cmaj7':{ frets: [-1,3,2,0,0,0] },
+  'Cadd9':{ frets: [-1,3,2,0,3,3] },    'Csus2':{ frets: [-1,3,0,0,1,3] },
+  'D':    { frets: [-1,-1,0,2,3,2] },   'Dm':   { frets: [-1,-1,0,2,3,1] },
+  'D7':   { frets: [-1,-1,0,2,1,2] },   'Dmaj7':{ frets: [-1,-1,0,2,2,2] },
+  'Dsus2':{ frets: [-1,-1,0,2,3,0] },   'Dsus4':{ frets: [-1,-1,0,2,3,3] },
+  'E':    { frets: [0,2,2,1,0,0] },     'Em':   { frets: [0,2,2,0,0,0] },
+  'E7':   { frets: [0,2,0,1,0,0] },     'Emaj7':{ frets: [0,2,1,1,0,0] },
+  'F':    { frets: [1,3,3,2,1,1], barre:1 }, 'Fm': { frets: [1,3,3,1,1,1], barre:1 },
+  'F7':   { frets: [1,3,1,2,1,1], barre:1 }, 'Fmaj7':{ frets: [-1,-1,3,2,1,0] },
+  'G':    { frets: [3,2,0,0,0,3] },     'Gm':   { frets: [3,5,5,3,3,3], barre:3 },
+  'G7':   { frets: [3,2,0,0,0,1] },     'Gmaj7':{ frets: [3,2,0,0,0,2] },
+  'A':    { frets: [-1,0,2,2,2,0] },    'Am':   { frets: [-1,0,2,2,1,0] },
+  'A7':   { frets: [-1,0,2,0,2,0] },    'Amaj7':{ frets: [-1,0,2,1,2,0] },
+  'Asus2':{ frets: [-1,0,2,2,0,0] },    'Asus4':{ frets: [-1,0,2,2,3,0] },
+  'B':    { frets: [-1,2,4,4,4,2], barre:2 }, 'Bm':  { frets: [-1,2,4,4,3,2], barre:2 },
+  'B7':   { frets: [-1,2,1,2,0,2] },    'Bmaj7':{ frets: [-1,2,4,3,4,2], barre:2 },
+  'Bb':   { frets: [-1,1,3,3,3,1], barre:1 }, 'Bbm': { frets: [-1,1,3,3,2,1], barre:1 },
+  'F#m':  { frets: [2,4,4,2,2,2], barre:2 }, 'C#m': { frets: [-1,4,6,6,5,4], barre:4 },
+  'G#m':  { frets: [4,6,6,4,4,4], barre:4 }, 'D#m': { frets: [-1,6,8,8,7,6], barre:6 },
+  'Am7':  { frets: [-1,0,2,0,1,0] },    'Em7':  { frets: [0,2,2,0,3,0] },
+  'Dm7':  { frets: [-1,-1,0,2,1,1] },   'Bm7':  { frets: [-1,2,4,2,3,2], barre:2 },
+  'Cm7':  { frets: [-1,3,5,3,4,3], barre:3 }, 'Fm7': { frets: [1,3,1,1,1,1], barre:1 },
+};
+
+/* ─── Guitar chord diagram component ─── */
+function ChordDiagram({ name }: { name: string }) {
+  const def = CHORD_DB[name] ?? null;
+  const S = 6; const NF = 4;
+  const G = 14; const FH = 18;
+  const PL = 10; const PT = 16;
+  const W = (S - 1) * G + PL * 2;
+  const H = NF * FH + PT + 10;
+
+  if (!def) {
+    return (
+      <View style={{ width: W, height: H, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: '#2a2a3a', fontSize: 20, fontWeight: '900' }}>?</Text>
+      </View>
+    );
+  }
+  const { frets, barre } = def;
+  const fNums = frets.filter(f => f > 0);
+  const minF = fNums.length ? Math.min(...fNums) : 1;
+  const base = barre != null ? barre : (minF > 3 ? minF - 1 : 1);
+  const showNum = base > 1;
+  const gx = (si: number) => PL + si * G;
+  const gy = (fi: number) => PT + fi * FH;
+
+  return (
+    <View style={{ width: W, height: H }}>
+      {/* Nut line */}
+      {!showNum && (
+        <View style={{ position:'absolute', left:PL, top:PT, width:(S-1)*G, height:3, backgroundColor:'#666', borderRadius:2 }} />
+      )}
+      {showNum && (
+        <Text style={{ position:'absolute', right:0, top: PT + FH/2 - 5, color:'#555', fontSize:8 }}>{base}fr</Text>
+      )}
+      {/* Fret lines */}
+      {Array.from({ length: NF + 1 }).map((_,fi) => (
+        <View key={fi} style={{ position:'absolute', left:PL, top:gy(fi), width:(S-1)*G, height:1, backgroundColor:'#222' }} />
+      ))}
+      {/* String lines */}
+      {Array.from({ length: S }).map((_,si) => (
+        <View key={si} style={{ position:'absolute', left:gx(si), top:PT, width:1, height:NF*FH, backgroundColor:'#252530' }} />
+      ))}
+      {/* Barre bar */}
+      {barre != null && (
+        <View style={{ position:'absolute', left:PL, top:gy(barre-base)+FH*0.2, width:(S-1)*G, height:FH*0.6, backgroundColor:'#ff980055', borderRadius:FH*0.3 }} />
+      )}
+      {/* Per-string dots & indicators */}
+      {frets.map((f, si) => {
+        const x = gx(si);
+        if (f < 0) return <Text key={si} style={{ position:'absolute', left:x-4, top:1, color:'#555', fontSize:9, fontWeight:'700' }}>✕</Text>;
+        if (f === 0) return <Text key={si} style={{ position:'absolute', left:x-4, top:2, color:'#444', fontSize:10 }}>○</Text>;
+        const rf = f - base + 1;
+        if (rf < 1 || rf > NF) return null;
+        const cy = gy(rf - 1) + FH * 0.5;
+        const r = G * 0.38;
+        const isBarre = barre != null && f === barre;
+        return (
+          <View key={si} style={{ position:'absolute', left:x-r, top:cy-r, width:r*2, height:r*2, borderRadius:r, backgroundColor: isBarre ? '#ff9800bb' : '#7c4dff' }} />
+        );
+      })}
+    </View>
+  );
+}
+
+/* ─── Chord+lyrics line renderer ─── */
+// Input: "[Am]Hello [F]world" → renders chord names (orange) above words
+function ChordLyricsLine({ line, currentChord, onChordTap }: { line: string; currentChord: string; onChordTap: (c: string) => void }) {
+  // Split into segments: [{chord?, text}]
+  const segs: { chord?: string; text: string }[] = [];
+  let remaining = line;
+  while (remaining.length > 0) {
+    const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/);
+    if (m) {
+      // find next chord marker or end
+      const afterChord = m[2];
+      const nextChord = afterChord.match(/\[([A-G][^\]]*)\]/);
+      const word = nextChord ? afterChord.slice(0, afterChord.indexOf('[')) : afterChord;
+      segs.push({ chord: m[1], text: word });
+      remaining = nextChord ? afterChord.slice(afterChord.indexOf('[')) : '';
+    } else {
+      segs.push({ text: remaining });
+      remaining = '';
+    }
+  }
+  if (segs.length === 0) return <Text style={{ color: '#666', fontSize: 13, lineHeight: 20 }}>{line}</Text>;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 2 }}>
+      {segs.map((seg, i) => (
+        <View key={i} style={{ alignItems: 'flex-start', marginRight: 2, marginBottom: 4 }}>
+          {seg.chord ? (
+            <TouchableOpacity onPress={() => onChordTap(seg.chord!)}>
+              <Text style={{ color: seg.chord === currentChord ? '#ff9800' : '#7c4dff', fontSize: 10, fontWeight: '800', lineHeight: 14, marginBottom: 1 }}>{seg.chord}</Text>
+            </TouchableOpacity>
+          ) : <View style={{ height: 15 }} />}
+          <Text style={{ color: '#888', fontSize: 13, lineHeight: 18 }}>{seg.text || ' '}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 type Mode = 'live' | 'practice' | 'identify';
 
 export default function ChordsScreen() {
@@ -187,6 +318,7 @@ export default function ChordsScreen() {
 
   /* ── Lyrics in practice ── */
   const [practiceLyrics, setPracticeLyrics] = useState('');
+  const [lyricsEditMode, setLyricsEditMode] = useState(false);
 
   /* ── Identify state ── */
   const [recSecs, setRecSecs]         = useState(0);
@@ -585,7 +717,7 @@ export default function ChordsScreen() {
       {mode === 'practice' && (
         <View style={{ flex: 1 }}>
 
-          {/* ① Chord progression input */}
+          {/* ① Chord input row */}
           <View style={styles.progInput}>
             <TextInput
               style={styles.progTextField}
@@ -608,48 +740,18 @@ export default function ChordsScreen() {
             )}
           </View>
 
-          {/* ② Chord navigation */}
-          <View style={styles.chordNav}>
-            <TouchableOpacity onPress={practicePrev} style={styles.chordNavArrow} disabled={practiceChordIdx <= 0}>
-              <Ionicons name="chevron-back" size={26} color={practiceChordIdx > 0 ? '#ccc' : '#222'} />
-            </TouchableOpacity>
-
-            {/* Chord pills — scrollable, tappable */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chordPillsScroll}
-              contentContainerStyle={styles.chordPillsRow}>
-              {practiceChords.map((c, i) => (
-                <TouchableOpacity
-                  key={i}
-                  style={[styles.chordPill, i === practiceChordIdx && styles.chordPillActive]}
-                  onPress={() => setPracticeChordIdx(i)}
-                >
-                  <Text style={[styles.chordPillText, i === practiceChordIdx && { color: '#ff9800', fontSize: 18 }]}>
-                    {c}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <TouchableOpacity onPress={practiceNext} style={styles.chordNavArrow}
-              disabled={practiceChordIdx >= practiceChords.length - 1}>
-              <Ionicons name="chevron-forward" size={26}
-                color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
-            </TouchableOpacity>
-          </View>
-
-          {/* ③ Voice pitch panel */}
-          <View style={styles.voicePanel}>
-            <View style={styles.voiceLeft}>
-              <Text style={styles.voiceLabel}>ГОЛОС</Text>
-              <Text style={[styles.voiceNote,
-                { color: voiceNote === '—' ? '#333' : voiceInChord ? '#00e676' : '#ff9800' }]}>
-                {voiceNote}
-              </Text>
-              {voiceFreq > 0 && <Text style={styles.voiceHz}>{voiceFreq} Hz</Text>}
+          {/* ② Diagram + chord info row */}
+          <View style={styles.diagRow}>
+            {/* Guitar diagram */}
+            <View style={styles.diagBox}>
+              <ChordDiagram name={practiceCurrentChord} />
             </View>
 
-            <View style={styles.voiceMid}>
-              <Text style={styles.chordTonesLabel}>НОТЫ АККОРДА {practiceCurrentChord}</Text>
+            {/* Chord name + tones + voice */}
+            <View style={styles.diagInfo}>
+              <Text style={styles.diagChordName}>{practiceCurrentChord || '—'}</Text>
+
+              {/* Chord tones */}
               <View style={styles.chordTonesRow}>
                 {chordTones.length > 0
                   ? chordTones.map((n, i) => (
@@ -657,9 +759,23 @@ export default function ChordsScreen() {
                         <Text style={[styles.chordToneText, n === voiceNoteBase && { color: '#00e676' }]}>{n}</Text>
                       </View>
                     ))
-                  : <Text style={styles.chordTonesEmpty}>введите аккорды выше</Text>
+                  : <Text style={styles.chordTonesEmpty}>введите аккорды</Text>
                 }
               </View>
+
+              {/* Voice note */}
+              <View style={styles.diagVoiceRow}>
+                <Ionicons name="mic" size={11} color="#444" />
+                <Text style={[styles.diagVoiceNote, { color: voiceNote === '—' ? '#333' : voiceInChord ? '#00e676' : '#ff9800' }]}>
+                  {voiceNote}
+                </Text>
+                {voiceFreq > 0 && <Text style={styles.diagVoiceHz}>{voiceFreq}Hz</Text>}
+                {voiceNote !== '—' && (
+                  <Ionicons name={voiceInChord ? 'checkmark-circle' : 'alert-circle'} size={14} color={voiceInChord ? '#00e676' : '#ff9800'} />
+                )}
+              </View>
+
+              {/* Cents bar */}
               {voiceFreq > 0 && (
                 <View style={styles.centsWrap}>
                   <Text style={styles.centsEdge}>−50</Text>
@@ -674,34 +790,71 @@ export default function ChordsScreen() {
                 </View>
               )}
             </View>
-
-            <View style={styles.voiceRight}>
-              {voiceNote !== '—' && (
-                <Ionicons
-                  name={voiceInChord ? 'checkmark-circle' : 'alert-circle'}
-                  size={28}
-                  color={voiceInChord ? '#00e676' : '#ff9800'}
-                />
-              )}
-            </View>
           </View>
 
-          {/* ④ Lyrics */}
+          {/* ③ Chord navigation */}
+          <View style={styles.chordNav}>
+            <TouchableOpacity onPress={practicePrev} style={styles.chordNavArrow} disabled={practiceChordIdx <= 0}>
+              <Ionicons name="chevron-back" size={24} color={practiceChordIdx > 0 ? '#ccc' : '#222'} />
+            </TouchableOpacity>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chordPillsScroll}
+              contentContainerStyle={styles.chordPillsRow}>
+              {practiceChords.map((c, i) => (
+                <TouchableOpacity key={i}
+                  style={[styles.chordPill, i === practiceChordIdx && styles.chordPillActive]}
+                  onPress={() => setPracticeChordIdx(i)}>
+                  <Text style={[styles.chordPillText, i === practiceChordIdx && { color: '#ff9800', fontSize: 16 }]}>{c}</Text>
+                </TouchableOpacity>
+              ))}
+              {practiceChords.length === 0 && (
+                <Text style={{ color: '#2a2a3a', fontSize: 11, alignSelf: 'center', paddingHorizontal: 8 }}>нет аккордов — введите выше</Text>
+              )}
+            </ScrollView>
+            <TouchableOpacity onPress={practiceNext} style={styles.chordNavArrow}
+              disabled={practiceChordIdx >= practiceChords.length - 1}>
+              <Ionicons name="chevron-forward" size={24}
+                color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
+            </TouchableOpacity>
+          </View>
+
+          {/* ④ Lyrics — toggle edit / chord-view */}
           <View style={styles.lyricsPanel}>
             <View style={styles.lyricsPanelHeader}>
               <Text style={styles.lyricsPanelTitle}>ТЕКСТ</Text>
+              <TouchableOpacity onPress={() => setLyricsEditMode(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Ionicons name={lyricsEditMode ? 'eye-outline' : 'create-outline'} size={15} color="#555" />
+                <Text style={{ color: '#555', fontSize: 10 }}>{lyricsEditMode ? 'просмотр' : 'ред.'}</Text>
+              </TouchableOpacity>
             </View>
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              <TextInput
-                style={styles.lyricsInput}
-                multiline
-                placeholder="Вставьте текст песни здесь (или нажмите 📄 вверху после поиска)..."
-                placeholderTextColor="#333"
-                value={practiceLyrics}
-                onChangeText={setPracticeLyrics}
-                scrollEnabled={false}
-              />
-            </ScrollView>
+            {lyricsEditMode ? (
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <TextInput
+                  style={styles.lyricsInput}
+                  multiline
+                  placeholder={'Вставьте текст.\nЧтобы показать аккорды над словами — используйте [Am]Привет [F]мир\nИли просто вставьте текст без аккордов.'}
+                  placeholderTextColor="#2a2a3a"
+                  value={practiceLyrics}
+                  onChangeText={setPracticeLyrics}
+                  scrollEnabled={false}
+                />
+              </ScrollView>
+            ) : (
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                {practiceLyrics
+                  ? practiceLyrics.split('\n').map((line, li) => (
+                      <ChordLyricsLine key={li} line={line} currentChord={practiceCurrentChord}
+                        onChordTap={(c) => {
+                          const idx = practiceChords.indexOf(c);
+                          if (idx >= 0) setPracticeChordIdx(idx);
+                        }}
+                      />
+                    ))
+                  : <Text style={{ color: '#2a2a3a', fontSize: 12, padding: 8 }}>
+                      Нажмите карандаш чтобы добавить текст.{'\n'}Формат с аккордами: [Am]Слова [F]текст
+                    </Text>
+                }
+              </ScrollView>
+            )}
           </View>
 
           {/* ⑤ Bottom toolbar */}
@@ -731,157 +884,179 @@ export default function ChordsScreen() {
         </View>
       )}
 
-      {/* ── IDENTIFY MODE ── */}
+      {/* ── IDENTIFY MODE — flex layout, no empty space ── */}
       {mode === 'identify' && (
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ padding: 14, gap: 12 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Result */}
+        <View style={{ flex: 1 }}>
+
+          {/* Result card (scrollable, compact) */}
           {songResult && (
-            <View style={styles.resultCard}>
-              <View style={styles.resultHeader}>
-                <Ionicons name="checkmark-circle" size={20} color="#00e676" />
-                <Text style={styles.resultFound}>НАЙДЕНО</Text>
-                <TouchableOpacity onPress={() => { setSongResult(null); setLyrics(null); }} style={{ marginLeft: 'auto' as any }}>
-                  <Ionicons name="close" size={18} color="#444" />
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.resultTitle}>{songResult.title}</Text>
-              <Text style={styles.resultArtist}>{songResult.artist}</Text>
-              {songResult.album && (
-                <Text style={styles.resultMeta}>{songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0,4)}` : ''}</Text>
-              )}
-              <View style={styles.resultActions}>
-                <TouchableOpacity style={styles.chordsBtn} onPress={() => openChords(songResult.artist, songResult.title)}>
-                  <Ionicons name="musical-note" size={15} color="#fff" />
-                  <Text style={styles.chordsBtnText}>Аккорды (UG)</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#ff980022', borderColor: '#ff980044' }]}
-                  onPress={() => { switchMode('practice'); }}>
-                  <Ionicons name="person" size={15} color="#ff9800" />
-                  <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>В Практику</Text>
-                </TouchableOpacity>
-                {songResult.song_link ? (
-                  <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#1db95422', borderColor: '#1db95444' }]}
-                    onPress={() => { setChordUrl(songResult.song_link!); setShowChordBrowser(true); }}>
-                    <Ionicons name="link" size={15} color="#1db954" />
-                    <Text style={[styles.chordsBtnText, { color: '#1db954' }]}>Открыть</Text>
+            <ScrollView
+              ref={scrollRef}
+              style={styles.identResultScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.resultCard}>
+                <View style={styles.resultHeader}>
+                  <Ionicons name="checkmark-circle" size={20} color="#00e676" />
+                  <Text style={styles.resultFound}>НАЙДЕНО</Text>
+                  <TouchableOpacity onPress={() => { setSongResult(null); setLyrics(null); }} style={{ marginLeft: 'auto' as any }}>
+                    <Ionicons name="close" size={18} color="#444" />
                   </TouchableOpacity>
-                ) : null}
-              </View>
-              <View style={styles.lyricsWrap}>
-                <View style={styles.lyricsHeader}>
-                  <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
-                  {lyrics && (
-                    <TouchableOpacity onPress={() => setShowFullLyrics(v => !v)}>
-                      <Text style={styles.lyricsToggle}>{showFullLyrics ? 'Свернуть' : 'Развернуть'}</Text>
+                </View>
+                <Text style={styles.resultTitle}>{songResult.title}</Text>
+                <Text style={styles.resultArtist}>{songResult.artist}</Text>
+                {songResult.album && (
+                  <Text style={styles.resultMeta}>{songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0,4)}` : ''}</Text>
+                )}
+                <View style={styles.resultActions}>
+                  <TouchableOpacity style={styles.chordsBtn} onPress={() => openChords(songResult.artist, songResult.title)}>
+                    <Ionicons name="musical-note" size={15} color="#fff" />
+                    <Text style={styles.chordsBtnText}>Аккорды (UG)</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#ff980022', borderColor: '#ff980044' }]}
+                    onPress={() => { switchMode('practice'); }}>
+                    <Ionicons name="person" size={15} color="#ff9800" />
+                    <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>В Практику</Text>
+                  </TouchableOpacity>
+                  {songResult.song_link ? (
+                    <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#1db95422', borderColor: '#1db95444' }]}
+                      onPress={() => { setChordUrl(songResult.song_link!); setShowChordBrowser(true); }}>
+                      <Ionicons name="link" size={15} color="#1db954" />
+                      <Text style={[styles.chordsBtnText, { color: '#1db954' }]}>Открыть</Text>
                     </TouchableOpacity>
+                  ) : null}
+                </View>
+                <View style={styles.lyricsWrap}>
+                  <View style={styles.lyricsHeader}>
+                    <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
+                    {lyrics && (
+                      <TouchableOpacity onPress={() => setShowFullLyrics(v => !v)}>
+                        <Text style={styles.lyricsToggle}>{showFullLyrics ? 'Свернуть' : 'Развернуть'}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  {lyricsLoading ? (
+                    <ActivityIndicator color="#555" size="small" style={{ marginTop: 8 }} />
+                  ) : lyrics ? (
+                    <Text style={styles.lyricsText} numberOfLines={showFullLyrics ? undefined : 8}>{lyrics}</Text>
+                  ) : (
+                    <Text style={styles.lyricsEmpty}>Текст не найден</Text>
                   )}
                 </View>
-                {lyricsLoading ? (
-                  <ActivityIndicator color="#555" size="small" style={{ marginTop: 8 }} />
-                ) : lyrics ? (
-                  <Text style={styles.lyricsText} numberOfLines={showFullLyrics ? undefined : 8}>{lyrics}</Text>
-                ) : (
-                  <Text style={styles.lyricsEmpty}>Текст не найден</Text>
-                )}
               </View>
-            </View>
+            </ScrollView>
           )}
 
-          {/* Source selector */}
-          <View style={styles.sourceRow}>
+          {/* Source tabs — large, always visible */}
+          <View style={styles.identTabRow}>
             {([
-              ['mic','ear','Слушать'],['file','document','Файл'],
-              ['yt','logo-youtube','YouTube'],['manual','create','Вручную'],
-            ] as const).map(([src, icon, label]) => (
+              ['mic',    'ear',          'Слушать',  '#7c4dff'],
+              ['file',   'document',     'Файл',     '#ff9800'],
+              ['yt',     'logo-youtube', 'YouTube',  '#ff0000'],
+              ['manual', 'create',       'Вручную',  '#00e676'],
+            ] as const).map(([src, icon, label, accent]) => (
               <TouchableOpacity key={src}
-                style={[styles.srcBtn, identSource === src && styles.srcBtnActive]}
-                onPress={() => setIdentSource(src)}>
-                <Ionicons name={icon as any} size={15} color={identSource === src ? '#0a0a0f' : '#555'} />
-                <Text style={[styles.srcLabel, identSource === src && { color: '#0a0a0f' }]}>{label}</Text>
+                style={[styles.identTab, identSource === src && { backgroundColor: accent + '22', borderColor: accent + '88' }]}
+                onPress={() => setIdentSource(src)}
+              >
+                <Ionicons name={icon as any} size={22} color={identSource === src ? accent : '#444'} />
+                <Text style={[styles.identTabText, identSource === src && { color: accent }]}>{label}</Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          {identSource === 'mic' && (
-            <View style={styles.identCard}>
-              <Text style={styles.identSub}>Поднесите телефон к колонке — запись 10 с → отправка в AudD.</Text>
-              {isRecognizing ? (
-                <View style={styles.recProgress}>
-                  <ActivityIndicator color="#7c4dff" size="large" />
-                  <Text style={styles.recSecs}>{recSecs} / 10 с</Text>
-                  <TouchableOpacity style={styles.cancelBtn} onPress={() => { if (timerRef.current) clearInterval(timerRef.current); stopRec(); setIsRecognizing(false); }}>
-                    <Text style={styles.cancelText}>Отмена</Text>
+          {/* Action area — fills the rest of the screen */}
+          <View style={styles.identActionArea}>
+
+            {identSource === 'mic' && (
+              <>
+                <Ionicons name="ear-outline" size={56} color="#7c4dff44" />
+                <Text style={styles.identActionTitle}>Распознавание по звуку</Text>
+                <Text style={styles.identActionSub}>Поднесите телефон к колонке.{'\n'}Запись 10 с → AudD (~100 запросов/день)</Text>
+                {isRecognizing ? (
+                  <View style={styles.recProgressBig}>
+                    <ActivityIndicator color="#7c4dff" size="large" />
+                    <Text style={styles.recSecsBig}>{recSecs} / 10 с</Text>
+                    <TouchableOpacity style={styles.cancelBtn} onPress={() => { if (timerRef.current) clearInterval(timerRef.current); stopRec(); setIsRecognizing(false); }}>
+                      <Text style={styles.cancelText}>Отмена</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={styles.identBtnBig} onPress={startIdentify} activeOpacity={0.8}>
+                    <Ionicons name="ear" size={28} color="#fff" />
+                    <Text style={styles.identBtnBigText}>СЛУШАТЬ И РАСПОЗНАТЬ</Text>
                   </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity style={styles.identBtn} onPress={startIdentify} activeOpacity={0.8}>
-                  <Ionicons name="ear" size={22} color="#fff" />
-                  <Text style={styles.identBtnText}>СЛУШАТЬ И РАСПОЗНАТЬ</Text>
+                )}
+              </>
+            )}
+
+            {identSource === 'file' && (
+              <>
+                <Ionicons name="musical-note-outline" size={56} color="#ff980044" />
+                <Text style={styles.identActionTitle}>Распознать из файла</Text>
+                <Text style={styles.identActionSub}>MP3, AAC, WAV с устройства.{'\n'}Файл отправляется в AudD для анализа.</Text>
+                {fileLoading ? (
+                  <View style={styles.recProgressBig}>
+                    <ActivityIndicator color="#ff9800" size="large" />
+                    <Text style={[styles.recSecsBig, { color: '#ff9800', fontSize: 16 }]}>Распознавание...</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#ff980099' }]} onPress={pickFileAndIdentify} activeOpacity={0.8}>
+                    <Ionicons name="folder-open" size={28} color="#fff" />
+                    <Text style={styles.identBtnBigText}>ВЫБРАТЬ ФАЙЛ</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
+            {identSource === 'yt' && (
+              <>
+                <Ionicons name="logo-youtube" size={56} color="#ff000033" />
+                <Text style={styles.identActionTitle}>По ссылке YouTube</Text>
+                <Text style={styles.identActionSub}>Вставьте ссылку — получим название{'\n'}и текст через oEmbed API.</Text>
+                <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 12 }]}
+                  placeholder="https://youtube.com/watch?v=..."
+                  placeholderTextColor="#333" value={ytUrl} onChangeText={setYtUrl}
+                  autoCapitalize="none" autoCorrect={false} keyboardType="url"
+                  returnKeyType="search" onSubmitEditing={handleYouTube} />
+                {ytLoading ? (
+                  <ActivityIndicator color="#ff0000" />
+                ) : (
+                  <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#cc000099' }]} onPress={handleYouTube} activeOpacity={0.8}>
+                    <Ionicons name="logo-youtube" size={28} color="#fff" />
+                    <Text style={styles.identBtnBigText}>НАЙТИ ПО ССЫЛКЕ</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
+            {identSource === 'manual' && (
+              <>
+                <Ionicons name="search-outline" size={56} color="#00e67633" />
+                <Text style={styles.identActionTitle}>Поиск вручную</Text>
+                <Text style={styles.identActionSub}>Введите исполнителя и название —{'\n'}найдём текст и аккорды.</Text>
+                <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 10 }]}
+                  placeholder="Исполнитель (напр. The Beatles)"
+                  placeholderTextColor="#333" value={manualArtist} onChangeText={setManualArtist}
+                  autoCorrect={false} returnKeyType="next" />
+                <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 12 }]}
+                  placeholder="Название трека"
+                  placeholderTextColor="#333" value={manualTitle} onChangeText={setManualTitle}
+                  autoCorrect={false} returnKeyType="search" onSubmitEditing={handleManualSearch} />
+                <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#00e67688' }]} onPress={handleManualSearch} activeOpacity={0.8}>
+                  <Ionicons name="search" size={28} color="#fff" />
+                  <Text style={styles.identBtnBigText}>НАЙТИ ТЕКСТ И АККОРДЫ</Text>
                 </TouchableOpacity>
-              )}
-            </View>
-          )}
+              </>
+            )}
 
-          {identSource === 'file' && (
-            <View style={styles.identCard}>
-              <Text style={styles.identSub}>Выберите MP3, AAC, WAV с устройства — отправка в AudD.</Text>
-              {fileLoading ? (
-                <View style={styles.recProgress}>
-                  <ActivityIndicator color="#7c4dff" size="large" />
-                  <Text style={styles.recSecs}>Распознавание...</Text>
-                </View>
-              ) : (
-                <TouchableOpacity style={[styles.identBtn, { backgroundColor: '#ff980099' }]} onPress={pickFileAndIdentify} activeOpacity={0.8}>
-                  <Ionicons name="folder-open" size={22} color="#fff" />
-                  <Text style={styles.identBtnText}>ВЫБРАТЬ ФАЙЛ</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+            <Text style={styles.identFooter}>
+              lyrics.ovh · Ultimate Guitar · AudD
+            </Text>
+          </View>
 
-          {identSource === 'yt' && (
-            <View style={styles.identCard}>
-              <Text style={styles.identSub}>Вставьте ссылку YouTube — получим название и текст.</Text>
-              <TextInput style={styles.urlInput} placeholder="https://youtube.com/watch?v=..."
-                placeholderTextColor="#333" value={ytUrl} onChangeText={setYtUrl}
-                autoCapitalize="none" autoCorrect={false} keyboardType="url"
-                returnKeyType="search" onSubmitEditing={handleYouTube} />
-              {ytLoading ? <ActivityIndicator color="#ff0000" style={{ marginTop: 10 }} /> : (
-                <TouchableOpacity style={[styles.identBtn, { backgroundColor: '#cc000099' }]} onPress={handleYouTube} activeOpacity={0.8}>
-                  <Ionicons name="logo-youtube" size={22} color="#fff" />
-                  <Text style={styles.identBtnText}>НАЙТИ ПО ССЫЛКЕ</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-
-          {identSource === 'manual' && (
-            <View style={styles.identCard}>
-              <Text style={styles.identSub}>Введите исполнителя и название — найдём текст и аккорды.</Text>
-              <TextInput style={styles.urlInput} placeholder="Исполнитель (напр. The Beatles)"
-                placeholderTextColor="#333" value={manualArtist} onChangeText={setManualArtist}
-                autoCorrect={false} returnKeyType="next" />
-              <TextInput style={[styles.urlInput, { marginTop: 8 }]} placeholder="Название трека"
-                placeholderTextColor="#333" value={manualTitle} onChangeText={setManualTitle}
-                autoCorrect={false} returnKeyType="search" onSubmitEditing={handleManualSearch} />
-              <TouchableOpacity style={[styles.identBtn, { marginTop: 8 }]} onPress={handleManualSearch} activeOpacity={0.8}>
-                <Ionicons name="search" size={22} color="#fff" />
-                <Text style={styles.identBtnText}>НАЙТИ ТЕКСТ И АККОРДЫ</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <Text style={styles.hint}>
-            Текст: lyrics.ovh (бесплатно) · Аккорды: Ultimate Guitar{'\n'}
-            AudD: ~100 распознаваний/день бесплатно
-          </Text>
-        </ScrollView>
+        </View>
       )}
 
       {/* Hidden engine WebView */}
@@ -956,19 +1131,27 @@ const styles = StyleSheet.create({
   voiceNote:  { fontSize: 30, fontWeight: '900', letterSpacing: -1 },
   voiceHz:    { color: '#444', fontSize: 9 },
   voiceMid:   { flex: 1 },
-  chordTonesLabel: { color: '#444', fontSize: 9, letterSpacing: 1, marginBottom: 4 },
   chordTonesRow:   { flexDirection: 'row', gap: 4, flexWrap: 'wrap', marginBottom: 4 },
   chordTonePill:   { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#1a1a24', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a3a' },
   chordTonePillActive: { backgroundColor: '#00e67622', borderColor: '#00e67655' },
   chordToneText:   { color: '#666', fontSize: 12, fontWeight: '700' },
-  chordTonesEmpty: { color: '#333', fontSize: 12 },
+  chordTonesEmpty: { color: '#2a2a3a', fontSize: 11 },
   centsWrap:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
   centsEdge:  { color: '#333', fontSize: 8, width: 18 },
   centsTrack: { flex: 1, height: 6, backgroundColor: '#1a1a24', borderRadius: 3, position: 'relative' },
-  centsMid:   { position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, backgroundColor: '#333' },
+  centsMid:   { position: 'absolute', left: '50%' as any, top: 0, bottom: 0, width: 1, backgroundColor: '#333' },
   centsThumb: { position: 'absolute', top: -3, width: 12, height: 12, borderRadius: 6, backgroundColor: '#ff9800', marginLeft: -6 },
   centsVal:   { color: '#888', fontSize: 9, width: 32, textAlign: 'right' },
   voiceRight: { alignItems: 'center', justifyContent: 'center', width: 36 },
+
+  /* Practice: diagram row */
+  diagRow:      { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, gap: 12, backgroundColor: '#0d0d14', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#1a1a24' },
+  diagBox:      { alignItems: 'center', justifyContent: 'center' },
+  diagInfo:     { flex: 1, gap: 4, paddingTop: 4 },
+  diagChordName:{ color: '#ff9800', fontSize: 28, fontWeight: '900', letterSpacing: -1 },
+  diagVoiceRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
+  diagVoiceNote:{ fontSize: 18, fontWeight: '800' },
+  diagVoiceHz:  { color: '#444', fontSize: 9 },
 
   lyricsPanel: { flex: 1, backgroundColor: '#0d0d14', margin: 8, borderRadius: 14, borderWidth: 1, borderColor: '#1e1e28', overflow: 'hidden' },
   lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4, borderBottomWidth: 1, borderColor: '#1a1a24' },
@@ -983,7 +1166,25 @@ const styles = StyleSheet.create({
   recDot:      { width: 8, height: 8, borderRadius: 4, backgroundColor: '#555' },
   recDotActive:{ backgroundColor: '#ff5252' },
 
-  /* Identify mode */
+  /* Identify mode — flex layout */
+  identResultScroll: { maxHeight: '45%' as any, borderBottomWidth: 1, borderColor: '#1e1e28' },
+
+  identTabRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
+  identTab:    { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRightWidth: 1, borderColor: '#1e1e28', borderWidth: 1, borderTopWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0 },
+  identTabText:{ color: '#444', fontSize: 10, fontWeight: '700' },
+
+  identActionArea: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 20 },
+  identActionTitle:{ color: '#ccc', fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  identActionSub:  { color: '#444', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+
+  identBtnBig:    { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 28, paddingVertical: 16, borderRadius: 16, backgroundColor: '#7c4dff88' },
+  identBtnBigText:{ color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 1 },
+
+  recProgressBig: { alignItems: 'center', gap: 12 },
+  recSecsBig:     { color: '#7c4dff', fontSize: 28, fontWeight: '900' },
+
+  identFooter:    { color: '#222', fontSize: 10, textAlign: 'center', position: 'absolute', bottom: 8 },
+
   resultCard: { backgroundColor: '#111118', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#00e67633', gap: 4 },
   resultHeader:{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
   resultFound: { color: '#00e676', fontSize: 10, fontWeight: '800', letterSpacing: 2, flex: 1 },
@@ -999,19 +1200,8 @@ const styles = StyleSheet.create({
   lyricsToggle:{ color: '#7c4dff', fontSize: 11 },
   lyricsText:  { color: '#888', fontSize: 12, lineHeight: 20 },
   lyricsEmpty: { color: '#333', fontSize: 12, fontStyle: 'italic' },
-  sourceRow:   { flexDirection: 'row', gap: 4 },
-  srcBtn:      { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: '#111118', borderRadius: 10, paddingVertical: 8, borderWidth: 1, borderColor: '#1e1e28' },
-  srcBtnActive:{ backgroundColor: '#ff9800', borderColor: '#ff9800' },
-  srcLabel:    { color: '#555', fontSize: 9, fontWeight: '700' },
-  identCard:   { backgroundColor: '#111118', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: '#1e1e28', gap: 10 },
-  identSub:    { color: '#555', fontSize: 12, lineHeight: 18 },
-  recProgress: { alignItems: 'center', gap: 10 },
-  recSecs:     { color: '#7c4dff', fontSize: 20, fontWeight: '800' },
-  recNote:     { color: '#555', fontSize: 12 },
   cancelBtn:   { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
   cancelText:  { color: '#888', fontSize: 13 },
-  identBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#7c4dff88', borderRadius: 12, padding: 12 },
-  identBtnText:{ color: '#fff', fontWeight: '700', fontSize: 13, letterSpacing: 1 },
   urlInput:    { backgroundColor: '#1a1a24', borderRadius: 10, padding: 10, color: '#ccc', fontSize: 13, borderWidth: 1, borderColor: '#2a2a3a' },
 
   /* Browser */
