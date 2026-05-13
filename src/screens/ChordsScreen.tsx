@@ -68,16 +68,26 @@ const TEMPLATES={
   'sus2':[0,2,7],
   'sus4':[0,5,7],
 };
-// Simpler chords win ties — maj7/m7 need stronger signal to beat plain maj/min
-const SIMPLICITY={'':0.25,'m':0.25,'7':0.05,'maj7':-0.45,'m7':-0.35,'dim':0,'aug':0,'sus2':0,'sus4':0};
+const SIMPLICITY={'':0.30,'m':0.30,'7':0.05,'maj7':-0.50,'m7':-0.40,'dim':0.05,'aug':0,'sus2':0.05,'sus4':0.05};
 const MAJOR_P=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const MINOR_P=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
-let ctx,analyser,src,smooth=new Float32Array(12),running=false;
+
+let ctx,analyser,src,running=false;
+/* ── rolling window for averaged chromagram ── */
+const WIN=28;       // ~1.4s at ~20fps — averages out transients
+let   winBuf=[];    // ring buffer of raw chroma frames
+
+/* ── chord stability gate ── */
+const STABLE_NEED=14; // chord must win 14 consecutive windows (~0.7s)
+let   candidate='?', stableCount=0, prevSegChord='?', segStart=0;
+
+function post(obj){window.ReactNativeWebView.postMessage(JSON.stringify(obj));}
+
 function chroma(fft,sr,fftSz){
   const c=new Float32Array(12);const bHz=sr/fftSz;
   for(let i=1;i<fft.length;i++){
     const f=i*bHz;if(f<80||f>2200)continue;
-    const db=fft[i];if(db<-65)continue;
+    const db=fft[i];if(db<-62)continue;
     const e=Math.pow(10,db/20);
     const m=Math.round(12*Math.log2(f/440)+69);
     const pc=((m%12)+12)%12;c[pc]+=e;
@@ -89,7 +99,7 @@ function detectChord(c){
   for(let r=0;r<12;r++){
     for(const[t,ivs]of Object.entries(TEMPLATES)){
       let sc=0;
-      for(let i=0;i<12;i++){const ct=ivs.some(iv=>(r+iv)%12===i);sc+=ct?c[i]:-0.5*c[i];}
+      for(let i=0;i<12;i++){const ct=ivs.some(iv=>(r+iv)%12===i);sc+=ct?c[i]:-0.55*c[i];}
       sc+=SIMPLICITY[t]||0;
       if(sc>best.conf)best={name:NOTE[r].trim()+t,conf:sc};
     }
@@ -107,7 +117,7 @@ function estimateKey(c){
   return bk;
 }
 function topNotes(c,n){
-  return c.map((v,i)=>({n:NOTE[i].trim(),v})).sort((a,b)=>b.v-a.v).slice(0,n).filter(x=>x.v>0.25).map(x=>x.n);
+  return c.map((v,i)=>({n:NOTE[i].trim(),v})).sort((a,b)=>b.v-a.v).slice(0,n).filter(x=>x.v>0.3).map(x=>x.n);
 }
 function pitchHPS(fft,bHz,harmonics){
   const n=fft.length;
@@ -120,42 +130,76 @@ function pitchHPS(fft,bHz,harmonics){
   const maxB=Math.min(mx-1,Math.floor(1100/bHz));
   let best=-1,bestV=0;
   for(let i=minB;i<=maxB;i++){if(hps[i]>bestV){bestV=hps[i];best=i;}}
-  if(best<0||fft[best]<-50)return-1;
+  if(best<0||fft[best]<-52)return-1;
   return best*bHz;
+}
+function avgWindow(){
+  const avg=new Float32Array(12);
+  const n=winBuf.length;if(!n)return avg;
+  for(const fr of winBuf)for(let i=0;i<12;i++)avg[i]+=fr[i];
+  const mx=Math.max(...avg);
+  if(mx>0)for(let i=0;i<12;i++)avg[i]/=mx;  // normalize so scale doesn't matter
+  return avg;
+}
+function emitSegment(chord,durationMs){
+  if(chord!=='?'&&durationMs>400)post({type:'segment',chord,durationMs});
 }
 async function start(){
   if(running)return;running=true;
+  winBuf=[];candidate='?';stableCount=0;prevSegChord='?';segStart=Date.now();
   try{
     const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     ctx=new AudioContext();
     analyser=ctx.createAnalyser();
-    analyser.fftSize=8192;analyser.smoothingTimeConstant=0.82;
+    analyser.fftSize=8192;analyser.smoothingTimeConstant=0.5;
     src=ctx.createMediaStreamSource(st);src.connect(analyser);
     const fft=new Float32Array(analyser.frequencyBinCount);
     const bHz=ctx.sampleRate/analyser.fftSize;
-    const A=0.13;
     function loop(){
       if(!running)return;
       analyser.getFloatFrequencyData(fft);
+      // Check signal level — skip silence
+      const peak=Math.max(...fft.slice(0,400));
+      if(peak<-60){requestAnimationFrame(loop);return;}
       const c=chroma(fft,ctx.sampleRate,analyser.fftSize);
-      for(let i=0;i<12;i++)smooth[i]=A*c[i]+(1-A)*smooth[i];
-      const chord=detectChord(smooth);
-      const key=estimateKey(smooth);
-      const notes=topNotes(smooth,4);
+      // Maintain rolling window
+      winBuf.push(Array.from(c));
+      if(winBuf.length>WIN)winBuf.shift();
+      const avg=avgWindow();
+      const chord=detectChord(avg);
+      const key=estimateKey(avg);
+      const notes=topNotes(avg,4);
       const pitchHz=pitchHPS(fft,bHz,4);
-      window.ReactNativeWebView.postMessage(JSON.stringify({type:'update',chord:chord.name,confidence:chord.conf,key,notes,pitchHz}));
+      // Send current display data every frame
+      post({type:'update',chord:chord.name,confidence:chord.conf,key,notes,pitchHz});
+      // ── Stability gate for chord segments ──
+      if(chord.name!=='?'&&chord.conf>0.2&&chord.name===candidate){
+        stableCount++;
+        if(stableCount===STABLE_NEED&&candidate!==prevSegChord){
+          // Chord has been stable: close previous segment, open new one
+          const now=Date.now();
+          emitSegment(prevSegChord,now-segStart);
+          prevSegChord=candidate;
+          segStart=now;
+        }
+      } else {
+        candidate=chord.name;
+        stableCount=0;
+      }
       requestAnimationFrame(loop);
     }
     loop();
-    window.ReactNativeWebView.postMessage(JSON.stringify({type:'ready'}));
+    post({type:'ready'});
   }catch(e){
-    window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',msg:e.message}));
+    post({type:'error',msg:e.message});
   }
 }
 function stop(){
   running=false;
+  // Emit final segment
+  emitSegment(prevSegChord,Date.now()-segStart);
   try{if(src)src.disconnect();if(ctx)ctx.close();}catch{}
-  smooth.fill(0);
+  winBuf=[];
 }
 document.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='start')start();else if(m.cmd==='stop')stop();}catch{}});
 window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='start')start();else if(m.cmd==='stop')stop();}catch{}});
@@ -312,7 +356,10 @@ export default function ChordsScreen() {
   const [confidence, setConfidence]   = useState(0);
   const [key, setKey]                 = useState('');
   const [notes, setNotes]             = useState<string[]>([]);
-  const [history, setHistory]         = useState<string[]>([]);
+
+  /* chord segments: accumulated stable chords with duration */
+  type ChordSegment = { chord: string; durationMs: number };
+  const [segments, setSegments]       = useState<ChordSegment[]>([]);
 
   /* ── Voice pitch state ── */
   const [voiceNote, setVoiceNote]     = useState('—');
@@ -369,7 +416,7 @@ export default function ChordsScreen() {
   function startLive() {
     setLiveActive(true);
     setLiveError(null);
-    setChord('—'); setKey(''); setNotes([]); setHistory([]);
+    setChord('—'); setKey(''); setNotes([]);
     setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
     if (wvReadyRef.current) {
       sendCmd('start');
@@ -398,20 +445,17 @@ export default function ChordsScreen() {
         } else {
           setLiveError(`Ошибка: ${errText}`);
         }
+      } else if (msg.type === 'segment') {
+        // Stable chord segment detected by the engine
+        if (msg.chord && msg.chord !== '?' && msg.durationMs > 400) {
+          setSegments(prev => [...prev, { chord: msg.chord, durationMs: msg.durationMs }]);
+        }
       } else if (msg.type === 'update') {
         setLiveError(null);
         setChord(msg.chord);
         setConfidence(msg.confidence);
         setKey(msg.key);
         setNotes(msg.notes ?? []);
-        setHistory(prev => {
-          const last = prev[prev.length - 1];
-          if (msg.chord !== last && msg.chord !== '?') {
-            const next = [...prev, msg.chord];
-            return next.length > 60 ? next.slice(-60) : next;
-          }
-          return prev;
-        });
         if (msg.pitchHz > 0) {
           const midi = Math.round(12 * Math.log2(msg.pitchHz / 440) + 69);
           const noteIdx = ((midi % 12) + 12) % 12;
@@ -665,7 +709,7 @@ export default function ChordsScreen() {
     if (pitchActive) stopPitchDetection();
     setMode(m);
     if (m === 'live') {
-      setChord('—'); setKey(''); setNotes([]); setHistory([]);
+      setChord('—'); setKey(''); setNotes([]);
       setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
       if (wvReadyRef.current) { sendCmd('start'); } else { pendingStartRef.current = true; }
       setLiveActive(true);
@@ -743,41 +787,53 @@ export default function ChordsScreen() {
             </View>
           )}
 
-          {/* Accumulated chord sequence */}
-          <View style={styles.liveSeqCard}>
+          {/* ── Chord segments list ── main content, flex:1 */}
+          <View style={styles.liveSegOuter}>
             <View style={styles.liveSeqHeader}>
-              <Text style={styles.liveSeqTitle}>ОБНАРУЖЕННЫЕ АККОРДЫ</Text>
-              {history.length > 0 && (
-                <TouchableOpacity onPress={() => setHistory([])} style={{ padding: 4 }}>
+              <Text style={styles.liveSeqTitle}>
+                {liveActive ? '● ЗАПИСЬ АККОРДОВ' : 'ОБНАРУЖЕННЫЕ АККОРДЫ'}
+              </Text>
+              {segments.length > 0 && (
+                <TouchableOpacity onPress={() => setSegments([])} style={{ padding: 6 }}>
                   <Ionicons name="trash-outline" size={14} color="#444" />
                 </TouchableOpacity>
               )}
             </View>
 
-            {history.length === 0 ? (
-              <Text style={styles.liveSeqEmpty}>
-                {liveActive
-                  ? 'Играйте аккорды — они появятся здесь...'
-                  : 'Нажмите START и играйте на гитаре.\nАккорды накопятся здесь для практики.'}
-              </Text>
+            {segments.length === 0 ? (
+              <View style={styles.liveSegEmpty}>
+                <Ionicons name="mic-outline" size={32} color="#1e1e28" />
+                <Text style={styles.liveSeqEmpty}>
+                  {liveActive
+                    ? 'Играйте — аккорды появятся\nкогда звук стабилизируется (~0.7с)'
+                    : 'Нажмите START и играйте.\nКаждый стабильный аккорд будет записан.'}
+                </Text>
+              </View>
             ) : (
-              <ScrollView showsVerticalScrollIndicator={false} style={styles.liveSeqScroll}>
-                <View style={styles.liveSeqRow}>
-                  {history.map((c, i) => (
-                    <View key={i} style={[styles.liveSeqPill, i === history.length - 1 && styles.liveSeqPillLast]}>
-                      <Text style={[styles.liveSeqPillText, i === history.length - 1 && { color: '#00e676' }]}>{c}</Text>
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ padding: 10, gap: 6 }}>
+                {(() => {
+                  const maxDur = Math.max(...segments.map(s => s.durationMs), 1);
+                  return segments.map((seg, i) => (
+                    <View key={i} style={styles.liveSegRow}>
+                      <Text style={[styles.liveSegChord, i === segments.length - 1 && liveActive && { color: '#00e676' }]}>
+                        {seg.chord}
+                      </Text>
+                      <View style={styles.liveSegBarWrap}>
+                        <View style={[styles.liveSegBar, { width: `${Math.max(8, (seg.durationMs / maxDur) * 100)}%` as any }]} />
+                      </View>
+                      <Text style={styles.liveSegDur}>{(seg.durationMs / 1000).toFixed(1)}s</Text>
                     </View>
-                  ))}
-                </View>
+                  ));
+                })()}
               </ScrollView>
             )}
 
-            {/* Save to Practice button */}
-            {history.length >= 2 && (
+            {segments.length >= 2 && (
               <TouchableOpacity
                 style={styles.liveSaveBtn}
                 onPress={() => {
-                  const seq = history.join(' ');
+                  const seq = segments.map(s => s.chord).join(' ');
                   setPracticeInput(seq);
                   parsePracticeInput(seq);
                   setPracticeChordIdx(0);
@@ -786,12 +842,12 @@ export default function ChordsScreen() {
                 activeOpacity={0.8}
               >
                 <Ionicons name="arrow-forward-circle" size={20} color="#fff" />
-                <Text style={styles.liveSaveBtnText}>ОТПРАВИТЬ В ПРАКТИКУ</Text>
+                <Text style={styles.liveSaveBtnText}>В ПРАКТИКУ ({segments.length} аккордов)</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {/* START / STOP */}
+          {/* ── START / STOP — always visible at bottom ── */}
           <View style={styles.liveActions}>
             <TouchableOpacity
               style={[styles.mainBtn, liveActive && styles.mainBtnStop, { flex: 1 }]}
@@ -799,22 +855,21 @@ export default function ChordsScreen() {
               activeOpacity={0.8}
             >
               <Ionicons name={liveActive ? 'stop-circle' : 'mic-circle'} size={26} color="#fff" />
-              <Text style={styles.mainBtnText}>{liveActive ? 'STOP' : '▶ START'}</Text>
+              <Text style={styles.mainBtnText}>{liveActive ? '■ СТОП' : '▶ СТАРТ'}</Text>
             </TouchableOpacity>
 
-            {history.length > 0 && !liveActive && (
+            {segments.length > 0 && !liveActive && (
               <TouchableOpacity
                 style={styles.liveClearBtn}
-                onPress={() => { setHistory([]); setChord('—'); setKey(''); setNotes([]); }}
+                onPress={() => { setSegments([]); setChord('—'); setKey(''); setNotes([]); }}
               >
                 <Ionicons name="refresh" size={20} color="#555" />
               </TouchableOpacity>
             )}
           </View>
 
-          <Text style={[styles.hint, { textAlign: 'center', margin: 12, marginTop: 0 }]}>
-            Подключите гитару или поднесите к колонке.{'\n'}
-            Алгоритм: хромаграмма · точность ~70% для чистого сигнала.
+          <Text style={[styles.hint, { textAlign: 'center', marginHorizontal: 12, marginBottom: 10 }]}>
+            Аккорд фиксируется после ~0.7с стабильного звука.{'\n'}Тихие паузы игнорируются.
           </Text>
         </View>
       )}
@@ -1322,19 +1377,21 @@ const styles = StyleSheet.create({
   hint:       { color: '#333', fontSize: 11, textAlign: 'center', lineHeight: 18, marginTop: 4 },
 
   /* Live mode layout */
-  liveTop:    { alignItems: 'center', paddingVertical: 16, paddingHorizontal: 16, backgroundColor: '#0a0a0f', borderBottomWidth: 1, borderColor: '#1e1e28' },
-  liveSeqCard:{ flex: 1, margin: 12, marginBottom: 8, backgroundColor: '#111118', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#1e1e28' },
-  liveSeqHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  liveSeqTitle:  { color: '#333', fontSize: 9, letterSpacing: 2 },
-  liveSeqEmpty:  { color: '#333', fontSize: 13, textAlign: 'center', lineHeight: 20, flex: 1, paddingVertical: 20 },
-  liveSeqScroll: { flex: 1 },
-  liveSeqRow:    { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingVertical: 4 },
-  liveSeqPill:       { paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 12, borderWidth: 1, borderColor: '#2a2a3a' },
-  liveSeqPillLast:   { backgroundColor: '#00e67622', borderColor: '#00e67655' },
-  liveSeqPillText:   { color: '#aaa', fontSize: 16, fontWeight: '700' },
-  liveSaveBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#7c4dff', borderRadius: 12, padding: 12, marginTop: 10 },
+  liveTop:    { alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: '#0a0a0f', borderBottomWidth: 1, borderColor: '#1e1e28' },
+  liveSegOuter:  { flex: 1, backgroundColor: '#0d0d14', borderTopWidth: 1, borderColor: '#1a1a24' },
+  liveSeqHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 8, borderBottomWidth: 1, borderColor: '#1a1a24' },
+  liveSeqTitle:  { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
+  liveSegEmpty:  { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
+  liveSeqEmpty:  { color: '#333', fontSize: 13, textAlign: 'center', lineHeight: 20 },
+  /* chord segment row */
+  liveSegRow:    { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
+  liveSegChord:  { color: '#ccc', fontSize: 18, fontWeight: '900', width: 52, textAlign: 'right' },
+  liveSegBarWrap:{ flex: 1, height: 8, backgroundColor: '#1a1a24', borderRadius: 4 },
+  liveSegBar:    { height: 8, backgroundColor: '#7c4dff88', borderRadius: 4 },
+  liveSegDur:    { color: '#444', fontSize: 11, width: 34, textAlign: 'right' },
+  liveSaveBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#7c4dff', borderRadius: 0, padding: 14, margin: 0 },
   liveSaveBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 0.5 },
-  liveActions:   { flexDirection: 'row', gap: 10, paddingHorizontal: 14, marginBottom: 8 },
+  liveActions:   { flexDirection: 'row', gap: 10, padding: 12, paddingBottom: 10, borderTopWidth: 1, borderColor: '#1a1a24' },
   liveClearBtn:  { backgroundColor: '#1a1a24', borderRadius: 14, padding: 14, alignItems: 'center', justifyContent: 'center', width: 54 },
 
   /* Practice mode — chord input */
