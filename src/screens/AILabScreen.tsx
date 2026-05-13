@@ -138,7 +138,7 @@ async function analyze(b64,segSec){
       for(let i=0;i<12;i++)globalChroma[i]+=c[i];
       const chord=detectChord(c);
       events.push({time:parseFloat((step*segSec).toFixed(2)),chord:chord.name,confidence:parseFloat(chord.conf.toFixed(2))});
-      if(step%5===0)post({type:'progress',msg:`Анализ ${Math.round((step/steps)*100)}%...`});
+      if(step%5===0)post({type:'progress',msg:'Анализ '+Math.round((step/steps)*100)+'%...'});
     }
     const mx=Math.max(...globalChroma);if(mx>0)for(let i=0;i<12;i++)globalChroma[i]/=mx;
     const key=estimateKey(globalChroma);
