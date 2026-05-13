@@ -68,6 +68,8 @@ const TEMPLATES={
   'sus2':[0,2,7],
   'sus4':[0,5,7],
 };
+// Simpler chords win ties — maj7/m7 need stronger signal to beat plain maj/min
+const SIMPLICITY={'':0.25,'m':0.25,'7':0.05,'maj7':-0.45,'m7':-0.35,'dim':0,'aug':0,'sus2':0,'sus4':0};
 const MAJOR_P=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const MINOR_P=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 let ctx,analyser,src,smooth=new Float32Array(12),running=false;
@@ -87,7 +89,8 @@ function detectChord(c){
   for(let r=0;r<12;r++){
     for(const[t,ivs]of Object.entries(TEMPLATES)){
       let sc=0;
-      for(let i=0;i<12;i++){const ct=ivs.some(iv=>(r+iv)%12===i);sc+=ct?c[i]:-0.4*c[i];}
+      for(let i=0;i<12;i++){const ct=ivs.some(iv=>(r+iv)%12===i);sc+=ct?c[i]:-0.5*c[i];}
+      sc+=SIMPLICITY[t]||0;
       if(sc>best.conf)best={name:NOTE[r].trim()+t,conf:sc};
     }
   }
