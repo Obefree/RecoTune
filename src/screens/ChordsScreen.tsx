@@ -669,8 +669,13 @@ export default function ChordsScreen() {
     parsePracticeInput(song.chords);
     setPracticeChordIdx(0);
     setShowLibrary(false);
-    // auto-fetch lyrics
-    fetchLyrics(song.artist, song.title);
+    if (song.lyrics) {
+      setPracticeLyrics(song.lyrics);
+      setLyricsEditMode(false);
+    } else {
+      setPracticeLyrics('');
+      fetchLyrics(song.artist, song.title);
+    }
   }
 
   function parsePracticeInput(text: string) {
@@ -1313,6 +1318,7 @@ export default function ChordsScreen() {
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
                   </View>
                   <View style={styles.libItemRight}>
+                    {item.lyrics ? <Text style={styles.libItemHasLyrics}>♪ текст</Text> : null}
                     <Text style={styles.libItemGenre}>{item.genre}</Text>
                     {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
                     {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
@@ -1523,11 +1529,12 @@ const styles = StyleSheet.create({
   libItem:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderColor: '#111118' },
   libItemDot:   { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   libItemInfo:  { flex: 1 },
-  libItemTitle: { color: '#ddd', fontSize: 14, fontWeight: '700' },
-  libItemArtist:{ color: '#666', fontSize: 12, marginTop: 1 },
-  libItemChords:{ color: '#7c4dff', fontSize: 10, marginTop: 2 },
-  libItemRight: { alignItems: 'flex-end', gap: 2 },
-  libItemGenre: { color: '#444', fontSize: 9 },
-  libItemBpm:   { color: '#333', fontSize: 9 },
-  libItemKey:   { color: '#555', fontSize: 9, fontWeight: '700' },
+  libItemTitle: { color: '#eee', fontSize: 14, fontWeight: '700' },
+  libItemArtist:{ color: '#999', fontSize: 12, marginTop: 1 },
+  libItemChords:{ color: '#9c7cff', fontSize: 11, marginTop: 3 },
+  libItemRight: { alignItems: 'flex-end', gap: 3 },
+  libItemGenre: { color: '#666', fontSize: 10 },
+  libItemBpm:   { color: '#555', fontSize: 10 },
+  libItemKey:   { color: '#888', fontSize: 10, fontWeight: '700' },
+  libItemHasLyrics: { color: '#00e676', fontSize: 9 },
 });
