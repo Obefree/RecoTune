@@ -324,15 +324,12 @@ export default function ChordsScreen() {
   const [recSecs, setRecSecs]         = useState(0);
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [songResult, setSongResult]   = useState<AuddResult | null>(null);
-  const [showChordBrowser, setShowChordBrowser] = useState(false);
-  const [chordUrl, setChordUrl]       = useState('');
   const [ytUrl, setYtUrl]             = useState('');
   const [ytLoading, setYtLoading]     = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
   const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt' | 'manual'>('mic');
   const [lyrics, setLyrics]           = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
-  const [showFullLyrics, setShowFullLyrics] = useState(false);
   const [manualArtist, setManualArtist] = useState('');
   const [manualTitle, setManualTitle]   = useState('');
 
@@ -513,12 +510,6 @@ export default function ChordsScreen() {
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 200);
   }
 
-  function openChords(artist: string, title: string) {
-    const q = encodeURIComponent(`${artist} ${title}`);
-    setChordUrl(`https://www.ultimate-guitar.com/search.php?search_type=title&value=${q}`);
-    setShowChordBrowser(true);
-  }
-
   async function pickFileAndIdentify() {
     try {
       const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
@@ -616,21 +607,6 @@ export default function ChordsScreen() {
   const centsBarPct  = ((centsClamped + 50) / 100) * 100;
 
   const col = chordColor(confidence);
-
-  if (showChordBrowser && chordUrl) {
-    return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.browserHeader}>
-          <TouchableOpacity onPress={() => setShowChordBrowser(false)} style={styles.backBtn}>
-            <Ionicons name="arrow-back" size={22} color="#ccc" />
-            <Text style={styles.backText}>Назад</Text>
-          </TouchableOpacity>
-          <Text style={styles.browserTitle} numberOfLines={1}>Поиск аккордов</Text>
-        </View>
-        <WebView source={{ uri: chordUrl }} style={{ flex: 1 }} />
-      </View>
-    );
-  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
@@ -884,177 +860,180 @@ export default function ChordsScreen() {
         </View>
       )}
 
-      {/* ── IDENTIFY MODE — flex layout, no empty space ── */}
+      {/* ── IDENTIFY MODE ── */}
       {mode === 'identify' && (
         <View style={{ flex: 1 }}>
 
-          {/* Result card (scrollable, compact) */}
-          {songResult && (
+          {/* ══ STATE A: Result found → full screen result view ══ */}
+          {songResult ? (
             <ScrollView
               ref={scrollRef}
-              style={styles.identResultScroll}
+              style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.resultPage}
               keyboardShouldPersistTaps="handled"
             >
-              <View style={styles.resultCard}>
-                <View style={styles.resultHeader}>
-                  <Ionicons name="checkmark-circle" size={20} color="#00e676" />
+              {/* Top bar */}
+              <View style={styles.resultTopBar}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                  <Ionicons name="checkmark-circle" size={18} color="#00e676" />
                   <Text style={styles.resultFound}>НАЙДЕНО</Text>
-                  <TouchableOpacity onPress={() => { setSongResult(null); setLyrics(null); }} style={{ marginLeft: 'auto' as any }}>
-                    <Ionicons name="close" size={18} color="#444" />
-                  </TouchableOpacity>
                 </View>
-                <Text style={styles.resultTitle}>{songResult.title}</Text>
-                <Text style={styles.resultArtist}>{songResult.artist}</Text>
-                {songResult.album && (
-                  <Text style={styles.resultMeta}>{songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0,4)}` : ''}</Text>
-                )}
-                <View style={styles.resultActions}>
-                  <TouchableOpacity style={styles.chordsBtn} onPress={() => openChords(songResult.artist, songResult.title)}>
-                    <Ionicons name="musical-note" size={15} color="#fff" />
-                    <Text style={styles.chordsBtnText}>Аккорды (UG)</Text>
+                <TouchableOpacity onPress={() => { setSongResult(null); setLyrics(null); }}
+                  style={styles.resultNewSearchBtn}>
+                  <Ionicons name="search" size={14} color="#7c4dff" />
+                  <Text style={styles.resultNewSearchText}>Новый поиск</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Song info */}
+              <Text style={styles.resultTitle}>{songResult.title}</Text>
+              <Text style={styles.resultArtist}>{songResult.artist}</Text>
+              {songResult.album && (
+                <Text style={styles.resultMeta}>{songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0,4)}` : ''}</Text>
+              )}
+
+              {/* Action buttons */}
+              <View style={styles.resultActions}>
+                <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#ff980022', borderColor: '#ff980066' }]}
+                  onPress={() => switchMode('practice')}>
+                  <Ionicons name="person" size={16} color="#ff9800" />
+                  <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>В Практику</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Divider */}
+              <View style={styles.resultDivider} />
+
+              {/* Lyrics — full, no truncation */}
+              <View style={styles.resultLyricsHeader}>
+                <Ionicons name="document-text-outline" size={14} color="#555" />
+                <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
+              </View>
+              {lyricsLoading ? (
+                <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
+              ) : lyrics ? (
+                <Text style={styles.resultLyricsText}>{lyrics}</Text>
+              ) : (
+                <Text style={styles.lyricsEmpty}>Текст не найден (lyrics.ovh)</Text>
+              )}
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+
+          ) : (
+            /* ══ STATE B: No result → search UI fills the whole screen ══ */
+            <>
+              {/* Source tabs */}
+              <View style={styles.identTabRow}>
+                {([
+                  ['mic',    'ear',          'Слушать',  '#7c4dff'],
+                  ['file',   'document',     'Файл',     '#ff9800'],
+                  ['yt',     'logo-youtube', 'YouTube',  '#ff0000'],
+                  ['manual', 'create',       'Вручную',  '#00e676'],
+                ] as const).map(([src, icon, label, accent]) => (
+                  <TouchableOpacity key={src}
+                    style={[styles.identTab, identSource === src && { backgroundColor: accent + '22', borderColor: accent + '88' }]}
+                    onPress={() => setIdentSource(src)}>
+                    <Ionicons name={icon as any} size={22} color={identSource === src ? accent : '#444'} />
+                    <Text style={[styles.identTabText, identSource === src && { color: accent }]}>{label}</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#ff980022', borderColor: '#ff980044' }]}
-                    onPress={() => { switchMode('practice'); }}>
-                    <Ionicons name="person" size={15} color="#ff9800" />
-                    <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>В Практику</Text>
-                  </TouchableOpacity>
-                  {songResult.song_link ? (
-                    <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#1db95422', borderColor: '#1db95444' }]}
-                      onPress={() => { setChordUrl(songResult.song_link!); setShowChordBrowser(true); }}>
-                      <Ionicons name="link" size={15} color="#1db954" />
-                      <Text style={[styles.chordsBtnText, { color: '#1db954' }]}>Открыть</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                <View style={styles.lyricsWrap}>
-                  <View style={styles.lyricsHeader}>
-                    <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
-                    {lyrics && (
-                      <TouchableOpacity onPress={() => setShowFullLyrics(v => !v)}>
-                        <Text style={styles.lyricsToggle}>{showFullLyrics ? 'Свернуть' : 'Развернуть'}</Text>
+                ))}
+              </View>
+
+              {/* Action area fills remaining space */}
+              <View style={styles.identActionArea}>
+
+                {identSource === 'mic' && (
+                  <>
+                    <Ionicons name="ear-outline" size={64} color="#7c4dff33" />
+                    <Text style={styles.identActionTitle}>Распознать по звуку</Text>
+                    <Text style={styles.identActionSub}>Поднесите телефон к колонке.{'\n'}Запись 10 с → AudD (~100 запросов/день)</Text>
+                    {isRecognizing ? (
+                      <View style={styles.recProgressBig}>
+                        <ActivityIndicator color="#7c4dff" size="large" />
+                        <Text style={styles.recSecsBig}>{recSecs} / 10 с</Text>
+                        <TouchableOpacity style={styles.cancelBtn}
+                          onPress={() => { if (timerRef.current) clearInterval(timerRef.current); stopRec(); setIsRecognizing(false); }}>
+                          <Text style={styles.cancelText}>Отмена</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity style={styles.identBtnBig} onPress={startIdentify} activeOpacity={0.8}>
+                        <Ionicons name="ear" size={28} color="#fff" />
+                        <Text style={styles.identBtnBigText}>СЛУШАТЬ И РАСПОЗНАТЬ</Text>
                       </TouchableOpacity>
                     )}
-                  </View>
-                  {lyricsLoading ? (
-                    <ActivityIndicator color="#555" size="small" style={{ marginTop: 8 }} />
-                  ) : lyrics ? (
-                    <Text style={styles.lyricsText} numberOfLines={showFullLyrics ? undefined : 8}>{lyrics}</Text>
-                  ) : (
-                    <Text style={styles.lyricsEmpty}>Текст не найден</Text>
-                  )}
-                </View>
-              </View>
-            </ScrollView>
-          )}
+                  </>
+                )}
 
-          {/* Source tabs — large, always visible */}
-          <View style={styles.identTabRow}>
-            {([
-              ['mic',    'ear',          'Слушать',  '#7c4dff'],
-              ['file',   'document',     'Файл',     '#ff9800'],
-              ['yt',     'logo-youtube', 'YouTube',  '#ff0000'],
-              ['manual', 'create',       'Вручную',  '#00e676'],
-            ] as const).map(([src, icon, label, accent]) => (
-              <TouchableOpacity key={src}
-                style={[styles.identTab, identSource === src && { backgroundColor: accent + '22', borderColor: accent + '88' }]}
-                onPress={() => setIdentSource(src)}
-              >
-                <Ionicons name={icon as any} size={22} color={identSource === src ? accent : '#444'} />
-                <Text style={[styles.identTabText, identSource === src && { color: accent }]}>{label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+                {identSource === 'file' && (
+                  <>
+                    <Ionicons name="musical-note-outline" size={64} color="#ff980033" />
+                    <Text style={styles.identActionTitle}>Распознать из файла</Text>
+                    <Text style={styles.identActionSub}>MP3, AAC, WAV с устройства.{'\n'}Отправляется в AudD для анализа.</Text>
+                    {fileLoading ? (
+                      <View style={styles.recProgressBig}>
+                        <ActivityIndicator color="#ff9800" size="large" />
+                        <Text style={[styles.recSecsBig, { color: '#ff9800', fontSize: 16 }]}>Распознавание...</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#ff980099' }]}
+                        onPress={pickFileAndIdentify} activeOpacity={0.8}>
+                        <Ionicons name="folder-open" size={28} color="#fff" />
+                        <Text style={styles.identBtnBigText}>ВЫБРАТЬ ФАЙЛ</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                )}
 
-          {/* Action area — fills the rest of the screen */}
-          <View style={styles.identActionArea}>
+                {identSource === 'yt' && (
+                  <>
+                    <Ionicons name="logo-youtube" size={64} color="#ff000033" />
+                    <Text style={styles.identActionTitle}>По ссылке YouTube</Text>
+                    <Text style={styles.identActionSub}>Вставьте ссылку — получим название{'\n'}и текст через oEmbed API.</Text>
+                    <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 12 }]}
+                      placeholder="https://youtube.com/watch?v=..."
+                      placeholderTextColor="#333" value={ytUrl} onChangeText={setYtUrl}
+                      autoCapitalize="none" autoCorrect={false} keyboardType="url"
+                      returnKeyType="search" onSubmitEditing={handleYouTube} />
+                    {ytLoading ? (
+                      <ActivityIndicator color="#ff0000" />
+                    ) : (
+                      <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#cc000099' }]}
+                        onPress={handleYouTube} activeOpacity={0.8}>
+                        <Ionicons name="logo-youtube" size={28} color="#fff" />
+                        <Text style={styles.identBtnBigText}>НАЙТИ ПО ССЫЛКЕ</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                )}
 
-            {identSource === 'mic' && (
-              <>
-                <Ionicons name="ear-outline" size={56} color="#7c4dff44" />
-                <Text style={styles.identActionTitle}>Распознавание по звуку</Text>
-                <Text style={styles.identActionSub}>Поднесите телефон к колонке.{'\n'}Запись 10 с → AudD (~100 запросов/день)</Text>
-                {isRecognizing ? (
-                  <View style={styles.recProgressBig}>
-                    <ActivityIndicator color="#7c4dff" size="large" />
-                    <Text style={styles.recSecsBig}>{recSecs} / 10 с</Text>
-                    <TouchableOpacity style={styles.cancelBtn} onPress={() => { if (timerRef.current) clearInterval(timerRef.current); stopRec(); setIsRecognizing(false); }}>
-                      <Text style={styles.cancelText}>Отмена</Text>
+                {identSource === 'manual' && (
+                  <>
+                    <Ionicons name="search-outline" size={64} color="#00e67633" />
+                    <Text style={styles.identActionTitle}>Поиск вручную</Text>
+                    <Text style={styles.identActionSub}>Введите исполнителя и название —{'\n'}найдём текст песни.</Text>
+                    <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 10 }]}
+                      placeholder="Исполнитель (напр. The Beatles)"
+                      placeholderTextColor="#333" value={manualArtist} onChangeText={setManualArtist}
+                      autoCorrect={false} returnKeyType="next" />
+                    <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 14 }]}
+                      placeholder="Название трека"
+                      placeholderTextColor="#333" value={manualTitle} onChangeText={setManualTitle}
+                      autoCorrect={false} returnKeyType="search" onSubmitEditing={handleManualSearch} />
+                    <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#00e67688' }]}
+                      onPress={handleManualSearch} activeOpacity={0.8}>
+                      <Ionicons name="search" size={28} color="#fff" />
+                      <Text style={styles.identBtnBigText}>НАЙТИ ТЕКСТ</Text>
                     </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity style={styles.identBtnBig} onPress={startIdentify} activeOpacity={0.8}>
-                    <Ionicons name="ear" size={28} color="#fff" />
-                    <Text style={styles.identBtnBigText}>СЛУШАТЬ И РАСПОЗНАТЬ</Text>
-                  </TouchableOpacity>
+                  </>
                 )}
-              </>
-            )}
 
-            {identSource === 'file' && (
-              <>
-                <Ionicons name="musical-note-outline" size={56} color="#ff980044" />
-                <Text style={styles.identActionTitle}>Распознать из файла</Text>
-                <Text style={styles.identActionSub}>MP3, AAC, WAV с устройства.{'\n'}Файл отправляется в AudD для анализа.</Text>
-                {fileLoading ? (
-                  <View style={styles.recProgressBig}>
-                    <ActivityIndicator color="#ff9800" size="large" />
-                    <Text style={[styles.recSecsBig, { color: '#ff9800', fontSize: 16 }]}>Распознавание...</Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#ff980099' }]} onPress={pickFileAndIdentify} activeOpacity={0.8}>
-                    <Ionicons name="folder-open" size={28} color="#fff" />
-                    <Text style={styles.identBtnBigText}>ВЫБРАТЬ ФАЙЛ</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-
-            {identSource === 'yt' && (
-              <>
-                <Ionicons name="logo-youtube" size={56} color="#ff000033" />
-                <Text style={styles.identActionTitle}>По ссылке YouTube</Text>
-                <Text style={styles.identActionSub}>Вставьте ссылку — получим название{'\n'}и текст через oEmbed API.</Text>
-                <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 12 }]}
-                  placeholder="https://youtube.com/watch?v=..."
-                  placeholderTextColor="#333" value={ytUrl} onChangeText={setYtUrl}
-                  autoCapitalize="none" autoCorrect={false} keyboardType="url"
-                  returnKeyType="search" onSubmitEditing={handleYouTube} />
-                {ytLoading ? (
-                  <ActivityIndicator color="#ff0000" />
-                ) : (
-                  <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#cc000099' }]} onPress={handleYouTube} activeOpacity={0.8}>
-                    <Ionicons name="logo-youtube" size={28} color="#fff" />
-                    <Text style={styles.identBtnBigText}>НАЙТИ ПО ССЫЛКЕ</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-
-            {identSource === 'manual' && (
-              <>
-                <Ionicons name="search-outline" size={56} color="#00e67633" />
-                <Text style={styles.identActionTitle}>Поиск вручную</Text>
-                <Text style={styles.identActionSub}>Введите исполнителя и название —{'\n'}найдём текст и аккорды.</Text>
-                <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 10 }]}
-                  placeholder="Исполнитель (напр. The Beatles)"
-                  placeholderTextColor="#333" value={manualArtist} onChangeText={setManualArtist}
-                  autoCorrect={false} returnKeyType="next" />
-                <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 12 }]}
-                  placeholder="Название трека"
-                  placeholderTextColor="#333" value={manualTitle} onChangeText={setManualTitle}
-                  autoCorrect={false} returnKeyType="search" onSubmitEditing={handleManualSearch} />
-                <TouchableOpacity style={[styles.identBtnBig, { backgroundColor: '#00e67688' }]} onPress={handleManualSearch} activeOpacity={0.8}>
-                  <Ionicons name="search" size={28} color="#fff" />
-                  <Text style={styles.identBtnBigText}>НАЙТИ ТЕКСТ И АККОРДЫ</Text>
-                </TouchableOpacity>
-              </>
-            )}
-
-            <Text style={styles.identFooter}>
-              lyrics.ovh · Ultimate Guitar · AudD
-            </Text>
-          </View>
+                <Text style={styles.identFooter}>lyrics.ovh · AudD</Text>
+              </View>
+            </>
+          )}
 
         </View>
       )}
@@ -1166,47 +1145,38 @@ const styles = StyleSheet.create({
   recDot:      { width: 8, height: 8, borderRadius: 4, backgroundColor: '#555' },
   recDotActive:{ backgroundColor: '#ff5252' },
 
-  /* Identify mode — flex layout */
-  identResultScroll: { maxHeight: '45%' as any, borderBottomWidth: 1, borderColor: '#1e1e28' },
+  /* Identify mode — search UI */
+  identTabRow:  { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
+  identTab:     { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRightWidth: 1, borderColor: '#1e1e28', borderWidth: 1, borderTopWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0 },
+  identTabText: { color: '#444', fontSize: 10, fontWeight: '700' },
+  identActionArea:  { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 20 },
+  identActionTitle: { color: '#ccc', fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  identActionSub:   { color: '#444', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  identBtnBig:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 28, paddingVertical: 16, borderRadius: 16, backgroundColor: '#7c4dff88' },
+  identBtnBigText:  { color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 1 },
+  recProgressBig:   { alignItems: 'center', gap: 12 },
+  recSecsBig:       { color: '#7c4dff', fontSize: 28, fontWeight: '900' },
+  identFooter:      { color: '#222', fontSize: 10, textAlign: 'center', position: 'absolute', bottom: 8 },
 
-  identTabRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
-  identTab:    { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRightWidth: 1, borderColor: '#1e1e28', borderWidth: 1, borderTopWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0 },
-  identTabText:{ color: '#444', fontSize: 10, fontWeight: '700' },
+  /* Identify mode — full-screen result */
+  resultPage:       { padding: 16, gap: 6 },
+  resultTopBar:     { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  resultFound:      { color: '#00e676', fontSize: 10, fontWeight: '800', letterSpacing: 2 },
+  resultNewSearchBtn:  { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#7c4dff22', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#7c4dff44' },
+  resultNewSearchText: { color: '#7c4dff', fontSize: 11, fontWeight: '700' },
+  resultTitle:      { color: '#f0f0f0', fontSize: 22, fontWeight: '900', letterSpacing: -0.5, marginBottom: 2 },
+  resultArtist:     { color: '#888', fontSize: 15, marginBottom: 2 },
+  resultMeta:       { color: '#444', fontSize: 12, marginBottom: 8 },
+  resultActions:    { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 4 },
+  chordsBtn:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#7c4dff22', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#7c4dff44' },
+  chordsBtnText:    { color: '#ccc', fontSize: 12, fontWeight: '700' },
+  resultDivider:    { height: 1, backgroundColor: '#1e1e28', marginVertical: 14 },
+  resultLyricsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  resultLyricsText: { color: '#aaa', fontSize: 14, lineHeight: 24 },
+  lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
+  lyricsEmpty:      { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
 
-  identActionArea: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 20 },
-  identActionTitle:{ color: '#ccc', fontSize: 18, fontWeight: '800', textAlign: 'center' },
-  identActionSub:  { color: '#444', fontSize: 12, textAlign: 'center', lineHeight: 18 },
-
-  identBtnBig:    { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 28, paddingVertical: 16, borderRadius: 16, backgroundColor: '#7c4dff88' },
-  identBtnBigText:{ color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 1 },
-
-  recProgressBig: { alignItems: 'center', gap: 12 },
-  recSecsBig:     { color: '#7c4dff', fontSize: 28, fontWeight: '900' },
-
-  identFooter:    { color: '#222', fontSize: 10, textAlign: 'center', position: 'absolute', bottom: 8 },
-
-  resultCard: { backgroundColor: '#111118', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#00e67633', gap: 4 },
-  resultHeader:{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  resultFound: { color: '#00e676', fontSize: 10, fontWeight: '800', letterSpacing: 2, flex: 1 },
-  resultTitle: { color: '#e0e0e0', fontSize: 18, fontWeight: '800' },
-  resultArtist:{ color: '#888', fontSize: 13 },
-  resultMeta:  { color: '#444', fontSize: 11 },
-  resultActions:{ flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' },
-  chordsBtn:   { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff44', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#7c4dff55' },
-  chordsBtnText:{ color: '#ccc', fontSize: 11, fontWeight: '700' },
-  lyricsWrap:  { marginTop: 8, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 8 },
-  lyricsHeader:{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  lyricsLabel: { color: '#333', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
-  lyricsToggle:{ color: '#7c4dff', fontSize: 11 },
-  lyricsText:  { color: '#888', fontSize: 12, lineHeight: 20 },
-  lyricsEmpty: { color: '#333', fontSize: 12, fontStyle: 'italic' },
-  cancelBtn:   { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
-  cancelText:  { color: '#888', fontSize: 13 },
-  urlInput:    { backgroundColor: '#1a1a24', borderRadius: 10, padding: 10, color: '#ccc', fontSize: 13, borderWidth: 1, borderColor: '#2a2a3a' },
-
-  /* Browser */
-  browserHeader:{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderBottomWidth: 1, borderColor: '#1e1e28' },
-  backBtn:      { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  backText:     { color: '#ccc', fontSize: 14 },
-  browserTitle: { flex: 1, color: '#888', fontSize: 12, letterSpacing: 1 },
+  cancelBtn:  { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
+  cancelText: { color: '#888', fontSize: 13 },
+  urlInput:   { backgroundColor: '#1a1a24', borderRadius: 10, padding: 10, color: '#ccc', fontSize: 13, borderWidth: 1, borderColor: '#2a2a3a' },
 });
