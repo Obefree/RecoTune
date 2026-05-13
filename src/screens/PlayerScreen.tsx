@@ -326,6 +326,16 @@ export default function PlayerScreen() {
         <TouchableOpacity onPress={() => toggleFav(item.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name={isFav ? 'star' : 'star-outline'} size={18} color={isFav ? '#ffb300' : '#333'} />
         </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => Alert.alert(item.title, 'Удалить из списка?', [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Удалить', style: 'destructive', onPress: () => deleteTrack(item.id) },
+          ])}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={{ marginLeft: 2 }}
+        >
+          <Ionicons name="trash-outline" size={16} color="#c0392b" />
+        </TouchableOpacity>
       </TouchableOpacity>
     );
   };

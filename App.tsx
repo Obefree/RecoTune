@@ -12,6 +12,7 @@ import StudioScreen from './src/screens/StudioScreen';
 import PlayerScreen from './src/screens/PlayerScreen';
 import VideoScreen from './src/screens/VideoScreen';
 import ChordsScreen from './src/screens/ChordsScreen';
+import AILabScreen from './src/screens/AILabScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -73,12 +74,14 @@ function AppInner() {
                 Player:   ['headset', 'headset-outline'],
                 Video:    ['film', 'film-outline'],
                 Chords:   ['musical-note', 'musical-note-outline'],
+                AILab:    ['flask', 'flask-outline'],
               };
               const [on, off] = icons[route.name] ?? ['ellipse', 'ellipse-outline'];
               const iconName = focused ? on : off;
               const activeColor = route.name === 'Player' ? '#7c4dff'
                 : route.name === 'Video'   ? '#40c4ff'
-                : route.name === 'Chords'  ? '#ff9800' : ACTIVE;
+                : route.name === 'Chords'  ? '#ff9800'
+                : route.name === 'AILab'   ? '#00bcd4' : ACTIVE;
               return (
                 <View style={{
                   width: 36, height: 26, alignItems: 'center', justifyContent: 'center',
@@ -93,6 +96,7 @@ function AppInner() {
               if (route.name === 'Player') return '#7c4dff';
               if (route.name === 'Video')  return '#40c4ff';
               if (route.name === 'Chords') return '#ff9800';
+              if (route.name === 'AILab')  return '#00bcd4';
               return ACTIVE;
             })(),
           })}
@@ -103,6 +107,7 @@ function AppInner() {
           <Tab.Screen name="Player"   component={PlayerScreen} />
           <Tab.Screen name="Video"    component={VideoScreen} />
           <Tab.Screen name="Chords"   component={ChordsScreen} />
+          <Tab.Screen name="AILab"    component={AILabScreen}  options={{ title: 'AI Lab' }} />
         </Tab.Navigator>
       </NavigationContainer>
       <StatusBar style="light" />
