@@ -320,6 +320,11 @@ export default function ChordsScreen() {
   const [practiceLyrics, setPracticeLyrics] = useState('');
   const [lyricsEditMode, setLyricsEditMode] = useState(false);
 
+  /* ── Live mode error display ── */
+  const [liveError, setLiveError] = useState<string | null>(null);
+  const wvReadyRef = useRef(false);
+  const pendingStartRef = useRef(false);
+
   /* ── Identify state ── */
   const [recSecs, setRecSecs]         = useState(0);
   const [isRecognizing, setIsRecognizing] = useState(false);
@@ -354,19 +359,38 @@ export default function ChordsScreen() {
 
   function startLive() {
     setLiveActive(true);
+    setLiveError(null);
     setChord('—'); setKey(''); setNotes([]); setHistory([]);
     setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
-    setTimeout(() => sendCmd('start'), 300);
+    if (wvReadyRef.current) {
+      sendCmd('start');
+    } else {
+      pendingStartRef.current = true;
+    }
   }
   function stopLive() {
     setLiveActive(false);
+    pendingStartRef.current = false;
     sendCmd('stop');
   }
 
   function handleWVMessage(e: any) {
     try {
       const msg = JSON.parse(e.nativeEvent.data);
-      if (msg.type === 'update') {
+      if (msg.type === 'ready') {
+        setLiveError(null);
+      } else if (msg.type === 'error') {
+        setLiveActive(false);
+        const errText: string = msg.msg || msg.message || 'Ошибка микрофона';
+        if (errText.toLowerCase().includes('denied') || errText.toLowerCase().includes('permission')) {
+          setLiveError('Нет доступа к микрофону. Разрешите в настройках телефона.');
+        } else if (errText.toLowerCase().includes('notfound') || errText.toLowerCase().includes('devicenotfound')) {
+          setLiveError('Микрофон не найден.');
+        } else {
+          setLiveError(`Ошибка: ${errText}`);
+        }
+      } else if (msg.type === 'update') {
+        setLiveError(null);
         setChord(msg.chord);
         setConfidence(msg.confidence);
         setKey(msg.key);
@@ -379,14 +403,12 @@ export default function ChordsScreen() {
           }
           return prev;
         });
-        // Voice pitch (used in practice mode)
         if (msg.pitchHz > 0) {
           const midi = Math.round(12 * Math.log2(msg.pitchHz / 440) + 69);
           const noteIdx = ((midi % 12) + 12) % 12;
           const octave = Math.floor(midi / 12) - 1;
           setVoiceNote(NOTE_NAMES_FLAT[noteIdx] + octave);
           setVoiceFreq(Math.round(msg.pitchHz));
-          // Cents from nearest semitone
           const exactMidi = 12 * Math.log2(msg.pitchHz / 440) + 69;
           setVoiceCents(Math.round((exactMidi - midi) * 100));
         } else {
@@ -394,6 +416,14 @@ export default function ChordsScreen() {
         }
       }
     } catch {}
+  }
+
+  function handleWVLoad() {
+    wvReadyRef.current = true;
+    if (pendingStartRef.current) {
+      pendingStartRef.current = false;
+      sendCmd('start');
+    }
   }
 
   /* ── Practice recording ── */
@@ -576,10 +606,15 @@ export default function ChordsScreen() {
   function startPitchDetection() {
     setPitchActive(true);
     setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
-    setTimeout(() => sendCmd('start'), 300);
+    if (wvReadyRef.current) {
+      sendCmd('start');
+    } else {
+      pendingStartRef.current = true;
+    }
   }
   function stopPitchDetection() {
     setPitchActive(false);
+    pendingStartRef.current = false;
     sendCmd('stop');
   }
 
@@ -591,7 +626,7 @@ export default function ChordsScreen() {
     if (m === 'live') {
       setChord('—'); setKey(''); setNotes([]); setHistory([]);
       setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
-      setTimeout(() => sendCmd('start'), 350);
+      if (wvReadyRef.current) { sendCmd('start'); } else { pendingStartRef.current = true; }
       setLiveActive(true);
     }
   }
@@ -670,6 +705,13 @@ export default function ChordsScreen() {
                   ))}
                 </View>
               </ScrollView>
+            </View>
+          )}
+
+          {liveError && (
+            <View style={styles.liveErrorCard}>
+              <Ionicons name="alert-circle" size={18} color="#ff5252" />
+              <Text style={styles.liveErrorText}>{liveError}</Text>
             </View>
           )}
 
@@ -1038,12 +1080,13 @@ export default function ChordsScreen() {
         </View>
       )}
 
-      {/* Hidden engine WebView */}
+      {/* Hidden engine WebView — baseUrl required for getUserMedia on Android */}
       <WebView
         ref={wvRef}
-        source={{ html: ENGINE_HTML }}
+        source={{ html: ENGINE_HTML, baseUrl: 'https://localhost' }}
         style={styles.hiddenWV}
         onMessage={handleWVMessage}
+        onLoadEnd={handleWVLoad}
         mediaPlaybackRequiresUserAction={false}
         allowsInlineMediaPlayback
         javaScriptEnabled
@@ -1063,6 +1106,8 @@ const styles = StyleSheet.create({
   pillText:   { color: '#555', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
   pillTextActive: { color: '#0a0a0f' },
   hiddenWV:   { position: 'absolute', width: 1, height: 1, opacity: 0 },
+  liveErrorCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#ff525211', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#ff525244' },
+  liveErrorText: { flex: 1, color: '#ff5252', fontSize: 12, lineHeight: 18 },
 
   /* Live mode */
   chordCard:  { backgroundColor: '#111118', borderRadius: 18, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: '#1e1e28', gap: 8 },
