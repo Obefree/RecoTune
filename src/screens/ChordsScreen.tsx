@@ -274,17 +274,22 @@ function ChordLyricsLine({ line, currentChord, onChordTap }: { line: string; cur
       remaining = '';
     }
   }
-  if (segs.length === 0) return <Text style={{ color: '#666', fontSize: 13, lineHeight: 20 }}>{line}</Text>;
+  if (segs.length === 0) return <Text style={{ color: '#777', fontSize: 15, lineHeight: 22, marginBottom: 2 }}>{line || ' '}</Text>;
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 2 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
       {segs.map((seg, i) => (
-        <View key={i} style={{ alignItems: 'flex-start', marginRight: 2, marginBottom: 4 }}>
+        <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 2 }}>
           {seg.chord ? (
             <TouchableOpacity onPress={() => onChordTap(seg.chord!)}>
-              <Text style={{ color: seg.chord === currentChord ? '#ff9800' : '#7c4dff', fontSize: 10, fontWeight: '800', lineHeight: 14, marginBottom: 1 }}>{seg.chord}</Text>
+              <Text style={{
+                color: seg.chord === currentChord ? '#ff9800' : '#7c4dff',
+                fontSize: 13, fontWeight: '900', lineHeight: 17, marginBottom: 1,
+                backgroundColor: seg.chord === currentChord ? '#ff980022' : 'transparent',
+                paddingHorizontal: 2, borderRadius: 3,
+              }}>{seg.chord}</Text>
             </TouchableOpacity>
-          ) : <View style={{ height: 15 }} />}
-          <Text style={{ color: '#888', fontSize: 13, lineHeight: 18 }}>{seg.text || ' '}</Text>
+          ) : <View style={{ height: 18 }} />}
+          <Text style={{ color: '#ccc', fontSize: 15, lineHeight: 20 }}>{seg.text || ' '}</Text>
         </View>
       ))}
     </View>
@@ -815,7 +820,7 @@ export default function ChordsScreen() {
       {mode === 'practice' && (
         <View style={{ flex: 1 }}>
 
-          {/* ① Chord input row */}
+          {/* ── TOP STRIP: chord input ── */}
           <View style={styles.progInput}>
             <TouchableOpacity style={styles.libBtn} onPress={() => setShowLibrary(true)}>
               <Ionicons name="library" size={15} color="#7c4dff" />
@@ -842,18 +847,19 @@ export default function ChordsScreen() {
             )}
           </View>
 
-          {/* ② Diagram + chord info row */}
-          <View style={styles.diagRow}>
-            {/* Guitar diagram */}
-            <View style={styles.diagBox}>
+          {/* ── COMPACT PANEL: diagram + current chord + nav ── fixed height, no jitter ── */}
+          <View style={styles.practiceTopPanel}>
+            {/* Left: guitar diagram (small) */}
+            <View style={styles.practiceDiagLeft}>
               <ChordDiagram name={practiceCurrentChord} />
             </View>
 
-            {/* Chord name + tones + voice */}
-            <View style={styles.diagInfo}>
-              <Text style={styles.diagChordName}>{practiceCurrentChord || '—'}</Text>
+            {/* Right: chord name, tones, voice */}
+            <View style={styles.practiceDiagRight}>
+              {/* Chord name big */}
+              <Text style={styles.practiceChordName}>{practiceCurrentChord || '—'}</Text>
 
-              {/* Chord tones */}
+              {/* Tones row — always same height */}
               <View style={styles.chordTonesRow}>
                 {chordTones.length > 0
                   ? chordTones.map((n, i) => (
@@ -861,40 +867,46 @@ export default function ChordsScreen() {
                         <Text style={[styles.chordToneText, n === voiceNoteBase && { color: '#00e676' }]}>{n}</Text>
                       </View>
                     ))
-                  : <Text style={styles.chordTonesEmpty}>введите аккорды</Text>
+                  : <Text style={styles.chordTonesEmpty}>{practiceChords.length > 0 ? '' : 'введите аккорды'}</Text>
                 }
               </View>
 
-              {/* Voice note */}
+              {/* Voice row — always rendered, just hidden when inactive */}
               <View style={styles.diagVoiceRow}>
-                <Ionicons name="mic" size={11} color="#444" />
-                <Text style={[styles.diagVoiceNote, { color: voiceNote === '—' ? '#333' : voiceInChord ? '#00e676' : '#ff9800' }]}>
-                  {voiceNote}
+                <Ionicons name="mic" size={11} color={pitchActive ? '#555' : '#2a2a3a'} />
+                <Text style={[styles.diagVoiceNote, {
+                  color: !pitchActive ? '#2a2a3a' : voiceNote === '—' ? '#333' : voiceInChord ? '#00e676' : '#ff9800'
+                }]}>
+                  {pitchActive ? voiceNote : '—'}
                 </Text>
-                {voiceFreq > 0 && <Text style={styles.diagVoiceHz}>{voiceFreq}Hz</Text>}
-                {voiceNote !== '—' && (
+                <Text style={styles.diagVoiceHz}>{pitchActive && voiceFreq > 0 ? `${voiceFreq}Hz` : ''}</Text>
+                {pitchActive && voiceNote !== '—' && (
                   <Ionicons name={voiceInChord ? 'checkmark-circle' : 'alert-circle'} size={14} color={voiceInChord ? '#00e676' : '#ff9800'} />
                 )}
               </View>
 
-              {/* Cents bar */}
-              {voiceFreq > 0 && (
-                <View style={styles.centsWrap}>
-                  <Text style={styles.centsEdge}>−50</Text>
-                  <View style={styles.centsTrack}>
-                    <View style={styles.centsMid} />
-                    <View style={[styles.centsThumb, { left: `${centsBarPct}%` as any }]} />
-                  </View>
-                  <Text style={styles.centsEdge}>+50</Text>
-                  <Text style={[styles.centsVal, { color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b' }]}>
-                    {voiceCents > 0 ? '+' : ''}{voiceCents}¢
-                  </Text>
+              {/* Cents bar — always rendered with fixed height, invisible when no pitch */}
+              <View style={styles.centsWrap}>
+                <Text style={[styles.centsEdge, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0 }]}>−50</Text>
+                <View style={styles.centsTrack}>
+                  <View style={styles.centsMid} />
+                  <View style={[styles.centsThumb, {
+                    left: `${pitchActive && voiceFreq > 0 ? centsBarPct : 50}%` as any,
+                    opacity: pitchActive && voiceFreq > 0 ? 1 : 0,
+                  }]} />
                 </View>
-              )}
+                <Text style={[styles.centsEdge, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0 }]}>+50</Text>
+                <Text style={[styles.centsVal, {
+                  opacity: pitchActive && voiceFreq > 0 ? 1 : 0,
+                  color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b'
+                }]}>
+                  {voiceCents > 0 ? '+' : ''}{voiceCents}¢
+                </Text>
+              </View>
             </View>
           </View>
 
-          {/* ③ Chord navigation */}
+          {/* ── CHORD NAVIGATION strip ── */}
           <View style={styles.chordNav}>
             <TouchableOpacity onPress={practicePrev} style={styles.chordNavArrow} disabled={practiceChordIdx <= 0}>
               <Ionicons name="chevron-back" size={24} color={practiceChordIdx > 0 ? '#ccc' : '#222'} />
@@ -919,47 +931,61 @@ export default function ChordsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ④ Lyrics — toggle edit / chord-view */}
+          {/* ── LYRICS SHEET — takes all remaining space ── */}
           <View style={styles.lyricsPanel}>
             <View style={styles.lyricsPanelHeader}>
-              <Text style={styles.lyricsPanelTitle}>ТЕКСТ</Text>
+              <Text style={styles.lyricsPanelTitle}>
+                {lyricsEditMode ? 'РЕДАКТИРОВАТЬ ТЕКСТ' : 'ТЕКСТ С АККОРДАМИ'}
+              </Text>
               <TouchableOpacity onPress={() => setLyricsEditMode(v => !v)} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                 <Ionicons name={lyricsEditMode ? 'eye-outline' : 'create-outline'} size={15} color="#555" />
                 <Text style={{ color: '#555', fontSize: 10 }}>{lyricsEditMode ? 'просмотр' : 'ред.'}</Text>
               </TouchableOpacity>
             </View>
+
             {lyricsEditMode ? (
               <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
                 <TextInput
                   style={styles.lyricsInput}
                   multiline
-                  placeholder={'Вставьте текст.\nЧтобы показать аккорды над словами — используйте [Am]Привет [F]мир\nИли просто вставьте текст без аккордов.'}
+                  placeholder={
+                    'Вставьте текст песни.\n\nЧтобы показать аккорды НАД словами — добавьте в квадратных скобках:\n[Am]Первый [F]куплет [C]текст\n\nАккорды из поля сверху автоматически не добавляются — нужно разметить вручную.'
+                  }
                   placeholderTextColor="#2a2a3a"
                   value={practiceLyrics}
                   onChangeText={setPracticeLyrics}
                   scrollEnabled={false}
                 />
               </ScrollView>
-            ) : (
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                {practiceLyrics
-                  ? practiceLyrics.split('\n').map((line, li) => (
-                      <ChordLyricsLine key={li} line={line} currentChord={practiceCurrentChord}
-                        onChordTap={(c) => {
-                          const idx = practiceChords.indexOf(c);
-                          if (idx >= 0) setPracticeChordIdx(idx);
-                        }}
-                      />
-                    ))
-                  : <Text style={{ color: '#2a2a3a', fontSize: 12, padding: 8 }}>
-                      Нажмите карандаш чтобы добавить текст.{'\n'}Формат с аккордами: [Am]Слова [F]текст
-                    </Text>
-                }
+            ) : practiceLyrics ? (
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ padding: 10 }}>
+                {practiceLyrics.split('\n').map((line, li) => (
+                  <ChordLyricsLine key={li} line={line} currentChord={practiceCurrentChord}
+                    onChordTap={(c) => {
+                      const idx = practiceChords.indexOf(c);
+                      if (idx >= 0) setPracticeChordIdx(idx);
+                    }}
+                  />
+                ))}
               </ScrollView>
+            ) : (
+              <View style={styles.lyricsEmpty}>
+                <Ionicons name="musical-notes-outline" size={36} color="#1e1e28" />
+                <Text style={styles.lyricsEmptyText}>Здесь будет текст с аккордами</Text>
+                <Text style={styles.lyricsEmptyHint}>
+                  Выберите песню из базы (БАЗА) или нажмите карандаш, чтобы вставить текст.
+                  {'\n\n'}Формат: [Am]Слово [F]другое — аккорд отобразится над словом.
+                </Text>
+                <TouchableOpacity style={styles.lyricsEmptyBtn} onPress={() => setLyricsEditMode(true)}>
+                  <Ionicons name="create-outline" size={16} color="#fff" />
+                  <Text style={styles.lyricsEmptyBtnText}>Добавить текст</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
 
-          {/* ⑤ Bottom toolbar */}
+          {/* ── BOTTOM TOOLBAR ── */}
           <View style={styles.practiceToolbar}>
             <TouchableOpacity
               style={[styles.mainBtn, pitchActive && styles.mainBtnStop, { flex: 1 }]}
@@ -1345,6 +1371,11 @@ const styles = StyleSheet.create({
   voiceRight: { alignItems: 'center', justifyContent: 'center', width: 36 },
 
   /* Practice: diagram row */
+  /* Fixed-height practice panel — no jitter */
+  practiceTopPanel:  { flexDirection: 'row', height: 140, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#1a1a24', paddingHorizontal: 10, paddingVertical: 6, gap: 10 },
+  practiceDiagLeft:  { alignItems: 'center', justifyContent: 'center' },
+  practiceDiagRight: { flex: 1, justifyContent: 'space-between', paddingTop: 2 },
+  practiceChordName: { color: '#fff', fontSize: 26, fontWeight: '900', letterSpacing: 1, lineHeight: 28 },
   diagRow:      { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, gap: 12, backgroundColor: '#0d0d14', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#1a1a24' },
   diagBox:      { alignItems: 'center', justifyContent: 'center' },
   diagInfo:     { flex: 1, gap: 4, paddingTop: 4 },
@@ -1353,11 +1384,16 @@ const styles = StyleSheet.create({
   diagVoiceNote:{ fontSize: 18, fontWeight: '800' },
   diagVoiceHz:  { color: '#444', fontSize: 9 },
 
-  lyricsPanel: { flex: 1, backgroundColor: '#0d0d14', margin: 8, borderRadius: 14, borderWidth: 1, borderColor: '#1e1e28', overflow: 'hidden' },
-  lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4, borderBottomWidth: 1, borderColor: '#1a1a24' },
-  lyricsPanelTitle: { color: '#333', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
+  lyricsPanel: { flex: 1, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
+  lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
+  lyricsPanelTitle: { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
+  lyricsEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
+  lyricsEmptyText: { color: '#333', fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  lyricsEmptyHint: { color: '#222', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  lyricsEmptyBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#1e1e28', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, marginTop: 6 },
+  lyricsEmptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   lyricsImportBtn:  { color: '#ff9800', fontSize: 10 },
-  lyricsInput: { color: '#bbb', fontSize: 13, lineHeight: 22, padding: 12, minHeight: 80 },
+  lyricsInput: { color: '#ccc', fontSize: 14, lineHeight: 24, padding: 12, minHeight: 200 },
 
   practiceToolbar: { flexDirection: 'row', gap: 8, padding: 10, paddingBottom: 12, borderTopWidth: 1, borderColor: '#1a1a24' },
   recBtn:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1a1a24', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#2a2a3a' },
