@@ -286,16 +286,20 @@ export default function StudioScreen() {
     await killAllSounds();
     try {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-      const loaded: Audio.Sound[] = [];
-      for (const t of session.tracks) {
-        const { sound } = await Audio.Sound.createAsync({ uri: t.uri }, { shouldPlay: true });
-        loaded.push(sound);
-      }
+      // Load ALL sounds in parallel without starting them
+      const loaded = await Promise.all(
+        session.tracks.map(t =>
+          Audio.Sound.createAsync({ uri: t.uri }, { shouldPlay: false })
+            .then(({ sound }) => sound)
+        )
+      );
       allSounds.current = loaded;
       setPlayingAll(true);
       loaded[0].setOnPlaybackStatusUpdate((st: AVPlaybackStatus) => {
         if (st.isLoaded && st.didJustFinish) killAllSounds();
       });
+      // Start all tracks as close to simultaneously as possible
+      await Promise.all(loaded.map(s => s.playAsync()));
     } catch (e) { Alert.alert('Playback error', String(e)); }
   }, [killSolo, killAllSounds]);
 
@@ -311,19 +315,28 @@ export default function StudioScreen() {
     try {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
 
-      // Play back all existing tracks while recording
-      const playbackSounds: Audio.Sound[] = [];
-      for (const t of session.tracks) {
-        const { sound } = await Audio.Sound.createAsync({ uri: t.uri }, { shouldPlay: true });
-        playbackSounds.push(sound);
-      }
+      // Load all existing tracks in parallel (not playing yet)
+      const playbackSounds = await Promise.all(
+        session.tracks.map(t =>
+          Audio.Sound.createAsync({ uri: t.uri }, { shouldPlay: false })
+            .then(({ sound }) => sound)
+        )
+      );
       allSounds.current = playbackSounds;
 
+      // Prepare recording while sounds are already loaded
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
+
+      // Start recording first, then start all playbacks immediately after —
+      // minimises the gap between new track and existing tracks
       await rec.startAsync();
       recRef.current = rec;
       startRef.current = Date.now();
+
+      // Fire all playbacks simultaneously right after recording starts
+      await Promise.all(playbackSounds.map(s => s.playAsync()));
+
       setIsRecording(true);
       setRecDuration(0);
       timerRef.current = setInterval(() => {
