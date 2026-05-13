@@ -1,8 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, TextInput, Platform,
+  ActivityIndicator, Alert, TextInput, Platform, Modal, FlatList,
 } from 'react-native';
+import { SONGS, searchSongs, type SongEntry } from '../data/songDatabase';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -588,6 +589,24 @@ export default function ChordsScreen() {
   const [practiceChordIdx, setPracticeChordIdx] = useState(0);
   const [pitchActive, setPitchActive]         = useState(false);
 
+  /* ── Song library ── */
+  const [showLibrary, setShowLibrary]         = useState(false);
+  const [libSearch, setLibSearch]             = useState('');
+  const [libGenre, setLibGenre]               = useState('');
+  const libResults = libSearch || libGenre
+    ? searchSongs(libSearch).filter(s => !libGenre || s.genre === libGenre)
+    : SONGS;
+  const GENRES_ALL = ['', ...Array.from(new Set(SONGS.map(s => s.genre))).sort()];
+
+  function pickSong(song: SongEntry) {
+    setPracticeInput(song.chords);
+    parsePracticeInput(song.chords);
+    setPracticeChordIdx(0);
+    setShowLibrary(false);
+    // auto-fetch lyrics
+    fetchLyrics(song.artist, song.title);
+  }
+
   function parsePracticeInput(text: string) {
     const chords = text.trim().split(/[\s,|/]+/).filter(Boolean);
     if (chords.length > 0) {
@@ -737,6 +756,10 @@ export default function ChordsScreen() {
 
           {/* ① Chord input row */}
           <View style={styles.progInput}>
+            <TouchableOpacity style={styles.libBtn} onPress={() => setShowLibrary(true)}>
+              <Ionicons name="library" size={15} color="#7c4dff" />
+              <Text style={styles.libBtnText}>БАЗА</Text>
+            </TouchableOpacity>
             <TextInput
               style={styles.progTextField}
               value={practiceInput}
@@ -1080,6 +1103,82 @@ export default function ChordsScreen() {
         </View>
       )}
 
+      {/* ── Song Library Modal ── */}
+      <Modal visible={showLibrary} animationType="slide" onRequestClose={() => setShowLibrary(false)}>
+        <View style={[styles.libModal, { paddingTop: insets.top + 8 }]}>
+          {/* Header */}
+          <View style={styles.libHeader}>
+            <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
+            <Text style={styles.libSubtitle}>{SONGS.length} песен · выберите для практики</Text>
+            <TouchableOpacity onPress={() => setShowLibrary(false)} style={styles.libClose}>
+              <Ionicons name="close" size={24} color="#888" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Search */}
+          <View style={styles.libSearchRow}>
+            <Ionicons name="search" size={16} color="#444" style={{ marginLeft: 10 }} />
+            <TextInput
+              style={styles.libSearchInput}
+              placeholder="Исполнитель, название, аккорды..."
+              placeholderTextColor="#333"
+              value={libSearch}
+              onChangeText={setLibSearch}
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+            />
+          </View>
+
+          {/* Genre filter pills */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            style={styles.libGenreScroll} contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingVertical: 6 }}>
+            {GENRES_ALL.map(g => (
+              <TouchableOpacity key={g} onPress={() => setLibGenre(g)}
+                style={[styles.libGenrePill, libGenre === g && styles.libGenrePillActive]}>
+                <Text style={[styles.libGenreText, libGenre === g && { color: '#0a0a0f' }]}>
+                  {g || 'Все'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* Difficulty legend */}
+          <View style={styles.libLegend}>
+            <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+              <Text style={[styles.libDot, { color: '#00e676' }]}>●</Text><Text style={styles.libLegText}>Легко</Text>
+              <Text style={[styles.libDot, { color: '#ffeb3b' }]}>●</Text><Text style={styles.libLegText}>Средне</Text>
+              <Text style={[styles.libDot, { color: '#ff5252' }]}>●</Text><Text style={styles.libLegText}>Сложно</Text>
+            </View>
+            <Text style={styles.libCount}>{libResults.length} результатов</Text>
+          </View>
+
+          {/* Song list */}
+          <FlatList
+            data={libResults}
+            keyExtractor={item => item.id}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            renderItem={({ item }) => {
+              const diffColor = item.difficulty === 1 ? '#00e676' : item.difficulty === 2 ? '#ffeb3b' : '#ff5252';
+              return (
+                <TouchableOpacity style={styles.libItem} onPress={() => pickSong(item)} activeOpacity={0.7}>
+                  <View style={[styles.libItemDot, { backgroundColor: diffColor }]} />
+                  <View style={styles.libItemInfo}>
+                    <Text style={styles.libItemTitle}>{item.title}</Text>
+                    <Text style={styles.libItemArtist}>{item.artist}</Text>
+                    <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
+                  </View>
+                  <View style={styles.libItemRight}>
+                    <Text style={styles.libItemGenre}>{item.genre}</Text>
+                    {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
+                    {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      </Modal>
+
       {/* Hidden engine WebView — baseUrl required for getUserMedia on Android */}
       <WebView
         ref={wvRef}
@@ -1105,7 +1204,7 @@ const styles = StyleSheet.create({
   pillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
   pillText:   { color: '#555', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
   pillTextActive: { color: '#0a0a0f' },
-  hiddenWV:   { position: 'absolute', width: 1, height: 1, opacity: 0 },
+  hiddenWV:    { position: 'absolute', width: 1, height: 1, opacity: 0 },
   liveErrorCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#ff525211', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#ff525244' },
   liveErrorText: { flex: 1, color: '#ff5252', fontSize: 12, lineHeight: 18 },
 
@@ -1224,4 +1323,38 @@ const styles = StyleSheet.create({
   cancelBtn:  { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
   cancelText: { color: '#888', fontSize: 13 },
   urlInput:   { backgroundColor: '#1a1a24', borderRadius: 10, padding: 10, color: '#ccc', fontSize: 13, borderWidth: 1, borderColor: '#2a2a3a' },
+
+  /* Practice input: library button */
+  libBtn:      { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#7c4dff22', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#7c4dff44' },
+  libBtnText:  { color: '#7c4dff', fontSize: 9, fontWeight: '800' },
+
+  /* Song Library Modal */
+  libModal:    { flex: 1, backgroundColor: '#0a0a0f' },
+  libHeader:   { paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#1e1e28' },
+  libTitle:    { color: '#7c4dff', fontSize: 13, fontWeight: '900', letterSpacing: 3 },
+  libSubtitle: { color: '#333', fontSize: 11, marginTop: 2, marginBottom: 2 },
+  libClose:    { position: 'absolute', right: 12, top: 0 },
+
+  libSearchRow:  { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: '#111118', borderRadius: 12, borderWidth: 1, borderColor: '#1e1e28' },
+  libSearchInput:{ flex: 1, color: '#ccc', fontSize: 14, padding: 10 },
+  libGenreScroll:{ flexShrink: 0, maxHeight: 42 },
+  libGenrePill:  { paddingHorizontal: 12, paddingVertical: 5, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
+  libGenrePillActive: { backgroundColor: '#7c4dff', borderColor: '#7c4dff' },
+  libGenreText:  { color: '#555', fontSize: 11, fontWeight: '600' },
+
+  libLegend:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 4 },
+  libDot:      { fontSize: 10 },
+  libLegText:  { color: '#444', fontSize: 10, marginRight: 6 },
+  libCount:    { color: '#333', fontSize: 10 },
+
+  libItem:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderColor: '#111118' },
+  libItemDot:   { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  libItemInfo:  { flex: 1 },
+  libItemTitle: { color: '#ddd', fontSize: 14, fontWeight: '700' },
+  libItemArtist:{ color: '#666', fontSize: 12, marginTop: 1 },
+  libItemChords:{ color: '#7c4dff', fontSize: 10, marginTop: 2 },
+  libItemRight: { alignItems: 'flex-end', gap: 2 },
+  libItemGenre: { color: '#444', fontSize: 9 },
+  libItemBpm:   { color: '#333', fontSize: 9 },
+  libItemKey:   { color: '#555', fontSize: 9, fontWeight: '700' },
 });
