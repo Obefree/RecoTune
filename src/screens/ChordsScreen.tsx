@@ -68,18 +68,23 @@ const TEMPLATES={
   'sus2':[0,2,7],
   'sus4':[0,5,7],
 };
-const SIMPLICITY={'':0.30,'m':0.30,'7':0.05,'maj7':-0.50,'m7':-0.40,'dim':0.05,'aug':0,'sus2':0.05,'sus4':0.05};
+const SIMPLICITY={'':0.32,'m':0.32,'7':0.06,'maj7':-0.55,'m7':-0.45,'dim':0.06,'aug':-0.05,'sus2':0.06,'sus4':0.06};
 const MAJOR_P=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const MINOR_P=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 
 let ctx,analyser,src,running=false;
+
 /* ── rolling window for averaged chromagram ── */
-const WIN=28;       // ~1.4s at ~20fps — averages out transients
-let   winBuf=[];    // ring buffer of raw chroma frames
+const WIN=18;         // ~0.9s window — responsive but not jittery
+let   winBuf=[];
 
 /* ── chord stability gate ── */
-const STABLE_NEED=14; // chord must win 14 consecutive windows (~0.7s)
+const STABLE_NEED=16; // must win 16 consecutive frames (~0.8s) before logging
+const MIN_CONF=0.42;  // minimum score to count as a real chord (not noise)
 let   candidate='?', stableCount=0, prevSegChord='?', segStart=0;
+
+/* ── onset / transient detection ── */
+let   energyHist=[], onsetCooldown=0;
 
 function post(obj){window.ReactNativeWebView.postMessage(JSON.stringify(obj));}
 
@@ -136,9 +141,16 @@ function pitchHPS(fft,bHz,harmonics){
 function avgWindow(){
   const avg=new Float32Array(12);
   const n=winBuf.length;if(!n)return avg;
-  for(const fr of winBuf)for(let i=0;i<12;i++)avg[i]+=fr[i];
+  // Weighted average: recent frames count more (linear ramp)
+  let wTotal=0;
+  for(let j=0;j<n;j++){
+    const w=(j+1); // weight grows with recency
+    for(let i=0;i<12;i++)avg[i]+=winBuf[j][i]*w;
+    wTotal+=w;
+  }
+  for(let i=0;i<12;i++)avg[i]/=wTotal;
   const mx=Math.max(...avg);
-  if(mx>0)for(let i=0;i<12;i++)avg[i]/=mx;  // normalize so scale doesn't matter
+  if(mx>0)for(let i=0;i<12;i++)avg[i]/=mx;
   return avg;
 }
 function emitSegment(chord,durationMs){
@@ -146,22 +158,41 @@ function emitSegment(chord,durationMs){
 }
 async function start(){
   if(running)return;running=true;
-  winBuf=[];candidate='?';stableCount=0;prevSegChord='?';segStart=Date.now();
+  winBuf=[];energyHist=[];onsetCooldown=0;
+  candidate='?';stableCount=0;prevSegChord='?';segStart=Date.now();
   try{
     const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     ctx=new AudioContext();
     analyser=ctx.createAnalyser();
-    analyser.fftSize=8192;analyser.smoothingTimeConstant=0.5;
+    analyser.fftSize=8192;analyser.smoothingTimeConstant=0.4; // less pre-smoothing — let onset detection work
     src=ctx.createMediaStreamSource(st);src.connect(analyser);
     const fft=new Float32Array(analyser.frequencyBinCount);
     const bHz=ctx.sampleRate/analyser.fftSize;
     function loop(){
       if(!running)return;
       analyser.getFloatFrequencyData(fft);
-      // Check signal level — skip silence
+      // Skip silence
       const peak=Math.max(...fft.slice(0,400));
-      if(peak<-60){requestAnimationFrame(loop);return;}
+      if(peak<-62){requestAnimationFrame(loop);return;}
+
       const c=chroma(fft,ctx.sampleRate,analyser.fftSize);
+
+      // ── Onset detection: energy spike = new chord starting ──
+      const totalE=c.reduce((s,v)=>s+v,0);
+      energyHist.push(totalE);
+      if(energyHist.length>8)energyHist.shift();
+      if(onsetCooldown>0){onsetCooldown--;}
+      else if(energyHist.length>=4){
+        const prevAvg=energyHist.slice(0,-2).reduce((s,v)=>s+v,0)/(energyHist.length-2);
+        // Energy jumped >2.2× → guitarist just struck a new chord
+        if(totalE>prevAvg*2.2&&prevAvg>0.4){
+          winBuf=winBuf.slice(-3); // flush most of old window, keep tiny tail
+          stableCount=0;
+          candidate='?';
+          onsetCooldown=8; // wait ~400ms before next onset can trigger
+        }
+      }
+
       // Maintain rolling window
       winBuf.push(Array.from(c));
       if(winBuf.length>WIN)winBuf.shift();
@@ -170,21 +201,21 @@ async function start(){
       const key=estimateKey(avg);
       const notes=topNotes(avg,4);
       const pitchHz=pitchHPS(fft,bHz,4);
-      // Send current display data every frame
-      post({type:'update',chord:chord.name,confidence:chord.conf,key,notes,pitchHz});
-      // ── Stability gate for chord segments ──
-      if(chord.name!=='?'&&chord.conf>0.2&&chord.name===candidate){
+
+      // Display update every frame
+      post({type:'update',chord:chord.conf>=MIN_CONF?chord.name:'?',confidence:chord.conf,key,notes,pitchHz});
+
+      // ── Stability gate ──
+      if(chord.conf>=MIN_CONF&&chord.name!=='?'&&chord.name===candidate){
         stableCount++;
         if(stableCount===STABLE_NEED&&candidate!==prevSegChord){
-          // Chord has been stable: close previous segment, open new one
           const now=Date.now();
           emitSegment(prevSegChord,now-segStart);
           prevSegChord=candidate;
           segStart=now;
         }
       } else {
-        candidate=chord.name;
-        stableCount=0;
+        if(chord.name!==candidate){candidate=chord.name;stableCount=0;}
       }
       requestAnimationFrame(loop);
     }
