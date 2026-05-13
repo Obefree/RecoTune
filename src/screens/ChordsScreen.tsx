@@ -239,62 +239,73 @@ const CHORD_DB: Record<string, { frets: number[]; barre?: number }> = {
 };
 
 /* ─── Guitar chord diagram component ─── */
-function ChordDiagram({ name }: { name: string }) {
+function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg' }) {
   const def = CHORD_DB[name] ?? null;
   const S = 6; const NF = 4;
-  const G = 14; const FH = 18;
-  const PL = 10; const PT = 16;
-  const W = (S - 1) * G + PL * 2;
-  const H = NF * FH + PT + 10;
+  // Size variants
+  const G  = size === 'lg' ? 26 : size === 'sm' ? 16 : 22;   // gap between strings
+  const FH = size === 'lg' ? 28 : size === 'sm' ? 18 : 24;   // fret height
+  const PL = size === 'lg' ? 16 : size === 'sm' ? 10 : 14;   // left/right padding
+  const PT = size === 'lg' ? 22 : size === 'sm' ? 14 : 18;   // top padding
+  const W  = (S - 1) * G + PL * 2;
+  const H  = NF * FH + PT + 14;
+  const DOT = G * 0.40;   // finger dot radius
 
   if (!def) {
+    // Show chord name hint if not in DB
+    const label = (!name || name === '—' || name === '?') ? '?' : name + '\n?';
     return (
-      <View style={{ width: W, height: H, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: '#2a2a3a', fontSize: 20, fontWeight: '900' }}>?</Text>
+      <View style={{ width: W, height: H, alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1, borderColor: '#2a2a3a', borderRadius: 8 }}>
+        <Text style={{ color: '#555', fontSize: 11, textAlign: 'center', lineHeight: 16 }}>{label}</Text>
+        <Text style={{ color: '#333', fontSize: 9, marginTop: 2 }}>нет схемы</Text>
       </View>
     );
   }
+
   const { frets, barre } = def;
   const fNums = frets.filter(f => f > 0);
-  const minF = fNums.length ? Math.min(...fNums) : 1;
-  const base = barre != null ? barre : (minF > 3 ? minF - 1 : 1);
+  const minF  = fNums.length ? Math.min(...fNums) : 1;
+  const base  = barre != null ? barre : (minF > 3 ? minF - 1 : 1);
   const showNum = base > 1;
   const gx = (si: number) => PL + si * G;
   const gy = (fi: number) => PT + fi * FH;
 
   return (
-    <View style={{ width: W, height: H }}>
-      {/* Nut line */}
-      {!showNum && (
-        <View style={{ position:'absolute', left:PL, top:PT, width:(S-1)*G, height:3, backgroundColor:'#666', borderRadius:2 }} />
+    <View style={{ width: W, height: H, borderWidth: 1, borderColor: '#2a2a3a', borderRadius: 8, overflow: 'hidden' }}>
+      {/* Nut (thick bar at top) */}
+      {!showNum ? (
+        <View style={{ position:'absolute', left:PL, top:PT - 2, width:(S-1)*G, height:4, backgroundColor:'#aaa', borderRadius:2 }} />
+      ) : (
+        <Text style={{ position:'absolute', right: 4, top: PT + FH * 0.3, color:'#888', fontSize: size === 'lg' ? 11 : 9, fontWeight:'700' }}>{base}fr</Text>
       )}
-      {showNum && (
-        <Text style={{ position:'absolute', right:0, top: PT + FH/2 - 5, color:'#555', fontSize:8 }}>{base}fr</Text>
-      )}
-      {/* Fret lines */}
-      {Array.from({ length: NF + 1 }).map((_,fi) => (
-        <View key={fi} style={{ position:'absolute', left:PL, top:gy(fi), width:(S-1)*G, height:1, backgroundColor:'#222' }} />
+      {/* Fret lines — visible medium gray */}
+      {Array.from({ length: NF + 1 }).map((_, fi) => (
+        <View key={fi} style={{ position:'absolute', left:PL, top:gy(fi), width:(S-1)*G, height:1, backgroundColor:'#3a3a55' }} />
       ))}
-      {/* String lines */}
-      {Array.from({ length: S }).map((_,si) => (
-        <View key={si} style={{ position:'absolute', left:gx(si), top:PT, width:1, height:NF*FH, backgroundColor:'#252530' }} />
+      {/* String lines — visible gray */}
+      {Array.from({ length: S }).map((_, si) => (
+        <View key={si} style={{ position:'absolute', left:gx(si), top:PT, width: si === 0 || si === 5 ? 2 : 1, height:NF*FH, backgroundColor:'#4a4a65' }} />
       ))}
       {/* Barre bar */}
       {barre != null && (
-        <View style={{ position:'absolute', left:PL, top:gy(barre-base)+FH*0.2, width:(S-1)*G, height:FH*0.6, backgroundColor:'#ff980055', borderRadius:FH*0.3 }} />
+        <View style={{ position:'absolute', left:PL + DOT, top:gy(barre - base) + FH * 0.18, width:(S-1)*G - DOT*2, height:FH * 0.64, backgroundColor:'#ff980099', borderRadius: FH * 0.32 }} />
       )}
-      {/* Per-string dots & indicators */}
+      {/* Per-string markers */}
       {frets.map((f, si) => {
         const x = gx(si);
-        if (f < 0) return <Text key={si} style={{ position:'absolute', left:x-4, top:1, color:'#555', fontSize:9, fontWeight:'700' }}>✕</Text>;
-        if (f === 0) return <Text key={si} style={{ position:'absolute', left:x-4, top:2, color:'#444', fontSize:10 }}>○</Text>;
+        if (f < 0) {
+          return <Text key={si} style={{ position:'absolute', left:x - 5, top: 3, color:'#ff5252', fontSize: size === 'lg' ? 12 : 10, fontWeight:'900' }}>✕</Text>;
+        }
+        if (f === 0) {
+          return <Text key={si} style={{ position:'absolute', left:x - 5, top: 4, color:'#aaa', fontSize: size === 'lg' ? 12 : 10, fontWeight:'700' }}>○</Text>;
+        }
         const rf = f - base + 1;
         if (rf < 1 || rf > NF) return null;
         const cy = gy(rf - 1) + FH * 0.5;
-        const r = G * 0.38;
         const isBarre = barre != null && f === barre;
         return (
-          <View key={si} style={{ position:'absolute', left:x-r, top:cy-r, width:r*2, height:r*2, borderRadius:r, backgroundColor: isBarre ? '#ff9800bb' : '#7c4dff' }} />
+          <View key={si} style={{ position:'absolute', left:x - DOT, top:cy - DOT, width:DOT*2, height:DOT*2, borderRadius:DOT, backgroundColor: isBarre ? '#ff9800' : '#7c4dff' }} />
         );
       })}
     </View>
@@ -910,19 +921,18 @@ export default function ChordsScreen() {
             )}
           </View>
 
-          {/* ── COMPACT PANEL: diagram + current chord + nav ── fixed height, no jitter ── */}
+          {/* ── CHORD PANEL: diagram + name + tones + voice ── */}
           <View style={styles.practiceTopPanel}>
-            {/* Left: guitar diagram (small) */}
+            {/* Diagram — centered, medium size */}
             <View style={styles.practiceDiagLeft}>
-              <ChordDiagram name={practiceCurrentChord} />
+              <ChordDiagram name={practiceCurrentChord} size="md" />
             </View>
 
             {/* Right: chord name, tones, voice */}
             <View style={styles.practiceDiagRight}>
-              {/* Chord name big */}
-              <Text style={styles.practiceChordName}>{practiceCurrentChord || '—'}</Text>
+              <Text style={styles.practiceChordName}>{practiceCurrentChord === '—' ? '← выберите' : practiceCurrentChord}</Text>
 
-              {/* Tones row — always same height */}
+              {/* Tones */}
               <View style={styles.chordTonesRow}>
                 {chordTones.length > 0
                   ? chordTones.map((n, i) => (
@@ -930,39 +940,34 @@ export default function ChordsScreen() {
                         <Text style={[styles.chordToneText, n === voiceNoteBase && { color: '#00e676' }]}>{n}</Text>
                       </View>
                     ))
-                  : <Text style={styles.chordTonesEmpty}>{practiceChords.length > 0 ? '' : 'введите аккорды'}</Text>
+                  : <Text style={styles.chordTonesEmpty}>{practiceChords.length === 0 ? 'введите аккорды выше' : ''}</Text>
                 }
               </View>
 
-              {/* Voice row — always rendered, just hidden when inactive */}
+              {/* Voice — always same height */}
               <View style={styles.diagVoiceRow}>
-                <Ionicons name="mic" size={11} color={pitchActive ? '#555' : '#2a2a3a'} />
+                <Ionicons name="mic" size={11} color={pitchActive ? '#666' : '#2a2a3a'} />
                 <Text style={[styles.diagVoiceNote, {
-                  color: !pitchActive ? '#2a2a3a' : voiceNote === '—' ? '#333' : voiceInChord ? '#00e676' : '#ff9800'
+                  color: !pitchActive ? '#2a2a3a' : voiceNote === '—' ? '#444' : voiceInChord ? '#00e676' : '#ff9800'
                 }]}>
                   {pitchActive ? voiceNote : '—'}
                 </Text>
                 <Text style={styles.diagVoiceHz}>{pitchActive && voiceFreq > 0 ? `${voiceFreq}Hz` : ''}</Text>
                 {pitchActive && voiceNote !== '—' && (
-                  <Ionicons name={voiceInChord ? 'checkmark-circle' : 'alert-circle'} size={14} color={voiceInChord ? '#00e676' : '#ff9800'} />
+                  <Ionicons name={voiceInChord ? 'checkmark-circle' : 'alert-circle'} size={14}
+                    color={voiceInChord ? '#00e676' : '#ff9800'} />
                 )}
               </View>
 
-              {/* Cents bar — always rendered with fixed height, invisible when no pitch */}
-              <View style={styles.centsWrap}>
-                <Text style={[styles.centsEdge, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0 }]}>−50</Text>
+              {/* Cents bar — fixed height, fades when mic off */}
+              <View style={[styles.centsWrap, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0.15 }]}>
+                <Text style={styles.centsEdge}>−50</Text>
                 <View style={styles.centsTrack}>
                   <View style={styles.centsMid} />
-                  <View style={[styles.centsThumb, {
-                    left: `${pitchActive && voiceFreq > 0 ? centsBarPct : 50}%` as any,
-                    opacity: pitchActive && voiceFreq > 0 ? 1 : 0,
-                  }]} />
+                  <View style={[styles.centsThumb, { left: `${pitchActive && voiceFreq > 0 ? centsBarPct : 50}%` as any }]} />
                 </View>
-                <Text style={[styles.centsEdge, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0 }]}>+50</Text>
-                <Text style={[styles.centsVal, {
-                  opacity: pitchActive && voiceFreq > 0 ? 1 : 0,
-                  color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b'
-                }]}>
+                <Text style={styles.centsEdge}>+50</Text>
+                <Text style={[styles.centsVal, { color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b' }]}>
                   {voiceCents > 0 ? '+' : ''}{voiceCents}¢
                 </Text>
               </View>
@@ -1424,10 +1429,10 @@ const styles = StyleSheet.create({
   voiceHz:    { color: '#444', fontSize: 9 },
   voiceMid:   { flex: 1 },
   chordTonesRow:   { flexDirection: 'row', gap: 4, flexWrap: 'wrap', marginBottom: 4 },
-  chordTonePill:   { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#1a1a24', borderRadius: 8, borderWidth: 1, borderColor: '#2a2a3a' },
-  chordTonePillActive: { backgroundColor: '#00e67622', borderColor: '#00e67655' },
-  chordToneText:   { color: '#666', fontSize: 12, fontWeight: '700' },
-  chordTonesEmpty: { color: '#2a2a3a', fontSize: 11 },
+  chordTonePill:   { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: '#1e1e2e', borderRadius: 8, borderWidth: 1, borderColor: '#3a3a55' },
+  chordTonePillActive: { backgroundColor: '#00e67633', borderColor: '#00e676' },
+  chordToneText:   { color: '#aaa', fontSize: 12, fontWeight: '700' },
+  chordTonesEmpty: { color: '#555', fontSize: 11 },
   centsWrap:  { flexDirection: 'row', alignItems: 'center', gap: 4 },
   centsEdge:  { color: '#333', fontSize: 8, width: 18 },
   centsTrack: { flex: 1, height: 6, backgroundColor: '#1a1a24', borderRadius: 3, position: 'relative' },
@@ -1438,17 +1443,17 @@ const styles = StyleSheet.create({
 
   /* Practice: diagram row */
   /* Fixed-height practice panel — no jitter */
-  practiceTopPanel:  { flexDirection: 'row', height: 140, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#1a1a24', paddingHorizontal: 10, paddingVertical: 6, gap: 10 },
+  practiceTopPanel:  { flexDirection: 'row', height: 158, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#2a2a3a', paddingHorizontal: 12, paddingVertical: 10, gap: 14 },
   practiceDiagLeft:  { alignItems: 'center', justifyContent: 'center' },
   practiceDiagRight: { flex: 1, justifyContent: 'space-between', paddingTop: 2 },
-  practiceChordName: { color: '#fff', fontSize: 26, fontWeight: '900', letterSpacing: 1, lineHeight: 28 },
+  practiceChordName: { color: '#fff', fontSize: 28, fontWeight: '900', letterSpacing: 1 },
   diagRow:      { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, gap: 12, backgroundColor: '#0d0d14', borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#1a1a24' },
   diagBox:      { alignItems: 'center', justifyContent: 'center' },
   diagInfo:     { flex: 1, gap: 4, paddingTop: 4 },
   diagChordName:{ color: '#ff9800', fontSize: 28, fontWeight: '900', letterSpacing: -1 },
-  diagVoiceRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 },
-  diagVoiceNote:{ fontSize: 18, fontWeight: '800' },
-  diagVoiceHz:  { color: '#444', fontSize: 9 },
+  diagVoiceRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  diagVoiceNote:{ fontSize: 16, fontWeight: '800' },
+  diagVoiceHz:  { color: '#666', fontSize: 10 },
 
   lyricsPanel: { flex: 1, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
   lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
