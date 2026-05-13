@@ -8,6 +8,16 @@ function centsToAngle(cents: number) {
 function Tick({ angle, length, thick, color, W, H }: {
   angle: number; length: number; thick: number; color: string; W: number; H: number;
 }) {
+  // Rotate around the bottom-center of the needle (pivot = bottom of the tick)
+  // New Architecture requires transform matrices; avoid transformOrigin string.
+  const rad = (angle * Math.PI) / 180;
+  const pivotX = 0;          // offset from tick center-x to pivot
+  const pivotY = length / 2; // offset from tick center-y to pivot (bottom of tick)
+  const cosA = Math.cos(rad);
+  const sinA = Math.sin(rad);
+  // translate pivot to origin, rotate, translate back
+  const tx = pivotX - cosA * pivotX + sinA * pivotY;
+  const ty = pivotY - sinA * pivotX - cosA * pivotY;
   return (
     <View
       pointerEvents="none"
@@ -15,9 +25,12 @@ function Tick({ angle, length, thick, color, W, H }: {
         position: 'absolute', bottom: 0,
         left: W / 2 - thick / 2, width: thick, height: length,
         backgroundColor: color, borderRadius: thick / 2,
-        transformOrigin: `${thick / 2}px ${H}px`,
-        transform: [{ rotate: `${angle}deg` }],
-      } as any}
+        transform: [
+          { translateX: tx },
+          { translateY: ty },
+          { rotate: `${angle}deg` },
+        ],
+      }}
     />
   );
 }
