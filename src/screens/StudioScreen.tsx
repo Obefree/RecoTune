@@ -25,6 +25,12 @@ import {
 const MAX_TRACKS    = 10;
 const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.json';
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
+const LATENCY_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
+
+// Android mic has ~80-150ms hardware latency.
+// We preroll playback by this amount before starting recording so they cancel out.
+// User can calibrate via the ±button in the header.
+const DEFAULT_PREROLL_MS = 120;
 
 const TRACK_COLORS = [
   '#7c4dff', '#00e676', '#ff5252', '#ffeb3b',
@@ -160,7 +166,12 @@ export default function StudioScreen() {
   const [quality, setQuality]             = useState<RecQuality>(DEFAULT_QUALITY);
   const [showQuality, setShowQuality]     = useState(false);
   const qualityRef = useRef<RecQuality>(DEFAULT_QUALITY);
+
+  // Latency compensation: preroll playback before recording starts
+  const [prerollMs, setPrerollMs]         = useState(DEFAULT_PREROLL_MS);
+  const prerollRef = useRef(DEFAULT_PREROLL_MS);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
+  useEffect(() => { prerollRef.current = prerollMs; }, [prerollMs]);
 
   const recRef      = useRef<Audio.Recording | null>(null);
   const allSounds   = useRef<Audio.Sound[]>([]);
@@ -211,6 +222,18 @@ export default function StudioScreen() {
     const q = await loadQualitySettings();
     setQuality(q);
     qualityRef.current = q;
+    try {
+      const info = await FileSystem.getInfoAsync(LATENCY_FILE);
+      if (info.exists) {
+        const ms = JSON.parse(await FileSystem.readAsStringAsync(LATENCY_FILE));
+        if (typeof ms === 'number') { setPrerollMs(ms); prerollRef.current = ms; }
+      }
+    } catch {}
+  }, []);
+
+  const savePreroll = useCallback(async (ms: number) => {
+    setPrerollMs(ms); prerollRef.current = ms;
+    await FileSystem.writeAsStringAsync(LATENCY_FILE, JSON.stringify(ms));
   }, []);
 
   useEffect(() => { loadSessions(); loadQuality(); }, []);
@@ -324,18 +347,24 @@ export default function StudioScreen() {
       );
       allSounds.current = playbackSounds;
 
-      // Prepare recording while sounds are already loaded
+      // Prepare recording
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
 
-      // Start recording first, then start all playbacks immediately after —
-      // minimises the gap between new track and existing tracks
+      // ── Latency compensation preroll ──────────────────────────────────
+      // Android mic has ~80-150ms hardware latency: sound enters mic but
+      // arrives in the buffer delayed. To compensate, we start playback
+      // FIRST and wait prerollMs before starting the recording.
+      // When prerollMs ≈ hardware_latency, recording pos 0 aligns with
+      // playback pos 0, so overdubbed tracks are in sync.
+      if (playbackSounds.length > 0) {
+        await Promise.all(playbackSounds.map(s => s.playAsync()));
+        await new Promise<void>(r => setTimeout(r, prerollRef.current));
+      }
+
       await rec.startAsync();
       recRef.current = rec;
       startRef.current = Date.now();
-
-      // Fire all playbacks simultaneously right after recording starts
-      await Promise.all(playbackSounds.map(s => s.playAsync()));
 
       setIsRecording(true);
       setRecDuration(0);
@@ -930,11 +959,35 @@ function normArr(arr){
                 </TouchableOpacity>
               );
             })}
+            {/* Latency compensation row */}
+            <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
+              <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация задержки (мс)</Text>
+              <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
+                Android микрофон добавляет ~80-150мс задержки.{'\n'}
+                Увеличьте если 2-я дорожка запаздывает, уменьшите если опережает.
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+                <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
+                  style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>−</Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', width: 60, textAlign: 'center' }}>{prerollMs}</Text>
+                <TouchableOpacity onPress={() => savePreroll(Math.min(400, prerollMs + 20))}
+                  style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>+</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)}
+                style={{ alignSelf: 'center', marginTop: 8 }}>
+                <Text style={{ color: '#555', fontSize: 11 }}>сброс ({DEFAULT_PREROLL_MS}мс)</Text>
+              </TouchableOpacity>
+            </View>
+
             <TouchableOpacity
               onPress={() => setShowQuality(false)}
               style={[styles.modalCancelBtn, { marginTop: 14, alignSelf: 'center', paddingHorizontal: 32 }]}
             >
-              <Text style={styles.modalCancelText}>Close</Text>
+              <Text style={styles.modalCancelText}>Закрыть</Text>
             </TouchableOpacity>
           </View>
         </View>
