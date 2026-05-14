@@ -10,9 +10,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { LYRICS_DB } from '../data/lyricsDatabase';
+import { mergeSongLyricsWithProgression, lyricsHaveChordMarkers, inferChordProFromProgression } from '../utils/enrichLyricsWithProgression';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
+import { fetchRemoteChordCatalog, fetchRemoteChordSong } from '../services/remoteChordApi';
 
 /* ─── Persistent storage paths ─── */
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
@@ -368,7 +370,30 @@ function normalizeLine(raw: string): string {
   return raw.replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
 }
 
-// Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
+/** Anywhere in the line: "I [E]can't [A]no" → text + chord+text pairs. Root A–G or a–g (e.g. [fm]). */
+function parseChordProSegments(raw: string): { chord?: string; text: string }[] {
+  const normalized = normalizeLine(raw);
+  const re = /\[([A-Ga-g][^\]]*)\]/g;
+  const matches = [...normalized.matchAll(re)];
+  if (matches.length === 0) {
+    return normalized.length > 0 ? [{ text: normalized }] : [];
+  }
+  const segs: { chord?: string; text: string }[] = [];
+  const firstIdx = matches[0].index ?? 0;
+  if (firstIdx > 0) {
+    segs.push({ text: normalized.slice(0, firstIdx) });
+  }
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const chord = m[1].trim();
+    const afterChord = (m.index ?? 0) + m[0].length;
+    const end = i + 1 < matches.length ? (matches[i + 1].index ?? normalized.length) : normalized.length;
+    segs.push({ chord, text: normalized.slice(afterChord, end) });
+  }
+  return segs;
+}
+
+// Input: "[Am]Hello [F]world" or "satis[E]faction" → chord row above lyric fragments
 // activeChordPos: if provided and matches a chord in this line, that chord glows green
 function ChordLyricsLine({
   line, currentChord, onChordTap, lineIdx, activeChordPos,
@@ -379,23 +404,7 @@ function ChordLyricsLine({
   lineIdx: number;
   activeChordPos: { lineIdx: number; posInLine: number } | null;
 }) {
-  const normalized = normalizeLine(line);
-  const segs: { chord?: string; text: string }[] = [];
-  let remaining = normalized;
-  let chordPosInLine = 0;
-  while (remaining.length > 0) {
-    const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/s);
-    if (m) {
-      const afterChord = m[2];
-      const nextIdx = afterChord.search(/\[[A-G]/);
-      const word = nextIdx >= 0 ? afterChord.slice(0, nextIdx) : afterChord;
-      segs.push({ chord: m[1].trim(), text: word });
-      remaining = nextIdx >= 0 ? afterChord.slice(nextIdx) : '';
-    } else {
-      segs.push({ text: remaining });
-      remaining = '';
-    }
-  }
+  const segs = parseChordProSegments(line);
   if (segs.length === 0) return <View style={{ height: 8 }} />;
 
   const allChordsOnly = segs.every(s => s.chord && !s.text.trim());
@@ -547,7 +556,7 @@ export default function ChordsScreen() {
     if (!practiceLyrics) return [];
     return practiceLyrics.split('\n').flatMap((rawLine, li) => {
       const normalized = normalizeLine(rawLine);
-      return [...normalized.matchAll(/\[([A-G][^\]]*)\]/g)].map((m, ci) => ({
+      return [...normalized.matchAll(/\[([A-Ga-g][^\]]*)\]/g)].map((m, ci) => ({
         lineIdx: li, posInLine: ci, chord: m[1].trim(),
       }));
     });
@@ -795,20 +804,31 @@ export default function ChordsScreen() {
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
   }
 
-  async function fetchLyrics(artist: string, title: string) {
-    setLyrics(null); setLyricsLoading(true);
+  async function fetchLyrics(artist: string, title: string, progression?: string) {
+    setLyrics(null);
+    setLyricsLoading(true);
     try {
       const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
       const data = await res.json();
       if (!data.error && data.lyrics) {
         // Normalize (Am) → [Am] so chords always render above text
-        const lyr = data.lyrics.trim()
+        let lyr = data.lyrics.trim()
           .replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
+        if (progression?.trim() && !lyricsHaveChordMarkers(lyr)) {
+          lyr = inferChordProFromProgression(lyr, progression, title);
+        }
         setLyrics(lyr);
         setPracticeLyrics(lyr);
+      } else if (progression?.trim()) {
+        setPracticeLyrics(inferChordProFromProgression('', progression, title));
       }
-    } catch {}
-    setLyricsLoading(false);
+    } catch {
+      if (progression?.trim()) {
+        setPracticeLyrics(inferChordProFromProgression('', progression, title));
+      }
+    } finally {
+      setLyricsLoading(false);
+    }
   }
 
   function setResultAndFetch(r: AuddResult) {
@@ -871,11 +891,54 @@ export default function ChordsScreen() {
   const [libGenre, setLibGenre]               = useState('');
   const [libDiff, setLibDiff]                 = useState<0|1|2|3>(0);
   const [libFavOnly, setLibFavOnly]           = useState(false);
+  /** Only songs with lyrics text that includes [Chord] markup (excludes “chords only” in the strip). */
+  const [libWithLyricsChords, setLibWithLyricsChords] = useState(false);
   const [libSortBy, setLibSortBy]             = useState<'title'|'artist'|'bpm'>('title');
 
   /* ── Custom songs & favorites ── */
   const [customSongs, setCustomSongs]         = useState<SongEntry[]>([]);
   const [favorites, setFavorites]             = useState<Set<string>>(new Set());
+
+  /** Удалённая база (JSON на сервере, не в репозитории). */
+  const remoteBase = useMemo(
+    () => (process.env.EXPO_PUBLIC_CHORDS_API_URL || '').trim().replace(/\/$/, ''),
+    [],
+  );
+  const remoteToken = useMemo(
+    () => (process.env.EXPO_PUBLIC_CHORDS_API_TOKEN || '').trim(),
+    [],
+  );
+  const [remoteCatalog, setRemoteCatalog]     = useState<SongEntry[]>([]);
+  const [remoteDetailCache, setRemoteDetailCache] = useState<Record<string, SongEntry>>({});
+  const [remoteCatalogStatus, setRemoteCatalogStatus] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
+  const [remoteCatalogError, setRemoteCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!remoteBase) {
+      setRemoteCatalog([]);
+      setRemoteCatalogStatus('idle');
+      setRemoteCatalogError(null);
+      return;
+    }
+    let cancelled = false;
+    setRemoteCatalogStatus('loading');
+    setRemoteCatalogError(null);
+    fetchRemoteChordCatalog(remoteBase, remoteToken || undefined)
+      .then(rows => {
+        if (cancelled) return;
+        setRemoteCatalog(rows);
+        setRemoteCatalogStatus('ok');
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setRemoteCatalog([]);
+        setRemoteCatalogStatus('err');
+        setRemoteCatalogError(String((e as Error)?.message || e));
+      });
+    return () => { cancelled = true; };
+  }, [remoteBase, remoteToken]);
+
+  const remoteIds = useMemo(() => new Set(remoteCatalog.map(s => s.id)), [remoteCatalog]);
 
   /* ── Add/Edit song modal ── */
   const [showAddSong, setShowAddSong]         = useState(false);
@@ -889,8 +952,29 @@ export default function ChordsScreen() {
     loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
   }, []));
 
-  // Merge LYRICS_DB into built-in songs (external lyrics file wins over inline)
-  const allSongs = [...SONGS.map(s => LYRICS_DB[s.id] ? { ...s, lyrics: LYRICS_DB[s.id] } : s), ...customSongs];
+  // Локальные + удалённый каталог (по id удалённая запись перекрывает встроенную с тем же id).
+  const allSongs = useMemo(() => {
+    const locals: SongEntry[] = [
+      ...SONGS.map(s => {
+        const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
+        return merged !== undefined ? { ...s, lyrics: merged } : s;
+      }),
+      ...customSongs.map(s => {
+        const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
+        return merged !== undefined ? { ...s, lyrics: merged } : s;
+      }),
+    ];
+    const byId = new Map<string, SongEntry>();
+    for (const s of locals) byId.set(s.id, s);
+    for (const r of remoteCatalog) {
+      const detail = remoteDetailCache[r.id];
+      const merged = { ...r, ...(detail || {}) };
+      const lyr = mergeSongLyricsWithProgression(merged, LYRICS_DB);
+      const out = lyr !== undefined ? { ...merged, lyrics: lyr } : merged;
+      byId.set(r.id, out);
+    }
+    return Array.from(byId.values());
+  }, [customSongs, remoteCatalog, remoteDetailCache]);
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   const libResults = (() => {
@@ -905,6 +989,7 @@ export default function ChordsScreen() {
     if (libGenre)   list = list.filter(s => s.genre === libGenre);
     if (libDiff)    list = list.filter(s => s.difficulty === libDiff);
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
+    if (libWithLyricsChords) list = list.filter(s => lyricsHaveChordMarkers(s.lyrics));
     if (libSortBy === 'title')  list = [...list].sort((a,b) => a.title.localeCompare(b.title));
     if (libSortBy === 'artist') list = [...list].sort((a,b) => a.artist.localeCompare(b.artist));
     if (libSortBy === 'bpm')    list = [...list].sort((a,b) => (b.bpm ?? 0) - (a.bpm ?? 0));
@@ -1043,12 +1128,40 @@ export default function ChordsScreen() {
     setPracticeChordIdx(0);
     setLyricsEditMode(false); // always show view mode after picking
     setShowLibrary(false);
-    if (song.lyrics) {
-      setPracticeLyrics(song.lyrics);
-    } else {
-      setPracticeLyrics('');
-      fetchLyrics(song.artist, song.title);
+
+    const mergedLocal = mergeSongLyricsWithProgression(song, LYRICS_DB);
+    const baseSong = mergedLocal !== undefined ? { ...song, lyrics: mergedLocal } : song;
+    const detail = remoteDetailCache[song.id];
+    const effective = detail ? { ...baseSong, ...detail, lyrics: detail.lyrics ?? baseSong.lyrics } : baseSong;
+
+    if (effective.lyrics?.trim()) {
+      setLyricsLoading(false);
+      setPracticeLyrics(effective.lyrics);
+      return;
     }
+
+    if (remoteIds.has(song.id) && remoteBase) {
+      setPracticeLyrics('');
+      setLyricsLoading(true);
+      fetchRemoteChordSong(remoteBase, song.id, remoteToken || undefined)
+        .then(full => {
+          if (full) setRemoteDetailCache(c => ({ ...c, [song.id]: full }));
+          if (full?.lyrics?.trim()) {
+            setPracticeLyrics(full.lyrics);
+            setLyricsLoading(false);
+          } else {
+            void fetchLyrics(song.artist, song.title, song.chords);
+          }
+        })
+        .catch(() => {
+          void fetchLyrics(song.artist, song.title, song.chords);
+        });
+      return;
+    }
+
+    setLyricsLoading(false);
+    setPracticeLyrics('');
+    fetchLyrics(song.artist, song.title, song.chords);
   }
 
   function parsePracticeInput(text: string) {
@@ -1442,6 +1555,15 @@ export default function ChordsScreen() {
               </TouchableOpacity>
             </View>
 
+          {practiceLyrics && !lyricsEditMode && lyricChordList.length === 0 && practiceLyrics.trim().length > 0 && (
+            <View style={styles.lyricsNoChordMarkupHint}>
+              <Ionicons name="information-circle-outline" size={14} color="#ff9800" />
+              <Text style={styles.lyricsNoChordMarkupText}>
+                В тексте нет аккордов в формате [Am]слово — они не рисуются над строкой. Используйте полосу аккордов ниже или откройте «ред.» и вставьте разметку.
+              </Text>
+            </View>
+          )}
+
           {/* Lyrics content — explicit measured height */}
           {lyricsEditMode ? (
             <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
@@ -1456,6 +1578,16 @@ export default function ChordsScreen() {
                 onChangeText={setPracticeLyrics}
                 scrollEnabled={false}
               />
+            </ScrollView>
+          ) : lyricsLoading && !practiceLyrics.trim() ? (
+            <ScrollView
+              style={[styles.lyricsScroll, { height: lyricsScrollH }]}
+              contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}
+              showsVerticalScrollIndicator={false}>
+              <ActivityIndicator color="#7c4dff" size="large" />
+              <Text style={{ color: '#666', fontSize: 13, marginTop: 14, textAlign: 'center' }}>
+                Загрузка текста…
+              </Text>
             </ScrollView>
           ) : practiceLyrics ? (
             <ScrollView
@@ -1587,7 +1719,18 @@ export default function ChordsScreen() {
               {lyricsLoading ? (
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
               ) : lyrics ? (
-                <Text style={styles.resultLyricsText}>{lyrics}</Text>
+                <View style={{ paddingHorizontal: 4 }}>
+                  {lyrics.split('\n').map((line, li) => (
+                    <ChordLyricsLine
+                      key={li}
+                      line={line}
+                      currentChord="—"
+                      lineIdx={li}
+                      activeChordPos={null}
+                      onChordTap={() => {}}
+                    />
+                  ))}
+                </View>
               ) : (
                 <Text style={styles.lyricsEmpty}>Текст не найден (lyrics.ovh)</Text>
               )}
@@ -1719,7 +1862,19 @@ export default function ChordsScreen() {
           <View style={styles.libHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
-              <Text style={styles.libSubtitle}>{allSongs.length} песен ({customSongs.length} своих)</Text>
+              <Text style={styles.libSubtitle}>
+                {allSongs.length} песен · своих {customSongs.length}
+                {remoteBase
+                  ? remoteCatalogStatus === 'loading'
+                    ? ' · сервер…'
+                    : ` · сервер ${remoteCatalog.length}${remoteCatalogStatus === 'err' ? ' (ошибка)' : ''}`
+                  : ''}
+              </Text>
+              {remoteBase && remoteCatalogError ? (
+                <Text style={{ color: '#ff5252', fontSize: 10, marginTop: 2, maxWidth: 280 }} numberOfLines={2}>
+                  {remoteCatalogError}
+                </Text>
+              ) : null}
             </View>
             <TouchableOpacity onPress={importChordProFile}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#00e67618', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 7, borderWidth: 1, borderColor: '#00e67644', marginRight: 6 }}>
@@ -1790,9 +1945,9 @@ export default function ChordsScreen() {
             ))}
           </ScrollView>
 
-          {/* Sort + count row */}
+          {/* Sort + lyrics-chords filter + count */}
           <View style={styles.libLegend}>
-            <View style={{ flexDirection: 'row', gap: 4 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center', flexShrink: 1 }}>
               {(['title','artist','bpm'] as const).map(s => (
                 <TouchableOpacity key={s} onPress={() => setLibSortBy(s)}
                   style={[{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#1e1e28' },
@@ -1802,6 +1957,13 @@ export default function ChordsScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
+              <TouchableOpacity onPress={() => setLibWithLyricsChords(v => !v)}
+                style={[{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#1e1e28' },
+                  libWithLyricsChords && { borderColor: '#00e67688', backgroundColor: '#00e67622' }]}>
+                <Text style={{ color: libWithLyricsChords ? '#00e676' : '#444', fontSize: 10, fontWeight: '700' }}>
+                  ♪ Текст+[аккорды]
+                </Text>
+              </TouchableOpacity>
             </View>
             <Text style={styles.libCount}>{libResults.length} из {allSongs.length}</Text>
           </View>
@@ -1822,12 +1984,19 @@ export default function ChordsScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                       <Text style={styles.libItemTitle}>{item.title}</Text>
                       {isCustom && <Text style={{ color: '#7c4dff', fontSize: 9, fontWeight: '800' }}>МОЯ</Text>}
+                      {remoteIds.has(item.id) && (
+                        <Text style={{ color: '#40c4ff', fontSize: 9, fontWeight: '800' }}>СЕРВЕР</Text>
+                      )}
                     </View>
                     <Text style={styles.libItemArtist}>{item.artist}</Text>
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
                   </View>
                   <View style={styles.libItemRight}>
-                    {item.lyrics ? <Text style={styles.libItemHasLyrics}>♪ текст</Text> : null}
+                    {lyricsHaveChordMarkers(item.lyrics) ? (
+                      <Text style={styles.libItemHasLyrics}>♪ [аккорды]</Text>
+                    ) : item.lyrics ? (
+                      <Text style={styles.libItemPlainLyrics}>♪ текст</Text>
+                    ) : null}
                     <Text style={styles.libItemGenre}>{item.genre}</Text>
                     {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
                     {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
@@ -2079,9 +2248,10 @@ const styles = StyleSheet.create({
   lyricsPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 0, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
   lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
   lyricsPanelTitle: { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
-  lyricsEmpty: { flexGrow: 1, flexShrink: 1, flexBasis: 0, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
   lyricsEmptyText: { color: '#888', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   lyricsEmptyHint: { color: '#555', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  lyricsNoChordMarkupHint: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, backgroundColor: '#ff980012', borderRadius: 10, borderWidth: 1, borderColor: '#ff980044' },
+  lyricsNoChordMarkupText: { flex: 1, color: '#888', fontSize: 11, lineHeight: 16 },
   lyricsEmptyBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#1e1e28', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, marginTop: 6 },
   lyricsEmptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   lyricsImportBtn:  { color: '#ff9800', fontSize: 10 },
@@ -2162,7 +2332,8 @@ const styles = StyleSheet.create({
   libItemGenre: { color: '#666', fontSize: 10 },
   libItemBpm:   { color: '#555', fontSize: 10 },
   libItemKey:   { color: '#888', fontSize: 10, fontWeight: '700' },
-  libItemHasLyrics: { color: '#00e676', fontSize: 9 },
+  libItemHasLyrics: { color: '#00e676', fontSize: 9, fontWeight: '700' },
+  libItemPlainLyrics: { color: '#666', fontSize: 9 },
 
   /* Add/Edit Song form */
   addFieldLabel: { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },

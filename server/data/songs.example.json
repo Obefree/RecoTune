@@ -1,0 +1,15 @@
+{
+  "songs": [
+    {
+      "id": "srv_demo_1",
+      "title": "Пример с сервера",
+      "artist": "Ваша база",
+      "chords": "C G Am F",
+      "key": "C",
+      "bpm": 100,
+      "difficulty": 1,
+      "genre": "Сервер",
+      "lyrics": "[C]Строка с [G]аккордами\n[Am]Вторая [F]строка"
+    }
+  ]
+}
