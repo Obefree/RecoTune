@@ -30,9 +30,14 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local / CI — не коммитить секреты
+.env
+.env.local
 .env*.local
 .env.cloud
+
+# серверная база аккордов (копия с songs.example.json)
+server/data/songs.json
 
 # typescript
 *.tsbuildinfo

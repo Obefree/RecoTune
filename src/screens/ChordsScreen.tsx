@@ -14,6 +14,7 @@ import { mergeSongLyricsWithProgression, lyricsHaveChordMarkers, inferChordProFr
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
+import { fetchRemoteChordCatalog, fetchRemoteChordSong } from '../services/remoteChordApi';
 
 /* ─── Persistent storage paths ─── */
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
@@ -898,6 +899,47 @@ export default function ChordsScreen() {
   const [customSongs, setCustomSongs]         = useState<SongEntry[]>([]);
   const [favorites, setFavorites]             = useState<Set<string>>(new Set());
 
+  /** Удалённая база (JSON на сервере, не в репозитории). */
+  const remoteBase = useMemo(
+    () => (process.env.EXPO_PUBLIC_CHORDS_API_URL || '').trim().replace(/\/$/, ''),
+    [],
+  );
+  const remoteToken = useMemo(
+    () => (process.env.EXPO_PUBLIC_CHORDS_API_TOKEN || '').trim(),
+    [],
+  );
+  const [remoteCatalog, setRemoteCatalog]     = useState<SongEntry[]>([]);
+  const [remoteDetailCache, setRemoteDetailCache] = useState<Record<string, SongEntry>>({});
+  const [remoteCatalogStatus, setRemoteCatalogStatus] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
+  const [remoteCatalogError, setRemoteCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!remoteBase) {
+      setRemoteCatalog([]);
+      setRemoteCatalogStatus('idle');
+      setRemoteCatalogError(null);
+      return;
+    }
+    let cancelled = false;
+    setRemoteCatalogStatus('loading');
+    setRemoteCatalogError(null);
+    fetchRemoteChordCatalog(remoteBase, remoteToken || undefined)
+      .then(rows => {
+        if (cancelled) return;
+        setRemoteCatalog(rows);
+        setRemoteCatalogStatus('ok');
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setRemoteCatalog([]);
+        setRemoteCatalogStatus('err');
+        setRemoteCatalogError(String((e as Error)?.message || e));
+      });
+    return () => { cancelled = true; };
+  }, [remoteBase, remoteToken]);
+
+  const remoteIds = useMemo(() => new Set(remoteCatalog.map(s => s.id)), [remoteCatalog]);
+
   /* ── Add/Edit song modal ── */
   const [showAddSong, setShowAddSong]         = useState(false);
   const [editingSong, setEditingSong]         = useState<SongEntry | null>(null);
@@ -910,17 +952,29 @@ export default function ChordsScreen() {
     loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
   }, []));
 
-  // Merge LYRICS_DB, then infer [chord] markers from progression when lyrics lack markup (heuristic).
-  const allSongs = [
-    ...SONGS.map(s => {
-      const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
-      return merged !== undefined ? { ...s, lyrics: merged } : s;
-    }),
-    ...customSongs.map(s => {
-      const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
-      return merged !== undefined ? { ...s, lyrics: merged } : s;
-    }),
-  ];
+  // Локальные + удалённый каталог (по id удалённая запись перекрывает встроенную с тем же id).
+  const allSongs = useMemo(() => {
+    const locals: SongEntry[] = [
+      ...SONGS.map(s => {
+        const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
+        return merged !== undefined ? { ...s, lyrics: merged } : s;
+      }),
+      ...customSongs.map(s => {
+        const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
+        return merged !== undefined ? { ...s, lyrics: merged } : s;
+      }),
+    ];
+    const byId = new Map<string, SongEntry>();
+    for (const s of locals) byId.set(s.id, s);
+    for (const r of remoteCatalog) {
+      const detail = remoteDetailCache[r.id];
+      const merged = { ...r, ...(detail || {}) };
+      const lyr = mergeSongLyricsWithProgression(merged, LYRICS_DB);
+      const out = lyr !== undefined ? { ...merged, lyrics: lyr } : merged;
+      byId.set(r.id, out);
+    }
+    return Array.from(byId.values());
+  }, [customSongs, remoteCatalog, remoteDetailCache]);
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   const libResults = (() => {
@@ -1074,13 +1128,40 @@ export default function ChordsScreen() {
     setPracticeChordIdx(0);
     setLyricsEditMode(false); // always show view mode after picking
     setShowLibrary(false);
-    setLyricsLoading(false);
-    if (song.lyrics) {
-      setPracticeLyrics(song.lyrics);
-    } else {
-      setPracticeLyrics('');
-      fetchLyrics(song.artist, song.title, song.chords);
+
+    const mergedLocal = mergeSongLyricsWithProgression(song, LYRICS_DB);
+    const baseSong = mergedLocal !== undefined ? { ...song, lyrics: mergedLocal } : song;
+    const detail = remoteDetailCache[song.id];
+    const effective = detail ? { ...baseSong, ...detail, lyrics: detail.lyrics ?? baseSong.lyrics } : baseSong;
+
+    if (effective.lyrics?.trim()) {
+      setLyricsLoading(false);
+      setPracticeLyrics(effective.lyrics);
+      return;
     }
+
+    if (remoteIds.has(song.id) && remoteBase) {
+      setPracticeLyrics('');
+      setLyricsLoading(true);
+      fetchRemoteChordSong(remoteBase, song.id, remoteToken || undefined)
+        .then(full => {
+          if (full) setRemoteDetailCache(c => ({ ...c, [song.id]: full }));
+          if (full?.lyrics?.trim()) {
+            setPracticeLyrics(full.lyrics);
+            setLyricsLoading(false);
+          } else {
+            void fetchLyrics(song.artist, song.title, song.chords);
+          }
+        })
+        .catch(() => {
+          void fetchLyrics(song.artist, song.title, song.chords);
+        });
+      return;
+    }
+
+    setLyricsLoading(false);
+    setPracticeLyrics('');
+    fetchLyrics(song.artist, song.title, song.chords);
   }
 
   function parsePracticeInput(text: string) {
@@ -1781,7 +1862,19 @@ export default function ChordsScreen() {
           <View style={styles.libHeader}>
             <View style={{ flex: 1 }}>
               <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
-              <Text style={styles.libSubtitle}>{allSongs.length} песен ({customSongs.length} своих)</Text>
+              <Text style={styles.libSubtitle}>
+                {allSongs.length} песен · своих {customSongs.length}
+                {remoteBase
+                  ? remoteCatalogStatus === 'loading'
+                    ? ' · сервер…'
+                    : ` · сервер ${remoteCatalog.length}${remoteCatalogStatus === 'err' ? ' (ошибка)' : ''}`
+                  : ''}
+              </Text>
+              {remoteBase && remoteCatalogError ? (
+                <Text style={{ color: '#ff5252', fontSize: 10, marginTop: 2, maxWidth: 280 }} numberOfLines={2}>
+                  {remoteCatalogError}
+                </Text>
+              ) : null}
             </View>
             <TouchableOpacity onPress={importChordProFile}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#00e67618', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 7, borderWidth: 1, borderColor: '#00e67644', marginRight: 6 }}>
@@ -1891,6 +1984,9 @@ export default function ChordsScreen() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                       <Text style={styles.libItemTitle}>{item.title}</Text>
                       {isCustom && <Text style={{ color: '#7c4dff', fontSize: 9, fontWeight: '800' }}>МОЯ</Text>}
+                      {remoteIds.has(item.id) && (
+                        <Text style={{ color: '#40c4ff', fontSize: 9, fontWeight: '800' }}>СЕРВЕР</Text>
+                      )}
                     </View>
                     <Text style={styles.libItemArtist}>{item.artist}</Text>
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
