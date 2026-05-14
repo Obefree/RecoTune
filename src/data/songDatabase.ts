@@ -1,5 +1,11 @@
 /** Built-in song library — chord progressions for practice */
 
+import {
+  LYRICS_DOROGA_SNA,
+  LYRICS_REMEN_NS,
+  LYRICS_VSYO_VERT,
+} from './russianPackStrings';
+
 export interface SongEntry {
   id: string;
   title: string;
@@ -1850,6 +1856,14 @@ Say after me [A]it's no better to be safe than [D]sorry`,
   { id:'ny03', title:'White Christmas',       artist:'Bing Crosby',      chords:'G Gmaj7 C D Em Am',    key:'G',  bpm:82,  difficulty:2, genre:'Рождественская' },
   { id:'ny04', title:'В лесу родилась ёлочка',artist:'Народная',         chords:'C G F Am Dm',          key:'C',  bpm:104, difficulty:1, genre:'Детская' },
   { id:'ny05', title:'Маленькой ёлочке',       artist:'Народная',        chords:'G D C Am Em',          key:'G',  bpm:98,  difficulty:1, genre:'Детская' },
+
+  /* ── RU: ручные подборы (полный каталог amdm.ru не копируется — см. ИМПОРТ ChordPro в приложении) ── */
+  { id:'ru_nsn_001', title:'Ремень', artist:'Ночные Снайперы', chords:'Am Dm F E', key:'Am', bpm:92, difficulty:2, genre:'Русский рок',
+    lyrics: LYRICS_REMEN_NS },
+  { id:'ru_mel_002', title:'Дорога сна', artist:'Мельница', chords:'Em A G F#m Bm B', key:'Em', bpm:96, difficulty:3, genre:'Фолк-рок (RU)',
+    lyrics: LYRICS_DOROGA_SNA },
+  { id:'ru_auk_003', title:'Всё вертится', artist:'Аукцыон', chords:'G D Em C', key:'G', bpm:120, difficulty:3, genre:'Русский рок',
+    lyrics: LYRICS_VSYO_VERT },
 ];
 
 /* ── Helpers ── */
