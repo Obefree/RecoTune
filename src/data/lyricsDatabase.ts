@@ -1,8 +1,31 @@
 /**
  * Annotated lyrics database — [Chord]word format (ChordPro compatible).
- * Keyed by song ID from songDatabase.ts.
+ *
+ * Two lookup paths:
+ *   1. LYRICS_DB     — keyed by song ID from songDatabase.ts (legacy).
+ *   2. LYRICS_BY_KEY — keyed by normalized "artist|title" (preferred).
+ *
+ * `findLyrics(artist, title, id?)` checks ID first, then artist+title.
  * Merged at runtime in ChordsScreen: this dictionary wins over inline song.lyrics.
  */
+
+/** Normalize a string for matching: lowercase, strip accents, strip punctuation. */
+export function normalizeKey(s: string): string {
+  if (!s) return '';
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ё/g, 'е')
+    .replace(/['’`"!?.,()\-\u2013\u2014/&]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Build the lookup key for (artist, title). */
+export function lyricsKey(artist: string, title: string): string {
+  return `${normalizeKey(artist)}|${normalizeKey(title)}`;
+}
 
 export const LYRICS_DB: Record<string, string> = {
 
@@ -1372,3 +1395,113 @@ And let me [G7]play among the [Cmaj7]stars
 [F]И много много [C]радости [G7]детишкам при[C]несла`,
 
 };
+
+/* ────────────────────────────────────────────────────────────────────
+ * LYRICS_BY_KEY — keyed by normalized "artist|title"
+ * This is the preferred map.  Built from LYRICS_DB above plus many new
+ * entries.  When a song appears here AND has inline lyrics, this wins.
+ * ──────────────────────────────────────────────────────────────────── */
+
+/** Internal helper to register lyrics under multiple aliases (artist/title spellings). */
+function reg(map: Record<string, string>, aliases: Array<[string, string]>, lyrics: string) {
+  for (const [artist, title] of aliases) {
+    map[lyricsKey(artist, title)] = lyrics;
+  }
+}
+
+export const LYRICS_BY_KEY: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+
+  /* ── Map legacy LYRICS_DB IDs to artist+title ───────────────────── */
+  reg(m, [['The Beatles', 'Let It Be']], LYRICS_DB['s001']);
+  reg(m, [['The Beatles', 'Yesterday']], LYRICS_DB['sb01']);
+  reg(m, [['The Beatles', 'Hey Jude']], LYRICS_DB['sb02']);
+  reg(m, [['The Beatles', 'Here Comes the Sun']], LYRICS_DB['sb03']);
+  reg(m, [['The Beatles', 'Strawberry Fields Forever']], LYRICS_DB['sb04']);
+  reg(m, [['The Rolling Stones', '(I Can\'t Get No) Satisfaction'],
+          ['Rolling Stones', 'Satisfaction'],
+          ['The Rolling Stones', 'Satisfaction']], LYRICS_DB['sr01']);
+  reg(m, [['The Rolling Stones', 'Paint It Black'],
+          ['Rolling Stones', 'Paint It Black']], LYRICS_DB['sr02']);
+  reg(m, [['The Rolling Stones', 'Wild Horses'],
+          ['Rolling Stones', 'Wild Horses']], LYRICS_DB['sr03']);
+  reg(m, [['Led Zeppelin', 'Stairway to Heaven']], LYRICS_DB['sl01']);
+  reg(m, [['Led Zeppelin', 'Ramble On']], LYRICS_DB['sl02']);
+  reg(m, [['Deep Purple', 'Smoke on the Water']], LYRICS_DB['sd01']);
+  reg(m, [['Queen', 'Bohemian Rhapsody']], LYRICS_DB['sq01']);
+  reg(m, [['Queen', 'We Will Rock You']], LYRICS_DB['sq02']);
+  reg(m, [['Queen', 'We Are the Champions']], LYRICS_DB['sq03']);
+  reg(m, [['Eagles', 'Hotel California'], ['The Eagles', 'Hotel California']], LYRICS_DB['se01']);
+  reg(m, [['Pink Floyd', 'Wish You Were Here']], LYRICS_DB['spf01']);
+  reg(m, [['Pink Floyd', 'Comfortably Numb']], LYRICS_DB['spf02']);
+  reg(m, [['Nirvana', 'Smells Like Teen Spirit']], LYRICS_DB['sn01']);
+  reg(m, [['Nirvana', 'Come As You Are']], LYRICS_DB['sn02']);
+  reg(m, [['U2', 'One']], LYRICS_DB['su01']);
+  reg(m, [['Oasis', 'Wonderwall']], LYRICS_DB['so01']);
+  reg(m, [['Eric Clapton', 'Tears in Heaven']], LYRICS_DB['sec01']);
+  reg(m, [['Kansas', 'Dust in the Wind']], LYRICS_DB['smt01']);
+  reg(m, [['Metallica', 'Nothing Else Matters']], LYRICS_DB['smt02']);
+  reg(m, [['Green Day', 'Basket Case']], LYRICS_DB['sgd01']);
+  reg(m, [['Red Hot Chili Peppers', 'Under the Bridge'],
+          ['RHCP', 'Under the Bridge']], LYRICS_DB['srh01']);
+  reg(m, [['Radiohead', 'Creep']], LYRICS_DB['srad01']);
+  reg(m, [['Pearl Jam', 'Better Man']], LYRICS_DB['spj01']);
+  reg(m, [['Coldplay', 'Fix You']], LYRICS_DB['scold01']);
+  reg(m, [['System of a Down', 'Chop Suey!'],
+          ['System of a Down', 'Chop Suey']], LYRICS_DB['ssoad01']);
+  reg(m, [['Linkin Park', 'In the End']], LYRICS_DB['slp01']);
+  reg(m, [['Depeche Mode', 'Enjoy the Silence']], LYRICS_DB['sdm01']);
+  reg(m, [['a-ha', 'Take On Me'], ['A-ha', 'Take On Me']], LYRICS_DB['saha01']);
+  reg(m, [['Eurythmics', 'Sweet Dreams (Are Made of This)'],
+          ['Eurythmics', 'Sweet Dreams']], LYRICS_DB['seur01']);
+  reg(m, [['Dire Straits', 'Money for Nothing']], LYRICS_DB['sdirs01']);
+  reg(m, [['The Police', 'Every Breath You Take']], LYRICS_DB['spol01']);
+  reg(m, [['Guns N\' Roses', 'Sweet Child o\' Mine'],
+          ['Guns N\' Roses', 'Sweet Child O\' Mine']], LYRICS_DB['sgn01']);
+  reg(m, [['Guns N\' Roses', 'Welcome to the Jungle']], LYRICS_DB['sgn02']);
+  reg(m, [['Bon Jovi', 'Livin\' on a Prayer'],
+          ['Bon Jovi', 'Living on a Prayer']], LYRICS_DB['sbj01']);
+  reg(m, [['Кино', 'Группа крови']], LYRICS_DB['srk01']);
+  reg(m, [['Кино', 'Звезда по имени Солнце']], LYRICS_DB['srk02']);
+  reg(m, [['Кино', 'Закрой за мной дверь']], LYRICS_DB['srk03']);
+  reg(m, [['Кино', 'Перемен']], LYRICS_DB['srk04']);
+  reg(m, [['ДДТ', 'Что такое осень']], LYRICS_DB['srdt01']);
+  reg(m, [['Земфира', 'Хочешь?'], ['Земфира', 'Хочешь']], LYRICS_DB['srz02']);
+  reg(m, [['Сплин', 'Разлюби']], LYRICS_DB['srsp01']);
+  reg(m, [['Би-2', 'Полковнику никто не пишет']], LYRICS_DB['srbi01']);
+  reg(m, [['Наутилус Помпилиус', 'Гудбай Америка'],
+          ['Наутилус', 'Гудбай Америка'],
+          ['Nautilus Pompilius', 'Гудбай Америка']], LYRICS_DB['srnp01']);
+  reg(m, [['Агата Кристи', 'Как на войне']], LYRICS_DB['srak01']);
+  reg(m, [['Чиж & Co', 'О любви'], ['Чиж', 'О любви']], LYRICS_DB['srch01']);
+  reg(m, [['Ария', 'Беспечный ангел']], LYRICS_DB['srar01']);
+  reg(m, [['Michael Jackson', 'Billie Jean']], LYRICS_DB['smj01']);
+  reg(m, [['Jennifer Holliday', 'And I Am Telling You I\'m Not Going']], LYRICS_DB['swh01']);
+  reg(m, [['ABBA', 'Waterloo']], LYRICS_DB['sabba01']);
+  reg(m, [['ABBA', 'Dancing Queen']], LYRICS_DB['sabba02']);
+  reg(m, [['John Denver', 'Take Me Home, Country Roads'],
+          ['John Denver', 'Country Roads']], LYRICS_DB['scountry01']);
+  reg(m, [['Simon & Garfunkel', 'Scarborough Fair'],
+          ['Народная', 'Scarborough Fair']], LYRICS_DB['sfolk01']);
+  reg(m, [['Joseph Kosma', 'Autumn Leaves'],
+          ['Jazz Standard', 'Autumn Leaves']], LYRICS_DB['sjazz01']);
+  reg(m, [['Frank Sinatra', 'Fly Me to the Moon'],
+          ['Jazz Standard', 'Fly Me to the Moon']], LYRICS_DB['sjazz02']);
+  reg(m, [['Народная', 'В лесу родилась ёлочка']], LYRICS_DB['swinter01']);
+  reg(m, [['The Police', 'Every Little Thing She Does Is Magic']], LYRICS_DB['sp_sting01']);
+  reg(m, [['Billy Joel', 'The River of Dreams']], LYRICS_DB['sp_billy01']);
+  reg(m, [['Tracy Chapman', 'Baby Can I Hold You']], LYRICS_DB['sp_tracy01']);
+
+  return m;
+})();
+
+/** Look up annotated lyrics for a song by id and/or artist+title. */
+export function findLyrics(args: { id?: string; artist?: string; title?: string }): string | undefined {
+  const { id, artist, title } = args;
+  if (id && LYRICS_DB[id]) return LYRICS_DB[id];
+  if (artist && title) {
+    const k = lyricsKey(artist, title);
+    if (LYRICS_BY_KEY[k]) return LYRICS_BY_KEY[k];
+  }
+  return undefined;
+}
