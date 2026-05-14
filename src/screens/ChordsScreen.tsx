@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { LYRICS_DB } from '../data/lyricsDatabase';
+import { mergeSongLyricsWithProgression, lyricsHaveChordMarkers, inferChordProFromProgression } from '../utils/enrichLyricsWithProgression';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -366,11 +367,6 @@ function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
 function normalizeLine(raw: string): string {
   // (Am)text or (Am) text → [Am]text
   return raw.replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
-}
-
-/** Lyrics contain ChordPro markers like [Am]word — not only the progression in the chords field. */
-function lyricsHaveChordMarkers(lyrics: string | undefined): boolean {
-  return !!lyrics && /\[[A-Ga-g][^\]]*]/.test(lyrics);
 }
 
 /** Anywhere in the line: "I [E]can't [A]no" → text + chord+text pairs. Root A–G or a–g (e.g. [fm]). */
@@ -807,15 +803,18 @@ export default function ChordsScreen() {
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
   }
 
-  async function fetchLyrics(artist: string, title: string) {
+  async function fetchLyrics(artist: string, title: string, progression?: string) {
     setLyrics(null); setLyricsLoading(true);
     try {
       const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
       const data = await res.json();
       if (!data.error && data.lyrics) {
         // Normalize (Am) → [Am] so chords always render above text
-        const lyr = data.lyrics.trim()
+        let lyr = data.lyrics.trim()
           .replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
+        if (progression?.trim() && !lyricsHaveChordMarkers(lyr)) {
+          lyr = inferChordProFromProgression(lyr, progression, title);
+        }
         setLyrics(lyr);
         setPracticeLyrics(lyr);
       }
@@ -903,8 +902,17 @@ export default function ChordsScreen() {
     loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
   }, []));
 
-  // Merge LYRICS_DB into built-in songs (external lyrics file wins over inline)
-  const allSongs = [...SONGS.map(s => LYRICS_DB[s.id] ? { ...s, lyrics: LYRICS_DB[s.id] } : s), ...customSongs];
+  // Merge LYRICS_DB, then infer [chord] markers from progression when lyrics lack markup (heuristic).
+  const allSongs = [
+    ...SONGS.map(s => {
+      const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
+      return merged !== undefined ? { ...s, lyrics: merged } : s;
+    }),
+    ...customSongs.map(s => {
+      const merged = mergeSongLyricsWithProgression(s, LYRICS_DB);
+      return merged !== undefined ? { ...s, lyrics: merged } : s;
+    }),
+  ];
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   const libResults = (() => {
@@ -1062,7 +1070,7 @@ export default function ChordsScreen() {
       setPracticeLyrics(song.lyrics);
     } else {
       setPracticeLyrics('');
-      fetchLyrics(song.artist, song.title);
+      fetchLyrics(song.artist, song.title, song.chords);
     }
   }
 
