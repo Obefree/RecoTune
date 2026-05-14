@@ -2,10 +2,26 @@ import React, { useState, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, TextInput, Platform, Modal, FlatList,
+  useWindowDimensions,
 } from 'react-native';
-import { SONGS, searchSongs, type SongEntry } from '../data/songDatabase';
+import { SONGS, type SongEntry } from '../data/songDatabase';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+
+/* ─── Persistent storage paths ─── */
+const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
+const FAVORITES_FILE    = (FileSystem.documentDirectory ?? '') + 'song_favorites.json';
+
+async function loadJson<T>(path: string, fallback: T): Promise<T> {
+  try {
+    const info = await FileSystem.getInfoAsync(path);
+    if (info.exists) return JSON.parse(await FileSystem.readAsStringAsync(path));
+  } catch {}
+  return fallback;
+}
+async function saveJson(path: string, data: unknown) {
+  try { await FileSystem.writeAsStringAsync(path, JSON.stringify(data)); } catch {}
+}
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
@@ -389,8 +405,31 @@ type Mode = 'live' | 'practice' | 'identify';
 
 export default function ChordsScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowH } = useWindowDimensions();
 
-  const [mode, setMode]               = useState<Mode>('live');
+  // Must be declared before lyricsScrollH that uses it
+  const [showDiagram, setShowDiagram] = useState(true);
+
+  /* ── Practice view height: full screen minus surrounding chrome ── */
+  const practiceViewH = Math.max(200,
+    windowH
+    - (insets.top + 8)       // container paddingTop
+    - 46                      // CHORDS header row
+    - (56 + insets.bottom)    // bottom tab bar
+  );
+
+  /* ── Lyrics scroll height: practice area minus all fixed elements ── */
+  const lyricsScrollH = Math.max(80,
+    practiceViewH
+    - 60                      // bigLibBtn
+    - 50                      // progInput
+    - (showDiagram ? 148 : 0) // practiceTopPanel (collapsible)
+    - 50                      // chordNav
+    - 36                      // lyricsPanelHeader
+    - 62                      // toolbar
+  );
+
+  const [mode, setMode]               = useState<Mode>('practice');
   const [liveActive, setLiveActive]   = useState(false);
 
   /* ── Chord state ── */
@@ -417,6 +456,7 @@ export default function ChordsScreen() {
   /* ── Lyrics in practice ── */
   const [practiceLyrics, setPracticeLyrics] = useState('');
   const [lyricsEditMode, setLyricsEditMode] = useState(false);
+  // showDiagram declared near top of component before lyricsScrollH
 
   /* ── Live mode error display ── */
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -701,10 +741,110 @@ export default function ChordsScreen() {
   const [showLibrary, setShowLibrary]         = useState(false);
   const [libSearch, setLibSearch]             = useState('');
   const [libGenre, setLibGenre]               = useState('');
-  const libResults = libSearch || libGenre
-    ? searchSongs(libSearch).filter(s => !libGenre || s.genre === libGenre)
-    : SONGS;
-  const GENRES_ALL = ['', ...Array.from(new Set(SONGS.map(s => s.genre))).sort()];
+  const [libDiff, setLibDiff]                 = useState<0|1|2|3>(0);
+  const [libFavOnly, setLibFavOnly]           = useState(false);
+  const [libSortBy, setLibSortBy]             = useState<'title'|'artist'|'bpm'>('title');
+
+  /* ── Custom songs & favorites ── */
+  const [customSongs, setCustomSongs]         = useState<SongEntry[]>([]);
+  const [favorites, setFavorites]             = useState<Set<string>>(new Set());
+
+  /* ── Add/Edit song modal ── */
+  const [showAddSong, setShowAddSong]         = useState(false);
+  const [editingSong, setEditingSong]         = useState<SongEntry | null>(null);
+  const blankForm = () => ({ title:'', artist:'', genre:'', key:'', bpm:'', difficulty:'1' as '1'|'2'|'3', chords:'', lyrics:'' });
+  const [addForm, setAddForm]                 = useState(blankForm());
+
+  /* load on mount */
+  useFocusEffect(useCallback(() => {
+    loadJson<SongEntry[]>(CUSTOM_SONGS_FILE, []).then(setCustomSongs);
+    loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
+  }, []));
+
+  const allSongs = [...SONGS, ...customSongs];
+  const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
+
+  const libResults = (() => {
+    let list = allSongs;
+    const q = libSearch.toLowerCase();
+    if (q) list = list.filter(s =>
+      s.title.toLowerCase().includes(q) ||
+      s.artist.toLowerCase().includes(q) ||
+      s.chords.toLowerCase().includes(q) ||
+      s.genre.toLowerCase().includes(q)
+    );
+    if (libGenre)   list = list.filter(s => s.genre === libGenre);
+    if (libDiff)    list = list.filter(s => s.difficulty === libDiff);
+    if (libFavOnly) list = list.filter(s => favorites.has(s.id));
+    if (libSortBy === 'title')  list = [...list].sort((a,b) => a.title.localeCompare(b.title));
+    if (libSortBy === 'artist') list = [...list].sort((a,b) => a.artist.localeCompare(b.artist));
+    if (libSortBy === 'bpm')    list = [...list].sort((a,b) => (b.bpm ?? 0) - (a.bpm ?? 0));
+    return list;
+  })();
+
+  async function toggleFavorite(id: string) {
+    const next = new Set(favorites);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setFavorites(next);
+    await saveJson(FAVORITES_FILE, [...next]);
+  }
+
+  async function saveCustomSong(song: SongEntry) {
+    const next = editingSong
+      ? customSongs.map(s => s.id === song.id ? song : s)
+      : [...customSongs, song];
+    setCustomSongs(next);
+    await saveJson(CUSTOM_SONGS_FILE, next);
+  }
+
+  async function deleteCustomSong(id: string) {
+    const next = customSongs.filter(s => s.id !== id);
+    setCustomSongs(next);
+    await saveJson(CUSTOM_SONGS_FILE, next);
+    const favNext = new Set(favorites);
+    favNext.delete(id);
+    setFavorites(favNext);
+    await saveJson(FAVORITES_FILE, [...favNext]);
+  }
+
+  function openAddSong(existing?: SongEntry) {
+    if (existing) {
+      setEditingSong(existing);
+      setAddForm({
+        title: existing.title,
+        artist: existing.artist,
+        genre: existing.genre,
+        key: existing.key ?? '',
+        bpm: existing.bpm ? String(existing.bpm) : '',
+        difficulty: String(existing.difficulty) as '1'|'2'|'3',
+        chords: existing.chords,
+        lyrics: existing.lyrics ?? '',
+      });
+    } else {
+      setEditingSong(null);
+      setAddForm(blankForm());
+    }
+    setShowAddSong(true);
+  }
+
+  async function submitAddSong() {
+    if (!addForm.title.trim() || !addForm.chords.trim()) {
+      Alert.alert('Заполните название и аккорды'); return;
+    }
+    const song: SongEntry = {
+      id: editingSong?.id ?? `custom_${Date.now()}`,
+      title: addForm.title.trim(),
+      artist: addForm.artist.trim() || 'Мои песни',
+      genre: addForm.genre.trim() || 'Мои песни',
+      key: addForm.key.trim() || undefined,
+      bpm: addForm.bpm ? Number(addForm.bpm) : undefined,
+      difficulty: Number(addForm.difficulty) as 1|2|3,
+      chords: addForm.chords.trim(),
+      lyrics: addForm.lyrics.trim() || undefined,
+    };
+    await saveCustomSong(song);
+    setShowAddSong(false);
+  }
 
   function pickSong(song: SongEntry) {
     setPracticeInput(song.chords);
@@ -930,16 +1070,23 @@ export default function ChordsScreen() {
 
       {/* ── PRACTICE MODE ── */}
       {mode === 'practice' && (
-        <View style={{ flex: 1 }}>
+        <View style={{ height: practiceViewH, overflow: 'hidden' }}>
 
-          {/* ── TOP STRIP: chord input ── */}
+          {/* ── FIXED ELEMENTS top group ── */}
+          <View>
+
+          {/* ── БАЗА — big prominent button ── */}
+          <TouchableOpacity style={styles.bigLibBtn} onPress={() => setShowLibrary(true)} activeOpacity={0.75}>
+            <Ionicons name="library" size={18} color="#fff" />
+            <Text style={styles.bigLibBtnText}>
+              {practiceInput ? `📖 ${practiceInput.split(' ').slice(0,4).join(' ')}${practiceInput.split(' ').length > 4 ? '...' : ''}` : 'ВЫБРАТЬ ПЕСНЮ ИЗ БАЗЫ →'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* ── Chord input (compact, below БАЗА) ── */}
           <View style={styles.progInput}>
-            <TouchableOpacity style={styles.libBtn} onPress={() => setShowLibrary(true)}>
-              <Ionicons name="library" size={15} color="#7c4dff" />
-              <Text style={styles.libBtnText}>БАЗА</Text>
-            </TouchableOpacity>
             <TextInput
-              style={styles.progTextField}
+              style={[styles.progTextField, { flex: 1 }]}
               value={practiceInput}
               onChangeText={setPracticeInput}
               placeholder="Am F C G Em7 Dm..."
@@ -959,8 +1106,8 @@ export default function ChordsScreen() {
             )}
           </View>
 
-          {/* ── CHORD PANEL: diagram + name + tones + voice ── */}
-          <View style={styles.practiceTopPanel}>
+          {/* ── CHORD PANEL: diagram + name + tones + voice (collapsible) ── */}
+          {showDiagram && <View style={styles.practiceTopPanel}>
             {/* Diagram — centered, medium size */}
             <View style={styles.practiceDiagLeft}>
               <ChordDiagram name={practiceCurrentChord} size="md" />
@@ -1010,10 +1157,16 @@ export default function ChordsScreen() {
                 </Text>
               </View>
             </View>
-          </View>
+          </View>}
 
           {/* ── CHORD NAVIGATION strip ── */}
           <View style={styles.chordNav}>
+            {/* If diagram is hidden, show current chord name inline */}
+            {!showDiagram && (
+              <Text style={{ color: '#ff9800', fontSize: 18, fontWeight: '800', paddingHorizontal: 6, minWidth: 48, textAlign: 'center' }}>
+                {practiceCurrentChord === '—' ? '' : practiceCurrentChord}
+              </Text>
+            )}
             <TouchableOpacity onPress={practicePrev} style={styles.chordNavArrow} disabled={practiceChordIdx <= 0}>
               <Ionicons name="chevron-back" size={24} color={practiceChordIdx > 0 ? '#ccc' : '#222'} />
             </TouchableOpacity>
@@ -1037,19 +1190,25 @@ export default function ChordsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ── LYRICS SHEET — takes all remaining space ── */}
-          <View style={styles.lyricsPanel}>
-            <View style={styles.lyricsPanelHeader}>
+          </View>{/* end fixed group */}
+
+          {/* ── Lyrics header ── */}
+          <View style={styles.lyricsPanelHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.lyricsPanelTitle}>
                   {lyricsEditMode ? 'РЕДАКТИРОВАТЬ' : practiceLyrics ? 'ТЕКСТ + АККОРДЫ' : 'ТЕКСТ'}
                 </Text>
                 {!practiceLyrics && !lyricsEditMode && (
-                  <Text style={{ color: '#333', fontSize: 9, marginTop: 1 }}>
+                  <Text style={{ color: '#444', fontSize: 9, marginTop: 1 }}>
                     Выберите из БАЗЫ или нажмите ред.
                   </Text>
                 )}
               </View>
+              <TouchableOpacity onPress={() => setShowDiagram(v => !v)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4, marginRight: 4 }}>
+                <Ionicons name={showDiagram ? 'chevron-up' : 'chevron-down'} size={14} color="#555" />
+                <Text style={{ color: '#555', fontSize: 10 }}>{showDiagram ? 'скрыть' : 'схема'}</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => setLyricsEditMode(v => !v)}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4 }}>
                 <Ionicons name={lyricsEditMode ? 'eye-outline' : 'create-outline'} size={16} color="#666" />
@@ -1057,50 +1216,54 @@ export default function ChordsScreen() {
               </TouchableOpacity>
             </View>
 
-            {lyricsEditMode ? (
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                <TextInput
-                  style={styles.lyricsInput}
-                  multiline
-                  placeholder={
-                    'Вставьте текст песни.\n\nЧтобы показать аккорды НАД словами — добавьте в квадратных скобках:\n[Am]Первый [F]куплет [C]текст\n\nАккорды из поля сверху автоматически не добавляются — нужно разметить вручную.'
-                  }
-                  placeholderTextColor="#2a2a3a"
-                  value={practiceLyrics}
-                  onChangeText={setPracticeLyrics}
-                  scrollEnabled={false}
+          {/* Lyrics content — explicit measured height */}
+          {lyricsEditMode ? (
+            <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
+              contentContainerStyle={{ padding: 12, paddingBottom: 12 }}
+              showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <TextInput
+                style={styles.lyricsInput}
+                multiline
+                placeholder={'Вставьте текст.\n\nФормат: [Am]Слово [F]другое\nАккорд появится над словом.'}
+                placeholderTextColor="#2a2a3a"
+                value={practiceLyrics}
+                onChangeText={setPracticeLyrics}
+                scrollEnabled={false}
+              />
+            </ScrollView>
+          ) : practiceLyrics ? (
+            <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
+              contentContainerStyle={{ padding: 10, paddingBottom: 12 }}
+              showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {practiceLyrics.split('\n').map((line, li) => (
+                <ChordLyricsLine key={li} line={line} currentChord={practiceCurrentChord}
+                  onChordTap={(c) => {
+                    const idx = practiceChords.indexOf(c);
+                    if (idx >= 0) setPracticeChordIdx(idx);
+                  }}
                 />
-              </ScrollView>
-            ) : practiceLyrics ? (
-              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ padding: 10 }}>
-                {practiceLyrics.split('\n').map((line, li) => (
-                  <ChordLyricsLine key={li} line={line} currentChord={practiceCurrentChord}
-                    onChordTap={(c) => {
-                      const idx = practiceChords.indexOf(c);
-                      if (idx >= 0) setPracticeChordIdx(idx);
-                    }}
-                  />
-                ))}
-              </ScrollView>
-            ) : (
-              <View style={styles.lyricsEmpty}>
-                <Ionicons name="musical-notes-outline" size={36} color="#1e1e28" />
-                <Text style={styles.lyricsEmptyText}>Здесь будет текст с аккордами</Text>
-                <Text style={styles.lyricsEmptyHint}>
-                  Выберите песню из базы (БАЗА) или нажмите карандаш, чтобы вставить текст.
-                  {'\n\n'}Формат: [Am]Слово [F]другое — аккорд отобразится над словом.
-                </Text>
-                <TouchableOpacity style={styles.lyricsEmptyBtn} onPress={() => setLyricsEditMode(true)}>
-                  <Ionicons name="create-outline" size={16} color="#fff" />
-                  <Text style={styles.lyricsEmptyBtnText}>Добавить текст</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
+              ))}
+            </ScrollView>
+          ) : (
+            <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
+              contentContainerStyle={{ minHeight: lyricsScrollH, alignItems: 'center', justifyContent: 'center', padding: 28 }}
+              showsVerticalScrollIndicator={false}>
+              <Ionicons name="musical-notes-outline" size={36} color="#3a3a55" />
+              <Text style={[styles.lyricsEmptyText, { marginTop: 12 }]}>Текст с аккордами</Text>
+              <Text style={styles.lyricsEmptyHint}>
+                Выберите песню из БАЗЫ (кнопка выше).{'\n'}
+                Нажмите карандаш чтобы вставить текст.{'\n\n'}
+                Формат: [Am]Слово [F]другое
+              </Text>
+              <TouchableOpacity style={styles.lyricsEmptyBtn} onPress={() => setLyricsEditMode(true)}>
+                <Ionicons name="create-outline" size={16} color="#fff" />
+                <Text style={styles.lyricsEmptyBtnText}>Добавить текст</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
 
-          {/* ── BOTTOM TOOLBAR ── */}
-          <View style={styles.practiceToolbar}>
+          {/* ── TOOLBAR — absolutely pinned at the bottom ── */}
+          <View style={styles.practiceToolbarAbs}>
             <TouchableOpacity
               style={[styles.mainBtn, pitchActive && styles.mainBtnStop, { flex: 1 }]}
               onPress={pitchActive ? stopPitchDetection : startPitchDetection}
@@ -1109,7 +1272,6 @@ export default function ChordsScreen() {
               <Ionicons name={pitchActive ? 'stop-circle' : 'mic-circle'} size={22} color="#fff" />
               <Text style={styles.mainBtnText}>{pitchActive ? 'ВЫКЛ. МИК' : 'ВКЛ. МИК (ГОЛОС)'}</Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={[styles.recBtn, isPracticeRec && styles.recBtnActive]}
               onPress={isPracticeRec ? stopPracticeRec : startPracticeRec}
@@ -1123,6 +1285,7 @@ export default function ChordsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
         </View>
       )}
 
@@ -1309,8 +1472,15 @@ export default function ChordsScreen() {
         <View style={[styles.libModal, { paddingTop: insets.top + 8 }]}>
           {/* Header */}
           <View style={styles.libHeader}>
-            <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
-            <Text style={styles.libSubtitle}>{SONGS.length} песен · выберите для практики</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
+              <Text style={styles.libSubtitle}>{allSongs.length} песен ({customSongs.length} своих)</Text>
+            </View>
+            <TouchableOpacity onPress={() => openAddSong()}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff22', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: '#7c4dff44', marginRight: 8 }}>
+              <Ionicons name="add-circle-outline" size={16} color="#7c4dff" />
+              <Text style={{ color: '#7c4dff', fontSize: 11, fontWeight: '700' }}>ДОБАВИТЬ</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowLibrary(false)} style={styles.libClose}>
               <Ionicons name="close" size={24} color="#888" />
             </TouchableOpacity>
@@ -1321,50 +1491,88 @@ export default function ChordsScreen() {
             <Ionicons name="search" size={16} color="#444" style={{ marginLeft: 10 }} />
             <TextInput
               style={styles.libSearchInput}
-              placeholder="Исполнитель, название, аккорды..."
+              placeholder="Название, исполнитель, аккорды..."
               placeholderTextColor="#333"
               value={libSearch}
               onChangeText={setLibSearch}
               autoCorrect={false}
-              clearButtonMode="while-editing"
             />
+            {libSearch ? (
+              <TouchableOpacity onPress={() => setLibSearch('')} style={{ padding: 8 }}>
+                <Ionicons name="close-circle" size={16} color="#444" />
+              </TouchableOpacity>
+            ) : null}
           </View>
 
-          {/* Genre filter pills */}
+          {/* Filter chips row */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            style={styles.libGenreScroll} contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingVertical: 6 }}>
+            style={styles.libGenreScroll} contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingVertical: 5 }}>
+
+            {/* Favourites toggle */}
+            <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
+              style={[styles.libGenrePill, libFavOnly && { backgroundColor: '#ff9800', borderColor: '#ff9800' }]}>
+              <Text style={[styles.libGenreText, libFavOnly && { color: '#000' }]}>⭐ Избранное</Text>
+            </TouchableOpacity>
+
+            {/* Difficulty */}
+            {([0,1,2,3] as const).map(d => {
+              const labels = ['● Все', '● Легко', '● Средне', '● Сложно'];
+              const colors = ['#555','#00e676','#ffeb3b','#ff5252'];
+              return (
+                <TouchableOpacity key={d} onPress={() => setLibDiff(d)}
+                  style={[styles.libGenrePill, libDiff === d && { backgroundColor: colors[d], borderColor: colors[d] }]}>
+                  <Text style={[styles.libGenreText, libDiff === d && { color: '#0a0a0f', fontWeight: '800' }]}>{labels[d]}</Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Genre separator */}
+            <View style={{ width: 1, backgroundColor: '#1e1e28', marginVertical: 4 }} />
+
+            {/* Genre pills */}
             {GENRES_ALL.map(g => (
               <TouchableOpacity key={g} onPress={() => setLibGenre(g)}
                 style={[styles.libGenrePill, libGenre === g && styles.libGenrePillActive]}>
                 <Text style={[styles.libGenreText, libGenre === g && { color: '#0a0a0f' }]}>
-                  {g || 'Все'}
+                  {g || 'Все жанры'}
                 </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
 
-          {/* Difficulty legend */}
+          {/* Sort + count row */}
           <View style={styles.libLegend}>
-            <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
-              <Text style={[styles.libDot, { color: '#00e676' }]}>●</Text><Text style={styles.libLegText}>Легко</Text>
-              <Text style={[styles.libDot, { color: '#ffeb3b' }]}>●</Text><Text style={styles.libLegText}>Средне</Text>
-              <Text style={[styles.libDot, { color: '#ff5252' }]}>●</Text><Text style={styles.libLegText}>Сложно</Text>
+            <View style={{ flexDirection: 'row', gap: 4 }}>
+              {(['title','artist','bpm'] as const).map(s => (
+                <TouchableOpacity key={s} onPress={() => setLibSortBy(s)}
+                  style={[{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#1e1e28' },
+                    libSortBy === s && { borderColor: '#7c4dff44', backgroundColor: '#7c4dff15' }]}>
+                  <Text style={{ color: libSortBy === s ? '#7c4dff' : '#444', fontSize: 10, fontWeight: '700' }}>
+                    {s === 'title' ? 'А→Я' : s === 'artist' ? 'Автор' : 'BPM'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            <Text style={styles.libCount}>{libResults.length} результатов</Text>
+            <Text style={styles.libCount}>{libResults.length} из {allSongs.length}</Text>
           </View>
 
           {/* Song list */}
           <FlatList
             data={libResults}
             keyExtractor={item => item.id}
-            contentContainerStyle={{ paddingBottom: 20 }}
+            contentContainerStyle={{ paddingBottom: 30 }}
             renderItem={({ item }) => {
               const diffColor = item.difficulty === 1 ? '#00e676' : item.difficulty === 2 ? '#ffeb3b' : '#ff5252';
+              const isFav = favorites.has(item.id);
+              const isCustom = item.id.startsWith('custom_');
               return (
                 <TouchableOpacity style={styles.libItem} onPress={() => pickSong(item)} activeOpacity={0.7}>
                   <View style={[styles.libItemDot, { backgroundColor: diffColor }]} />
                   <View style={styles.libItemInfo}>
-                    <Text style={styles.libItemTitle}>{item.title}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                      <Text style={styles.libItemTitle}>{item.title}</Text>
+                      {isCustom && <Text style={{ color: '#7c4dff', fontSize: 9, fontWeight: '800' }}>МОЯ</Text>}
+                    </View>
                     <Text style={styles.libItemArtist}>{item.artist}</Text>
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
                   </View>
@@ -1374,10 +1582,123 @@ export default function ChordsScreen() {
                     {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
                     {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
                   </View>
+                  {/* Favorite star */}
+                  <TouchableOpacity onPress={() => toggleFavorite(item.id)} style={{ padding: 6 }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                    <Ionicons name={isFav ? 'star' : 'star-outline'} size={18}
+                      color={isFav ? '#ff9800' : '#333'} />
+                  </TouchableOpacity>
+                  {/* Edit/delete for custom songs */}
+                  {isCustom && (
+                    <View style={{ flexDirection: 'row', gap: 2 }}>
+                      <TouchableOpacity onPress={() => openAddSong(item)} style={{ padding: 6 }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <Ionicons name="create-outline" size={16} color="#555" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => Alert.alert('Удалить?', item.title, [
+                        { text: 'Отмена' },
+                        { text: 'Удалить', style: 'destructive', onPress: () => deleteCustomSong(item.id) },
+                      ])} style={{ padding: 6 }}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <Ionicons name="trash-outline" size={16} color="#c0392b" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </TouchableOpacity>
               );
             }}
           />
+        </View>
+      </Modal>
+
+      {/* ── Add / Edit Song Modal ── */}
+      <Modal visible={showAddSong} animationType="slide" onRequestClose={() => setShowAddSong(false)}>
+        <View style={[styles.libModal, { paddingTop: insets.top + 8 }]}>
+          <View style={styles.libHeader}>
+            <Text style={styles.libTitle}>{editingSong ? 'РЕДАКТИРОВАТЬ' : 'ДОБАВИТЬ ПЕСНЮ'}</Text>
+            <TouchableOpacity onPress={() => setShowAddSong(false)} style={styles.libClose}>
+              <Ionicons name="close" size={24} color="#888" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 40 }}
+            keyboardShouldPersistTaps="handled">
+
+            {/* Title */}
+            <Text style={styles.addFieldLabel}>Название *</Text>
+            <TextInput style={styles.addFieldInput} value={addForm.title}
+              onChangeText={v => setAddForm(f => ({ ...f, title: v }))}
+              placeholder="Название песни" placeholderTextColor="#333" />
+
+            {/* Artist */}
+            <Text style={styles.addFieldLabel}>Исполнитель</Text>
+            <TextInput style={styles.addFieldInput} value={addForm.artist}
+              onChangeText={v => setAddForm(f => ({ ...f, artist: v }))}
+              placeholder="Исполнитель / группа" placeholderTextColor="#333" />
+
+            {/* Genre */}
+            <Text style={styles.addFieldLabel}>Жанр</Text>
+            <TextInput style={styles.addFieldInput} value={addForm.genre}
+              onChangeText={v => setAddForm(f => ({ ...f, genre: v }))}
+              placeholder="Рок, Поп, Бардовская..." placeholderTextColor="#333" />
+
+            {/* Key + BPM row */}
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.addFieldLabel}>Тональность</Text>
+                <TextInput style={styles.addFieldInput} value={addForm.key}
+                  onChangeText={v => setAddForm(f => ({ ...f, key: v }))}
+                  placeholder="Am, G, D..." placeholderTextColor="#333" autoCapitalize="none" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.addFieldLabel}>BPM</Text>
+                <TextInput style={styles.addFieldInput} value={addForm.bpm}
+                  onChangeText={v => setAddForm(f => ({ ...f, bpm: v.replace(/[^0-9]/g,'') }))}
+                  placeholder="120" placeholderTextColor="#333" keyboardType="number-pad" />
+              </View>
+            </View>
+
+            {/* Difficulty */}
+            <Text style={styles.addFieldLabel}>Сложность</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {([['1','Легко','#00e676'],['2','Средне','#ffeb3b'],['3','Сложно','#ff5252']] as const).map(([val,lbl,col]) => (
+                <TouchableOpacity key={val} onPress={() => setAddForm(f => ({ ...f, difficulty: val }))}
+                  style={[{ flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: '#1e1e28', backgroundColor: '#111118' },
+                    addForm.difficulty === val && { borderColor: col, backgroundColor: col + '22' }]}>
+                  <Text style={{ color: addForm.difficulty === val ? col : '#555', fontWeight: '700', fontSize: 12 }}>{lbl}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Chords */}
+            <Text style={styles.addFieldLabel}>Аккорды * <Text style={{ color: '#444', fontWeight: '400' }}>(через пробел)</Text></Text>
+            <TextInput style={styles.addFieldInput} value={addForm.chords}
+              onChangeText={v => setAddForm(f => ({ ...f, chords: v }))}
+              placeholder="Am F C G Em7 Dm..." placeholderTextColor="#333"
+              autoCapitalize="none" autoCorrect={false} />
+
+            {/* Lyrics */}
+            <Text style={styles.addFieldLabel}>Текст с аккордами <Text style={{ color: '#444', fontWeight: '400' }}>(необязательно)</Text></Text>
+            <Text style={{ color: '#333', fontSize: 10, marginTop: -6, marginBottom: 4 }}>Формат: [Am]Слово [F]другое слово</Text>
+            <TextInput style={[styles.addFieldInput, { minHeight: 120, textAlignVertical: 'top' }]}
+              value={addForm.lyrics}
+              onChangeText={v => setAddForm(f => ({ ...f, lyrics: v }))}
+              placeholder={'[Am]Слово [F]другое слово\n[C]Следующая строка [G]'}
+              placeholderTextColor="#333"
+              multiline scrollEnabled={false} />
+
+            {/* Save button */}
+            <TouchableOpacity onPress={submitAddSong}
+              style={{ backgroundColor: '#7c4dff', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 8 }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 1 }}>
+                {editingSong ? 'СОХРАНИТЬ' : 'ДОБАВИТЬ В БАЗУ'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setShowAddSong(false)}
+              style={{ alignItems: 'center', paddingVertical: 10 }}>
+              <Text style={{ color: '#444', fontSize: 13 }}>Отмена</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1452,14 +1773,18 @@ const styles = StyleSheet.create({
   liveClearBtn:  { backgroundColor: '#1a1a24', borderRadius: 14, padding: 14, alignItems: 'center', justifyContent: 'center', width: 50 },
 
   /* Practice mode — chord input */
-  progInput:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
+  bigLibBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#7c4dff', paddingHorizontal: 16, paddingVertical: 12, marginHorizontal: 10, marginTop: 8, marginBottom: 4, borderRadius: 12 },
+  bigLibBtnText: { color: '#fff', fontSize: 14, fontWeight: '700', flex: 1 },
+  lyricsScroll: { backgroundColor: '#0a0a0f' },
+  practiceToolbarAbs: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 8, padding: 10, paddingBottom: 10, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24' },
+  progInput:     { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
   progTextField: { flex: 1, backgroundColor: '#1a1a24', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, color: '#ccc', fontSize: 14, borderWidth: 1, borderColor: '#2a2a3a' },
   progParseBtn:  { backgroundColor: '#ff9800', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   progParseBtnText: { color: '#000', fontWeight: '800', fontSize: 12 },
   progImportBtn: { padding: 6 },
 
   /* Chord navigation */
-  chordNav:        { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111118', borderBottomWidth: 1, borderColor: '#1e1e28', paddingVertical: 6 },
+  chordNav:        { flexShrink: 0, flexDirection: 'row', alignItems: 'center', backgroundColor: '#111118', borderBottomWidth: 1, borderColor: '#1e1e28', paddingVertical: 6 },
   chordNavArrow:   { padding: 10 },
   chordPillsScroll:{ flex: 1 },
   chordPillsRow:   { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },
@@ -1489,7 +1814,7 @@ const styles = StyleSheet.create({
 
   /* Practice: diagram row */
   /* Fixed-height practice panel — no jitter */
-  practiceTopPanel:  { flexDirection: 'row', height: 158, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#2a2a3a', paddingHorizontal: 12, paddingVertical: 10, gap: 14 },
+  practiceTopPanel:  { flexShrink: 0, flexDirection: 'row', height: 148, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#2a2a3a', paddingHorizontal: 12, paddingVertical: 8, gap: 12 },
   practiceDiagLeft:  { alignItems: 'center', justifyContent: 'center' },
   practiceDiagRight: { flex: 1, justifyContent: 'space-between', paddingTop: 2 },
   practiceChordName: { color: '#fff', fontSize: 28, fontWeight: '900', letterSpacing: 1 },
@@ -1501,18 +1826,18 @@ const styles = StyleSheet.create({
   diagVoiceNote:{ fontSize: 16, fontWeight: '800' },
   diagVoiceHz:  { color: '#666', fontSize: 10 },
 
-  lyricsPanel: { flex: 1, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
+  lyricsPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 0, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
   lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
   lyricsPanelTitle: { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
-  lyricsEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
-  lyricsEmptyText: { color: '#333', fontSize: 15, fontWeight: '700', textAlign: 'center' },
-  lyricsEmptyHint: { color: '#222', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  lyricsEmpty: { flexGrow: 1, flexShrink: 1, flexBasis: 0, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
+  lyricsEmptyText: { color: '#888', fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  lyricsEmptyHint: { color: '#555', fontSize: 12, textAlign: 'center', lineHeight: 18 },
   lyricsEmptyBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#1e1e28', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, marginTop: 6 },
   lyricsEmptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   lyricsImportBtn:  { color: '#ff9800', fontSize: 10 },
   lyricsInput: { color: '#ccc', fontSize: 14, lineHeight: 24, padding: 12, minHeight: 200 },
 
-  practiceToolbar: { flexDirection: 'row', gap: 8, padding: 10, paddingBottom: 12, borderTopWidth: 1, borderColor: '#1a1a24' },
+  practiceToolbar: { flexShrink: 0, flexDirection: 'row', gap: 8, padding: 10, paddingBottom: 12, borderTopWidth: 1, borderColor: '#1a1a24' },
   recBtn:      { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#1a1a24', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#2a2a3a' },
   recBtnActive:{ borderColor: '#ff525244', backgroundColor: '#ff525211' },
   recBtnText:  { color: '#888', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
@@ -1588,4 +1913,8 @@ const styles = StyleSheet.create({
   libItemBpm:   { color: '#555', fontSize: 10 },
   libItemKey:   { color: '#888', fontSize: 10, fontWeight: '700' },
   libItemHasLyrics: { color: '#00e676', fontSize: 9 },
+
+  /* Add/Edit Song form */
+  addFieldLabel: { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
+  addFieldInput: { backgroundColor: '#111118', borderRadius: 10, borderWidth: 1, borderColor: '#1e1e28', color: '#ddd', fontSize: 14, padding: 11 },
 });

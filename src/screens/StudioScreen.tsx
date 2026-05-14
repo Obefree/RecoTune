@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WebView from 'react-native-webview';
 
 /* ─── Types ─── */
-interface Track { id: string; uri: string; label: string; color: string }
+interface Track { id: string; uri: string; label: string; color: string; offsetMs?: number }
 interface Session { id: string; name: string; createdAt: number; tracks: Track[] }
 
 import {
@@ -27,10 +27,11 @@ const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.js
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
 const LATENCY_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
 
-// Android mic has ~80-150ms hardware latency.
-// We preroll playback by this amount before starting recording so they cancel out.
-// User can calibrate via the ±button in the header.
-const DEFAULT_PREROLL_MS = 120;
+// Android mic hardware latency is typically 80–200 ms.
+// prerollMs = how long to wait (after rec starts) before starting playback.
+// New track stores this as offsetMs so that silence is skipped during playback.
+// 150 ms works well on most Android devices. User can fine-tune via the bar.
+const DEFAULT_PREROLL_MS = 150;
 
 const TRACK_COLORS = [
   '#7c4dff', '#00e676', '#ff5252', '#ffeb3b',
@@ -47,22 +48,27 @@ function fmt(s: number) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 }
 
-/* ─── TrackRow component (solo play + scrub) ─── */
+/* ─── TrackRow component (solo play + scrub + mute + offset) ─── */
 interface TrackRowProps {
   track: Track;
   index: number;
   isSolo: boolean;
+  isMuted: boolean;
   soloPos: number;
   soloDur: number;
+  allPlayPos: number;
+  allPlayDur: number;
+  isPlayingAll: boolean;
   onSoloToggle: (track: Track) => void;
+  onMuteToggle: (track: Track) => void;
   onSeek: (seconds: number) => void;
   onRename: (track: Track) => void;
   onDelete: (track: Track) => void;
+  onOffsetChange: (track: Track, delta: number) => void;
 }
 
-function TrackRow({ track, index, isSolo, soloPos, soloDur, onSoloToggle, onSeek, onRename, onDelete }: TrackRowProps) {
+function TrackRow({ track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos, allPlayDur, isPlayingAll, onSoloToggle, onMuteToggle, onSeek, onRename, onDelete, onOffsetChange }: TrackRowProps) {
   const rowWidthRef = useRef(0);
-  // Keep live refs so PanResponder closures are never stale
   const isSoloRef  = useRef(isSolo);
   const soloDurRef = useRef(soloDur);
   const onSeekRef  = useRef(onSeek);
@@ -87,49 +93,77 @@ function TrackRow({ track, index, isSolo, soloPos, soloDur, onSoloToggle, onSeek
     })
   ).current;
 
-  const progress = isSolo && soloDur > 0 ? soloPos / soloDur : 0;
+  const soloProgress = isSolo && soloDur > 0 ? soloPos / soloDur : 0;
+  const allProgress  = isPlayingAll && allPlayDur > 0 ? allPlayPos / allPlayDur : 0;
 
   return (
     <View
-      style={[styles.trackRow, { borderLeftColor: track.color }, isSolo && styles.trackRowSolo]}
+      style={[styles.trackRow, { borderLeftColor: isMuted ? '#333' : track.color }, isSolo && styles.trackRowSolo, isMuted && { opacity: 0.45 }]}
       onLayout={e => { rowWidthRef.current = e.nativeEvent.layout.width; }}
       {...(isSolo ? panResponder.panHandlers : {})}
     >
       {/* Index badge */}
-      <View style={[styles.trackBadge, { backgroundColor: track.color + '33' }]}>
-        <Text style={[styles.trackBadgeText, { color: track.color }]}>{index + 1}</Text>
+      <View style={[styles.trackBadge, { backgroundColor: (isMuted ? '#333' : track.color) + '33' }]}>
+        <Text style={[styles.trackBadgeText, { color: isMuted ? '#444' : track.color }]}>{index + 1}</Text>
       </View>
 
       {/* Info + progress bar */}
       <View style={styles.trackMid}>
         <View style={styles.trackLabelRow}>
-          <Text style={styles.trackLabel}>{track.label}</Text>
+          <Text style={[styles.trackLabel, isMuted && { color: '#444' }]}>{track.label}</Text>
           {isSolo && (
             <Text style={[styles.trackTime, { color: track.color }]}>
               {fmt(soloPos)} / {fmt(soloDur)}
             </Text>
           )}
+          {/* Per-track offset adjustment (only for tracks 2+) */}
+          {index > 0 && (
+            <View style={styles.trackOffsetRow}>
+              <TouchableOpacity onPress={() => onOffsetChange(track, -20)} hitSlop={{ top: 8, bottom: 8, left: 10, right: 4 }}>
+                <Text style={styles.trackOffsetBtn}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => onOffsetChange(track, -(track.offsetMs ?? 0))}
+                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
+                <Text style={[styles.trackOffsetVal, {
+                  color: (track.offsetMs ?? 0) > 0 ? '#00e676' : (track.offsetMs ?? 0) < 0 ? '#ff9800' : '#888'
+                }]}>
+                  {(track.offsetMs ?? 0) > 0 ? '+' : ''}{track.offsetMs ?? 0}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => onOffsetChange(track, +20)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 10 }}>
+                <Text style={styles.trackOffsetBtn}>+</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
-        {/* Progress bar (always visible when solo, acts as scrub target) */}
+        {/* Solo scrub bar */}
         {isSolo && (
           <View style={styles.scrubTrack}>
-            <View style={[styles.scrubFill, { width: `${progress * 100}%` as any, backgroundColor: track.color }]} />
-            <View style={[styles.scrubThumb, { left: `${progress * 100}%` as any, backgroundColor: track.color }]} />
+            <View style={[styles.scrubFill, { width: `${soloProgress * 100}%` as any, backgroundColor: track.color }]} />
+            <View style={[styles.scrubThumb, { left: `${soloProgress * 100}%` as any, backgroundColor: track.color }]} />
+          </View>
+        )}
+
+        {/* Playall progress bar (passive, no scrub here) */}
+        {isPlayingAll && !isSolo && (
+          <View style={[styles.scrubTrack, { height: 2 }]}>
+            <View style={[styles.scrubFill, { width: `${allProgress * 100}%` as any, backgroundColor: isMuted ? '#333' : track.color + '88' }]} />
           </View>
         )}
       </View>
 
-      {/* Solo play/pause button */}
-      <TouchableOpacity onPress={() => onSoloToggle(track)} style={styles.soloBtn}>
-        <Ionicons
-          name={isSolo ? 'pause-circle' : 'play-circle'}
-          size={34}
-          color={isSolo ? track.color : '#444'}
-        />
+      {/* Mute toggle */}
+      <TouchableOpacity onPress={() => onMuteToggle(track)} style={styles.iconBtn}>
+        <Ionicons name={isMuted ? 'volume-mute' : 'volume-medium-outline'} size={16} color={isMuted ? '#ff5252' : '#555'} />
       </TouchableOpacity>
 
-      {/* Edit */}
+      {/* Solo play/pause button */}
+      <TouchableOpacity onPress={() => onSoloToggle(track)} style={styles.soloBtn}>
+        <Ionicons name={isSolo ? 'pause-circle' : 'play-circle'} size={34} color={isSolo ? track.color : '#444'} />
+      </TouchableOpacity>
+
+      {/* Edit & delete */}
       <TouchableOpacity onPress={() => onRename(track)} style={styles.iconBtn}>
         <Ionicons name="pencil-outline" size={15} color="#555" />
       </TouchableOpacity>
@@ -172,6 +206,16 @@ export default function StudioScreen() {
   const prerollRef = useRef(DEFAULT_PREROLL_MS);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { prerollRef.current = prerollMs; }, [prerollMs]);
+
+  // Master playback position
+  const [allPlayPos, setAllPlayPos]       = useState(0);
+  const [allPlayDur, setAllPlayDur]       = useState(0);
+  const masterSeekWidthRef               = useRef(0);
+
+  // Per-track mute
+  const [mutedTracks, setMutedTracks]     = useState<Record<string, boolean>>({});
+  const mutedRef                         = useRef<Record<string, boolean>>({});
+  const allSoundTrackIds                 = useRef<string[]>([]);
 
   const recRef      = useRef<Audio.Recording | null>(null);
   const allSounds   = useRef<Audio.Sound[]>([]);
@@ -226,7 +270,9 @@ export default function StudioScreen() {
       const info = await FileSystem.getInfoAsync(LATENCY_FILE);
       if (info.exists) {
         const ms = JSON.parse(await FileSystem.readAsStringAsync(LATENCY_FILE));
-        if (typeof ms === 'number') { setPrerollMs(ms); prerollRef.current = ms; }
+        // 0 was a bad default we shipped — treat it as "not set", use DEFAULT
+        const effective = (typeof ms === 'number' && ms > 0) ? ms : DEFAULT_PREROLL_MS;
+        setPrerollMs(effective); prerollRef.current = effective;
       }
     } catch {}
   }, []);
@@ -247,7 +293,9 @@ export default function StudioScreen() {
   const killAllSounds = useCallback(async () => {
     const sounds = allSounds.current;
     allSounds.current = [];
+    allSoundTrackIds.current = [];
     setPlayingAll(false);
+    setAllPlayPos(0);
     for (const s of sounds) {
       try { await s.stopAsync(); await s.unloadAsync(); } catch {}
     }
@@ -302,27 +350,76 @@ export default function StudioScreen() {
     try { await soloSound.current.setStatusAsync({ positionMillis: Math.round(seconds * 1000) }); } catch {}
   }, []);
 
+  /* ── Master seek (all sounds) ── */
+  const handleMasterSeek = useCallback((posMs: number) => {
+    const sess = activeSessionRef.current;
+    allSounds.current.forEach((s, i) => {
+      const off = sess?.tracks[i]?.offsetMs ?? 0;
+      // File position = session position + offset (clamped to 0)
+      s.setStatusAsync({ positionMillis: Math.max(0, posMs + off) }).catch(() => {});
+    });
+    setAllPlayPos(Math.max(0, posMs) / 1000);
+  }, []);
+
+  /* ── Mute toggle ── */
+  const toggleMute = useCallback((track: Track) => {
+    const next = { ...mutedRef.current, [track.id]: !mutedRef.current[track.id] };
+    mutedRef.current = next;
+    setMutedTracks({ ...next });
+    // Apply live volume if currently playing
+    const idx = allSoundTrackIds.current.indexOf(track.id);
+    if (idx >= 0 && allSounds.current[idx]) {
+      allSounds.current[idx].setStatusAsync({ volume: next[track.id] ? 0 : 1 }).catch(() => {});
+    }
+  }, []);
+
   /* ── Play all ── */
   const playAll = useCallback(async (session: Session) => {
     if (session.tracks.length === 0) { Alert.alert('No tracks yet'); return; }
     killSolo();
     await killAllSounds();
+    setAllPlayPos(0);
+    setAllPlayDur(0);
     try {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
-      // Load ALL sounds in parallel without starting them
+
+      // Load every sound pre-positioned at its offset so playAsync() fires
+      // immediately without a second round-trip to the bridge.
+      // Positive offset → skip N ms of silence at start (content moves earlier).
+      // Negative offset → track starts at 0 but fires N ms after the others.
       const loaded = await Promise.all(
-        session.tracks.map(t =>
-          Audio.Sound.createAsync({ uri: t.uri }, { shouldPlay: false })
-            .then(({ sound }) => sound)
-        )
+        session.tracks.map((t) => {
+          const off = Math.max(0, t.offsetMs ?? 0); // negative handled via setTimeout below
+          const vol = mutedRef.current[t.id] ? 0 : 1;
+          return Audio.Sound.createAsync(
+            { uri: t.uri },
+            { shouldPlay: false, positionMillis: off, volume: vol }
+          ).then(({ sound }) => sound);
+        })
       );
       allSounds.current = loaded;
+      allSoundTrackIds.current = session.tracks.map(t => t.id);
       setPlayingAll(true);
+
+      // Progress tracking: use track 0 as reference (simplest and most stable)
+      const ref0off = Math.max(0, (session.tracks[0]?.offsetMs ?? 0));
       loaded[0].setOnPlaybackStatusUpdate((st: AVPlaybackStatus) => {
-        if (st.isLoaded && st.didJustFinish) killAllSounds();
+        if (!st.isLoaded) return;
+        if (st.durationMillis) setAllPlayDur((st.durationMillis - ref0off) / 1000);
+        setAllPlayPos(Math.max(0, (st.positionMillis - ref0off) / 1000));
+        if (st.didJustFinish) killAllSounds();
       });
-      // Start all tracks as close to simultaneously as possible
-      await Promise.all(loaded.map(s => s.playAsync()));
+
+      // Fire: positive-offset tracks play immediately (already pre-positioned).
+      // Negative-offset tracks start from pos=0 after |offset| ms delay.
+      loaded.forEach((sound, i) => {
+        const off = session.tracks[i].offsetMs ?? 0;
+        if (off >= 0) {
+          sound.playAsync().catch(() => {});
+        } else {
+          setTimeout(() => { sound.playAsync().catch(() => {}); }, Math.abs(off));
+        }
+      });
     } catch (e) { Alert.alert('Playback error', String(e)); }
   }, [killSolo, killAllSounds]);
 
@@ -338,12 +435,17 @@ export default function StudioScreen() {
     try {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
 
-      // Load all existing tracks in parallel (not playing yet)
+      // Load all existing tracks with the SAME offsets and mute state as playAll,
+      // so the musician hears exactly what will be heard during playback.
       const playbackSounds = await Promise.all(
-        session.tracks.map(t =>
-          Audio.Sound.createAsync({ uri: t.uri }, { shouldPlay: false })
-            .then(({ sound }) => sound)
-        )
+        session.tracks.map((t) => {
+          const off = Math.max(0, t.offsetMs ?? 0);
+          const vol = mutedRef.current[t.id] ? 0 : 1;
+          return Audio.Sound.createAsync(
+            { uri: t.uri },
+            { shouldPlay: false, positionMillis: off, volume: vol }
+          ).then(({ sound }) => sound);
+        })
       );
       allSounds.current = playbackSounds;
 
@@ -351,17 +453,12 @@ export default function StudioScreen() {
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
 
-      // ── Latency compensation preroll ──────────────────────────────────
-      // Android mic has ~80-150ms hardware latency: sound enters mic but
-      // arrives in the buffer delayed. To compensate, we start playback
-      // FIRST and wait prerollMs before starting the recording.
-      // When prerollMs ≈ hardware_latency, recording pos 0 aligns with
-      // playback pos 0, so overdubbed tracks are in sync.
-      if (playbackSounds.length > 0) {
-        await Promise.all(playbackSounds.map(s => s.playAsync()));
-        await new Promise<void>(r => setTimeout(r, prerollRef.current));
-      }
-
+      // ── Simultaneous start ───────────────────────────────────────────
+      // Fire playback first (fire-and-forget), then await mic start.
+      // Backing tracks are already pre-positioned at their offsets, same as
+      // during playAll, so recording happens against the identical audio.
+      // The new track gets offsetMs = prerollMs to compensate for mic latency.
+      playbackSounds.forEach(s => { s.playAsync().catch(() => {}); });
       await rec.startAsync();
       recRef.current = rec;
       startRef.current = Date.now();
@@ -402,10 +499,12 @@ export default function StudioScreen() {
 
         const idx   = currentSession.tracks.length;
         const track: Track = {
-          id:    `t_${ts}`,
-          uri:   dst,
-          label: TRACK_LABELS[idx] ?? `Track ${idx + 1}`,
-          color: TRACK_COLORS[idx % TRACK_COLORS.length],
+          id:       `t_${ts}`,
+          uri:      dst,
+          label:    TRACK_LABELS[idx] ?? `Track ${idx + 1}`,
+          color:    TRACK_COLORS[idx % TRACK_COLORS.length],
+          // Strip the leading silence introduced by the preroll approach
+          offsetMs: idx > 0 ? prerollRef.current : 0,
         };
         const updated: Session = { ...currentSession, tracks: [...currentSession.tracks, track] };
         const next = currentSessions.map(s => s.id === updated.id ? updated : s);
@@ -418,6 +517,37 @@ export default function StudioScreen() {
       Alert.alert('Stop error', String(e));
     }
   }, [saveSessions, killAllSounds]);
+
+  /* ── Per-track offset adjustment ── */
+  const updateTrackOffset = useCallback(async (track: Track, delta: number) => {
+    const sess = activeSessionRef.current;
+    if (!sess) return;
+    const newOffset = Math.max(-800, Math.min(800, (track.offsetMs ?? 0) + delta));
+    const updatedTracks = sess.tracks.map(t =>
+      t.id === track.id ? { ...t, offsetMs: newOffset } : t
+    );
+    const updated: Session = { ...sess, tracks: updatedTracks };
+    const next = sessionsRef.current.map(s => s.id === updated.id ? updated : s);
+    setSessions(next);
+    setActiveSession(updated);
+    await saveSessions(next);
+  }, [saveSessions]);
+
+  /* ── Reset all per-track offsets to defaults ── */
+  const resetAllOffsets = useCallback(async () => {
+    const sess = activeSessionRef.current;
+    if (!sess) return;
+    // Track 1 (index 0) → 0ms; all others → current prerollMs
+    const updatedTracks = sess.tracks.map((t, i) => ({
+      ...t,
+      offsetMs: i === 0 ? 0 : prerollRef.current,
+    }));
+    const updated: Session = { ...sess, tracks: updatedTracks };
+    const next = sessionsRef.current.map(s => s.id === updated.id ? updated : s);
+    setSessions(next);
+    setActiveSession(updated);
+    await saveSessions(next);
+  }, [saveSessions]);
 
   /* ── Session CRUD ── */
   const createSession = useCallback(async () => {
@@ -716,12 +846,18 @@ function normArr(arr){
                 track={item}
                 index={index}
                 isSolo={soloTrackId === item.id}
+                isMuted={!!mutedTracks[item.id]}
                 soloPos={soloPos}
                 soloDur={soloDur}
+                allPlayPos={allPlayPos}
+                allPlayDur={allPlayDur}
+                isPlayingAll={playingAll}
                 onSoloToggle={toggleSolo}
+                onMuteToggle={toggleMute}
                 onSeek={handleSoloSeek}
                 onRename={(t) => { setRenameTarget({ type: 'track', id: t.id }); setRenameText(t.label); }}
                 onDelete={(t) => deleteTrack(t.id)}
+                onOffsetChange={updateTrackOffset}
               />
             )}
           />
@@ -737,53 +873,107 @@ function normArr(arr){
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={styles.controlRow}>
-              <TouchableOpacity
-                onPress={playingAll ? killAllSounds : () => playAll(activeSession)}
-                style={[styles.controlBtn, playingAll && styles.controlBtnPlaying]}
-                disabled={activeSession.tracks.length === 0}
-              >
-                <Ionicons name={playingAll ? 'stop' : 'play'} size={20} color={activeSession.tracks.length === 0 ? '#333' : '#00e676'} />
-                <Text style={[styles.controlBtnText, activeSession.tracks.length === 0 && { color: '#333' }]}>
-                  {playingAll ? 'STOP' : 'PLAY ALL'}
-                </Text>
-              </TouchableOpacity>
+            <>
+              <View style={styles.controlRow}>
+                <TouchableOpacity
+                  onPress={playingAll ? killAllSounds : () => playAll(activeSession)}
+                  style={[styles.controlBtn, playingAll && styles.controlBtnPlaying]}
+                  disabled={activeSession.tracks.length === 0}
+                >
+                  <Ionicons name={playingAll ? 'stop' : 'play'} size={20} color={activeSession.tracks.length === 0 ? '#333' : '#00e676'} />
+                  <Text style={[styles.controlBtnText, activeSession.tracks.length === 0 && { color: '#333' }]}>
+                    {playingAll ? 'STOP' : 'PLAY ALL'}
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={() => recordTrack(activeSession)}
-                style={[styles.controlBtn, styles.recCtrlBtn, activeSession.tracks.length >= MAX_TRACKS && styles.controlBtnDisabled]}
-                disabled={activeSession.tracks.length >= MAX_TRACKS}
+                <TouchableOpacity
+                  onPress={() => recordTrack(activeSession)}
+                  style={[styles.controlBtn, styles.recCtrlBtn, activeSession.tracks.length >= MAX_TRACKS && styles.controlBtnDisabled]}
+                  disabled={activeSession.tracks.length >= MAX_TRACKS}
+                >
+                  <Ionicons name="mic" size={20} color={activeSession.tracks.length >= MAX_TRACKS ? '#333' : '#fff'} />
+                  <Text style={[styles.recCtrlText, activeSession.tracks.length >= MAX_TRACKS && { color: '#333' }]}>
+                    {activeSession.tracks.length === 0
+                      ? 'REC TRACK 1'
+                      : activeSession.tracks.length >= MAX_TRACKS
+                      ? 'MAX REACHED'
+                      : `ADD TRACK ${activeSession.tracks.length + 1}`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Quality + offset row — always visible before first track */}
+              <View style={styles.latencyBar}>
+                {/* Quality presets quick-select */}
+                <TouchableOpacity onPress={() => setShowQuality(true)}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff22', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#7c4dff44' }}>
+                  <Ionicons name="settings-outline" size={12} color="#7c4dff" />
+                  <Text style={{ color: '#7c4dff', fontSize: 10, fontWeight: '700' }}>{presetLabel(quality)}</Text>
+                </TouchableOpacity>
+
+                {/* Divider */}
+                <View style={{ width: 1, height: 16, backgroundColor: '#2a2a38' }} />
+
+                {/* Mic latency offset */}
+                <Ionicons name="timer-outline" size={13} color="#888" />
+                <Text style={[styles.latencyLabel, { fontSize: 10 }]}>Мик. задержка:</Text>
+                <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))} style={styles.latencyBtn}>
+                  <Text style={styles.latencyBtnText}>−</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)} style={{ paddingHorizontal: 2 }}>
+                  <Text style={styles.latencyVal}>{prerollMs}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => savePreroll(Math.min(500, prerollMs + 20))} style={styles.latencyBtn}>
+                  <Text style={styles.latencyBtnText}>+</Text>
+                </TouchableOpacity>
+                <Text style={{ color: '#555', fontSize: 9 }}>мс</Text>
+
+                {/* Divider */}
+                {activeSession && activeSession.tracks.length > 1 && (
+                  <>
+                    <View style={{ width: 1, height: 16, backgroundColor: '#2a2a38' }} />
+                    <TouchableOpacity
+                      onPress={resetAllOffsets}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#ff800022', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 }}>
+                      <Ionicons name="refresh-outline" size={11} color="#ff8000" />
+                      <Text style={{ color: '#ff8000', fontSize: 9, fontWeight: '700' }}>СБРОС СМЕЩЕНИЙ</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </>
+          )}
+
+          {/* Master seek bar — shown during playAll */}
+          {playingAll && allPlayDur > 0 && (
+            <View style={styles.masterSeekContainer}>
+              <Text style={styles.masterSeekTime}>{fmt(allPlayPos)}</Text>
+              <View
+                style={styles.masterSeekTrack}
+                onLayout={e => { masterSeekWidthRef.current = e.nativeEvent.layout.width; }}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+                onResponderGrant={e => handleMasterSeek(Math.max(0, Math.min(1, e.nativeEvent.locationX / masterSeekWidthRef.current)) * allPlayDur * 1000)}
+                onResponderMove={e => handleMasterSeek(Math.max(0, Math.min(1, e.nativeEvent.locationX / masterSeekWidthRef.current)) * allPlayDur * 1000)}
               >
-                <Ionicons name="mic" size={20} color={activeSession.tracks.length >= MAX_TRACKS ? '#333' : '#fff'} />
-                <Text style={[styles.recCtrlText, activeSession.tracks.length >= MAX_TRACKS && { color: '#333' }]}>
-                  {activeSession.tracks.length === 0
-                    ? 'REC TRACK 1'
-                    : activeSession.tracks.length >= MAX_TRACKS
-                    ? 'MAX REACHED'
-                    : `ADD TRACK ${activeSession.tracks.length + 1}`}
-                </Text>
-              </TouchableOpacity>
+                <View style={[styles.masterSeekFill, { width: `${(allPlayPos / allPlayDur) * 100}%` as any }]} />
+                <View style={[styles.masterSeekThumb, { left: `${(allPlayPos / allPlayDur) * 100}%` as any }]} />
+              </View>
+              <Text style={styles.masterSeekTime}>{fmt(allPlayDur)}</Text>
             </View>
           )}
 
           {activeSession.tracks.length > 0 && !isRecording && (
-            <>
-              {activeSession.tracks.length < MAX_TRACKS && (
-                <Text style={styles.hintText}>
-                  ▶ Existing tracks play in headphones while you record the next one
-                </Text>
-              )}
-              <View style={styles.bottomRow}>
-                <TouchableOpacity onPress={() => setShowQuality(true)} style={styles.qualityChip}>
-                  <Ionicons name="settings-outline" size={13} color="#7c4dff" />
-                  <Text style={styles.qualityChipText}>{presetLabel(quality)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={openExport} style={styles.exportBtn}>
-                  <Ionicons name="share-outline" size={15} color="#ffeb3b" />
-                  <Text style={styles.exportBtnText}>EXPORT ({activeSession.tracks.length})</Text>
-                </TouchableOpacity>
-              </View>
-            </>
+            <View style={styles.bottomRow}>
+              <TouchableOpacity onPress={() => setShowQuality(true)} style={styles.qualityChip}>
+                <Ionicons name="settings-outline" size={13} color="#7c4dff" />
+                <Text style={styles.qualityChipText}>{presetLabel(quality)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={openExport} style={styles.exportBtn}>
+                <Ionicons name="share-outline" size={15} color="#ffeb3b" />
+                <Text style={styles.exportBtnText}>EXPORT ({activeSession.tracks.length})</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       )}
@@ -961,10 +1151,12 @@ function normArr(arr){
             })}
             {/* Latency compensation row */}
             <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
-              <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация задержки (мс)</Text>
+              <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация латентности (мс)</Text>
               <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
-                Android микрофон добавляет ~80-150мс задержки.{'\n'}
-                Увеличьте если 2-я дорожка запаздывает, уменьшите если опережает.
+                Микрофон Android включается с задержкой ~80–200 мс.{'\n'}
+                Рекомендуется: 150 мс.{'\n'}
+                Если 2-я дорожка запаздывает — увеличь.{'\n'}
+                Если опережает — уменьши.
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
                 <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
@@ -979,7 +1171,7 @@ function normArr(arr){
               </View>
               <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)}
                 style={{ alignSelf: 'center', marginTop: 8 }}>
-                <Text style={{ color: '#555', fontSize: 11 }}>сброс ({DEFAULT_PREROLL_MS}мс)</Text>
+                <Text style={{ color: '#555', fontSize: 11 }}>сброс → {DEFAULT_PREROLL_MS} мс</Text>
               </TouchableOpacity>
             </View>
 
@@ -1056,6 +1248,24 @@ const styles = StyleSheet.create({
   recDuration: { color: '#ff5252', fontSize: 22, fontWeight: '700', letterSpacing: 2, minWidth: 56 },
   stopBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#ff1744', paddingHorizontal: 18, paddingVertical: 9, borderRadius: 18 },
   stopBtnText: { color: '#fff', fontWeight: '700', fontSize: 12, letterSpacing: 1 },
+
+  // Master seek bar
+  masterSeekContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2, paddingVertical: 8 },
+  masterSeekTrack: { flex: 1, height: 6, backgroundColor: '#2a2a38', borderRadius: 3, overflow: 'visible', position: 'relative' },
+  masterSeekFill: { height: 6, borderRadius: 3, backgroundColor: '#00e676' },
+  masterSeekThumb: { position: 'absolute', width: 16, height: 16, borderRadius: 8, top: -5, marginLeft: -8, backgroundColor: '#00e676', borderWidth: 2, borderColor: '#0a0a12' },
+  masterSeekTime: { color: '#888', fontSize: 11, minWidth: 38, textAlign: 'center' },
+
+  trackOffsetRow:  { flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 6, backgroundColor: '#1a1a28', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2 },
+  trackOffsetBtn:  { color: '#7c4dff', fontSize: 16, fontWeight: '700', paddingHorizontal: 3 },
+  trackOffsetVal:  { color: '#aaa', fontSize: 10, fontWeight: '700', minWidth: 34, textAlign: 'center' },
+
+  latencyBar: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8, backgroundColor: '#0d0d18', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: '#1e1e30', flexWrap: 'wrap' },
+  latencyLabel: { color: '#7c4dff', fontSize: 12, fontWeight: '700', flex: 1 },
+  latencyVal: { color: '#fff', fontSize: 14, fontWeight: '800', minWidth: 54, textAlign: 'center' },
+  latencyBtn: { width: 30, height: 30, backgroundColor: '#7c4dff30', borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  latencyBtnText: { color: '#fff', fontSize: 20, lineHeight: 24, fontWeight: '700' },
+  latencySettingsBtn: { padding: 4, marginLeft: 2 },
 
   controlRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
   controlBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, backgroundColor: '#1e1e28', borderRadius: 14, borderWidth: 1, borderColor: '#2a2a38' },
