@@ -368,6 +368,11 @@ function normalizeLine(raw: string): string {
   return raw.replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
 }
 
+/** Lyrics contain ChordPro markers like [Am]word — not only the progression in the chords field. */
+function lyricsHaveChordMarkers(lyrics: string | undefined): boolean {
+  return !!lyrics && /\[[A-Ga-g][^\]]*]/.test(lyrics);
+}
+
 /** Anywhere in the line: "I [E]can't [A]no" → text + chord+text pairs. Root A–G or a–g (e.g. [fm]). */
 function parseChordProSegments(raw: string): { chord?: string; text: string }[] {
   const normalized = normalizeLine(raw);
@@ -878,6 +883,8 @@ export default function ChordsScreen() {
   const [libGenre, setLibGenre]               = useState('');
   const [libDiff, setLibDiff]                 = useState<0|1|2|3>(0);
   const [libFavOnly, setLibFavOnly]           = useState(false);
+  /** Only songs with lyrics text that includes [Chord] markup (excludes “chords only” in the strip). */
+  const [libWithLyricsChords, setLibWithLyricsChords] = useState(false);
   const [libSortBy, setLibSortBy]             = useState<'title'|'artist'|'bpm'>('title');
 
   /* ── Custom songs & favorites ── */
@@ -912,6 +919,7 @@ export default function ChordsScreen() {
     if (libGenre)   list = list.filter(s => s.genre === libGenre);
     if (libDiff)    list = list.filter(s => s.difficulty === libDiff);
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
+    if (libWithLyricsChords) list = list.filter(s => lyricsHaveChordMarkers(s.lyrics));
     if (libSortBy === 'title')  list = [...list].sort((a,b) => a.title.localeCompare(b.title));
     if (libSortBy === 'artist') list = [...list].sort((a,b) => a.artist.localeCompare(b.artist));
     if (libSortBy === 'bpm')    list = [...list].sort((a,b) => (b.bpm ?? 0) - (a.bpm ?? 0));
@@ -1791,6 +1799,13 @@ export default function ChordsScreen() {
               <Text style={[styles.libGenreText, libFavOnly && { color: '#000' }]}>⭐ Избранное</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity onPress={() => setLibWithLyricsChords(v => !v)}
+              style={[styles.libGenrePill, libWithLyricsChords && { backgroundColor: '#00e676', borderColor: '#00e676' }]}>
+              <Text style={[styles.libGenreText, libWithLyricsChords && { color: '#0a0a0f', fontWeight: '800' }]}>
+                ♪ Текст + [аккорды]
+              </Text>
+            </TouchableOpacity>
+
             {/* Difficulty */}
             {([0,1,2,3] as const).map(d => {
               const labels = ['● Все', '● Легко', '● Средне', '● Сложно'];
@@ -1854,7 +1869,11 @@ export default function ChordsScreen() {
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
                   </View>
                   <View style={styles.libItemRight}>
-                    {item.lyrics ? <Text style={styles.libItemHasLyrics}>♪ текст</Text> : null}
+                    {lyricsHaveChordMarkers(item.lyrics) ? (
+                      <Text style={styles.libItemHasLyrics}>♪ [аккорды]</Text>
+                    ) : item.lyrics ? (
+                      <Text style={styles.libItemPlainLyrics}>♪ текст</Text>
+                    ) : null}
                     <Text style={styles.libItemGenre}>{item.genre}</Text>
                     {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
                     {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
@@ -2190,7 +2209,8 @@ const styles = StyleSheet.create({
   libItemGenre: { color: '#666', fontSize: 10 },
   libItemBpm:   { color: '#555', fontSize: 10 },
   libItemKey:   { color: '#888', fontSize: 10, fontWeight: '700' },
-  libItemHasLyrics: { color: '#00e676', fontSize: 9 },
+  libItemHasLyrics: { color: '#00e676', fontSize: 9, fontWeight: '700' },
+  libItemPlainLyrics: { color: '#666', fontSize: 9 },
 
   /* Add/Edit Song form */
   addFieldLabel: { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 },
