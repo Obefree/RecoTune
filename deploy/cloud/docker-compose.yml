@@ -1,0 +1,24 @@
+# Always-on Expo + tunnel. Run from repo root:
+#   cp deploy/cloud/env.example .env.cloud
+#   # set NGROK_AUTHTOKEN in .env.cloud (https://dashboard.ngrok.com/signup)
+#   docker compose --env-file .env.cloud -f deploy/cloud/docker-compose.yml up -d --build
+#
+# URL: docker compose ... exec expo-cloud sh -c 'EXPO_PORT=8081 node /app/scripts/print-expo-go-url.mjs'
+# Logs: docker compose ... logs -f expo-cloud
+
+services:
+  expo-cloud:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile
+    restart: unless-stopped
+    environment:
+      EXPO_PORT: ${EXPO_PORT:-8081}
+      # Strongly recommended: same token as `ngrok config add-authtoken` (free tier ok).
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8081/status"]
+      interval: 30s
+      timeout: 12s
+      retries: 5
+      start_period: 120s
