@@ -9,7 +9,7 @@ import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { SONGS, type SongEntry } from '../data/songDatabase';
-import { LYRICS_DB } from '../data/lyricsDatabase';
+import { LYRICS_DB, findLyrics } from '../data/lyricsDatabase';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -795,15 +795,43 @@ export default function ChordsScreen() {
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
   }
 
-  async function fetchLyrics(artist: string, title: string) {
+  /**
+   * Overlay a chord progression onto plain lyrics.
+   * If the line already contains [Chord] markers, leave it untouched.
+   * Otherwise, prepend the next chord from the progression to the start of
+   * the line and rotate through the cycle.  Skips empty/short lines.
+   */
+  function annotateLyricsWithChords(lyrics: string, chordsCsv: string): string {
+    const chords = (chordsCsv || '').trim().split(/[\s,|/]+/).filter(Boolean);
+    if (chords.length === 0) return lyrics;
+    let idx = 0;
+    return lyrics
+      .split('\n')
+      .map(raw => {
+        const line = raw.replace(/\s+$/, '');
+        if (!line.trim()) return line;
+        if (/\[[A-G][^\]]{0,8}\]/.test(line)) return line;
+        const chord = chords[idx % chords.length];
+        idx += 1;
+        return `[${chord}]${line}`;
+      })
+      .join('\n');
+  }
+
+  async function fetchLyrics(artist: string, title: string, chordsCsv?: string) {
     setLyrics(null); setLyricsLoading(true);
     try {
       const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
       const data = await res.json();
       if (!data.error && data.lyrics) {
         // Normalize (Am) → [Am] so chords always render above text
-        const lyr = data.lyrics.trim()
+        let lyr = data.lyrics.trim()
           .replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
+        // If the fetched lyrics have no chord annotations at all, overlay
+        // the song's chord progression so the user still gets chords + text.
+        if (chordsCsv && !/\[[A-G][^\]]{0,8}\]/.test(lyr)) {
+          lyr = annotateLyricsWithChords(lyr, chordsCsv);
+        }
         setLyrics(lyr);
         setPracticeLyrics(lyr);
       }
@@ -889,8 +917,15 @@ export default function ChordsScreen() {
     loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
   }, []));
 
-  // Merge LYRICS_DB into built-in songs (external lyrics file wins over inline)
-  const allSongs = [...SONGS.map(s => LYRICS_DB[s.id] ? { ...s, lyrics: LYRICS_DB[s.id] } : s), ...customSongs];
+  // Merge external lyrics into built-in songs. Lookup tries song id, then
+  // a normalized artist+title key. External entries win over inline lyrics.
+  const allSongs = [
+    ...SONGS.map(s => {
+      const ext = findLyrics({ id: s.id, artist: s.artist, title: s.title });
+      return ext ? { ...s, lyrics: ext } : s;
+    }),
+    ...customSongs,
+  ];
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   const libResults = (() => {
@@ -1047,7 +1082,7 @@ export default function ChordsScreen() {
       setPracticeLyrics(song.lyrics);
     } else {
       setPracticeLyrics('');
-      fetchLyrics(song.artist, song.title);
+      fetchLyrics(song.artist, song.title, song.chords);
     }
   }
 
