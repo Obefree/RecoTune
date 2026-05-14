@@ -1807,13 +1807,6 @@ export default function ChordsScreen() {
               <Text style={[styles.libGenreText, libFavOnly && { color: '#000' }]}>⭐ Избранное</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setLibWithLyricsChords(v => !v)}
-              style={[styles.libGenrePill, libWithLyricsChords && { backgroundColor: '#00e676', borderColor: '#00e676' }]}>
-              <Text style={[styles.libGenreText, libWithLyricsChords && { color: '#0a0a0f', fontWeight: '800' }]}>
-                ♪ Текст + [аккорды]
-              </Text>
-            </TouchableOpacity>
-
             {/* Difficulty */}
             {([0,1,2,3] as const).map(d => {
               const labels = ['● Все', '● Легко', '● Средне', '● Сложно'];
@@ -1840,9 +1833,9 @@ export default function ChordsScreen() {
             ))}
           </ScrollView>
 
-          {/* Sort + count row */}
+          {/* Sort + lyrics-chords filter + count */}
           <View style={styles.libLegend}>
-            <View style={{ flexDirection: 'row', gap: 4 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center', flexShrink: 1 }}>
               {(['title','artist','bpm'] as const).map(s => (
                 <TouchableOpacity key={s} onPress={() => setLibSortBy(s)}
                   style={[{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#1e1e28' },
@@ -1852,6 +1845,13 @@ export default function ChordsScreen() {
                   </Text>
                 </TouchableOpacity>
               ))}
+              <TouchableOpacity onPress={() => setLibWithLyricsChords(v => !v)}
+                style={[{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#1e1e28' },
+                  libWithLyricsChords && { borderColor: '#00e67688', backgroundColor: '#00e67622' }]}>
+                <Text style={{ color: libWithLyricsChords ? '#00e676' : '#444', fontSize: 10, fontWeight: '700' }}>
+                  ♪ Текст+[аккорды]
+                </Text>
+              </TouchableOpacity>
             </View>
             <Text style={styles.libCount}>{libResults.length} из {allSongs.length}</Text>
           </View>
