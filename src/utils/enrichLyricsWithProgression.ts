@@ -24,8 +24,9 @@ export function inferChordProFromProgression(
   if (cells.length === 0) {
     return plainLyrics.trim() ? plainLyrics : `[N.C.]${title}`;
   }
+  /* No lyrics: one chord per line (readable order), then title — not one crowded row of pills. */
   if (!plainLyrics.trim()) {
-    return `${cells.map(c => `[${c}]`).join(' ')}\n\n— ${title} —`;
+    return `${cells.map(c => `[${c}]`).join('\n')}\n\n— ${title} —`;
   }
   return plainLyrics
     .split('\n')
@@ -45,5 +46,8 @@ export function mergeSongLyricsWithProgression(
   let lyr = lyricsDb[song.id] ?? song.lyrics;
   if (lyricsHaveChordMarkers(lyr)) return lyr;
   if (!song.chords?.trim()) return lyr?.trim() ? lyr : undefined;
-  return inferChordProFromProgression((lyr ?? '').trim(), song.chords, song.title);
+  const plain = (lyr ?? '').trim();
+  /* No stored text: do not inject placeholder here — pickSong will fetch lyrics.ovh; offline fallback uses inferChordProFromProgression('', …). */
+  if (!plain) return undefined;
+  return inferChordProFromProgression(plain, song.chords, song.title);
 }

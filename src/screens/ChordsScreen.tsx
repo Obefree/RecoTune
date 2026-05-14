@@ -804,7 +804,8 @@ export default function ChordsScreen() {
   }
 
   async function fetchLyrics(artist: string, title: string, progression?: string) {
-    setLyrics(null); setLyricsLoading(true);
+    setLyrics(null);
+    setLyricsLoading(true);
     try {
       const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
       const data = await res.json();
@@ -817,9 +818,16 @@ export default function ChordsScreen() {
         }
         setLyrics(lyr);
         setPracticeLyrics(lyr);
+      } else if (progression?.trim()) {
+        setPracticeLyrics(inferChordProFromProgression('', progression, title));
       }
-    } catch {}
-    setLyricsLoading(false);
+    } catch {
+      if (progression?.trim()) {
+        setPracticeLyrics(inferChordProFromProgression('', progression, title));
+      }
+    } finally {
+      setLyricsLoading(false);
+    }
   }
 
   function setResultAndFetch(r: AuddResult) {
@@ -1066,6 +1074,7 @@ export default function ChordsScreen() {
     setPracticeChordIdx(0);
     setLyricsEditMode(false); // always show view mode after picking
     setShowLibrary(false);
+    setLyricsLoading(false);
     if (song.lyrics) {
       setPracticeLyrics(song.lyrics);
     } else {
@@ -1488,6 +1497,16 @@ export default function ChordsScreen() {
                 onChangeText={setPracticeLyrics}
                 scrollEnabled={false}
               />
+            </ScrollView>
+          ) : lyricsLoading && !practiceLyrics.trim() ? (
+            <ScrollView
+              style={[styles.lyricsScroll, { height: lyricsScrollH }]}
+              contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}
+              showsVerticalScrollIndicator={false}>
+              <ActivityIndicator color="#7c4dff" size="large" />
+              <Text style={{ color: '#666', fontSize: 13, marginTop: 14, textAlign: 'center' }}>
+                Загрузка текста…
+              </Text>
             </ScrollView>
           ) : practiceLyrics ? (
             <ScrollView
