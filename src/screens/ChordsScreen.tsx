@@ -368,7 +368,30 @@ function normalizeLine(raw: string): string {
   return raw.replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
 }
 
-// Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
+/** Anywhere in the line: "I [E]can't [A]no" → text + chord+text pairs. Root A–G or a–g (e.g. [fm]). */
+function parseChordProSegments(raw: string): { chord?: string; text: string }[] {
+  const normalized = normalizeLine(raw);
+  const re = /\[([A-Ga-g][^\]]*)\]/g;
+  const matches = [...normalized.matchAll(re)];
+  if (matches.length === 0) {
+    return normalized.length > 0 ? [{ text: normalized }] : [];
+  }
+  const segs: { chord?: string; text: string }[] = [];
+  const firstIdx = matches[0].index ?? 0;
+  if (firstIdx > 0) {
+    segs.push({ text: normalized.slice(0, firstIdx) });
+  }
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const chord = m[1].trim();
+    const afterChord = (m.index ?? 0) + m[0].length;
+    const end = i + 1 < matches.length ? (matches[i + 1].index ?? normalized.length) : normalized.length;
+    segs.push({ chord, text: normalized.slice(afterChord, end) });
+  }
+  return segs;
+}
+
+// Input: "[Am]Hello [F]world" or "satis[E]faction" → chord row above lyric fragments
 // activeChordPos: if provided and matches a chord in this line, that chord glows green
 function ChordLyricsLine({
   line, currentChord, onChordTap, lineIdx, activeChordPos,
@@ -379,23 +402,7 @@ function ChordLyricsLine({
   lineIdx: number;
   activeChordPos: { lineIdx: number; posInLine: number } | null;
 }) {
-  const normalized = normalizeLine(line);
-  const segs: { chord?: string; text: string }[] = [];
-  let remaining = normalized;
-  let chordPosInLine = 0;
-  while (remaining.length > 0) {
-    const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/s);
-    if (m) {
-      const afterChord = m[2];
-      const nextIdx = afterChord.search(/\[[A-G]/);
-      const word = nextIdx >= 0 ? afterChord.slice(0, nextIdx) : afterChord;
-      segs.push({ chord: m[1].trim(), text: word });
-      remaining = nextIdx >= 0 ? afterChord.slice(nextIdx) : '';
-    } else {
-      segs.push({ text: remaining });
-      remaining = '';
-    }
-  }
+  const segs = parseChordProSegments(line);
   if (segs.length === 0) return <View style={{ height: 8 }} />;
 
   const allChordsOnly = segs.every(s => s.chord && !s.text.trim());
@@ -547,7 +554,7 @@ export default function ChordsScreen() {
     if (!practiceLyrics) return [];
     return practiceLyrics.split('\n').flatMap((rawLine, li) => {
       const normalized = normalizeLine(rawLine);
-      return [...normalized.matchAll(/\[([A-G][^\]]*)\]/g)].map((m, ci) => ({
+      return [...normalized.matchAll(/\[([A-Ga-g][^\]]*)\]/g)].map((m, ci) => ({
         lineIdx: li, posInLine: ci, chord: m[1].trim(),
       }));
     });
@@ -1442,6 +1449,15 @@ export default function ChordsScreen() {
               </TouchableOpacity>
             </View>
 
+          {practiceLyrics && !lyricsEditMode && lyricChordList.length === 0 && practiceLyrics.trim().length > 0 && (
+            <View style={styles.lyricsNoChordMarkupHint}>
+              <Ionicons name="information-circle-outline" size={14} color="#ff9800" />
+              <Text style={styles.lyricsNoChordMarkupText}>
+                В тексте нет аккордов в формате [Am]слово — они не рисуются над строкой. Используйте полосу аккордов ниже или откройте «ред.» и вставьте разметку.
+              </Text>
+            </View>
+          )}
+
           {/* Lyrics content — explicit measured height */}
           {lyricsEditMode ? (
             <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
@@ -1587,7 +1603,18 @@ export default function ChordsScreen() {
               {lyricsLoading ? (
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
               ) : lyrics ? (
-                <Text style={styles.resultLyricsText}>{lyrics}</Text>
+                <View style={{ paddingHorizontal: 4 }}>
+                  {lyrics.split('\n').map((line, li) => (
+                    <ChordLyricsLine
+                      key={li}
+                      line={line}
+                      currentChord="—"
+                      lineIdx={li}
+                      activeChordPos={null}
+                      onChordTap={() => {}}
+                    />
+                  ))}
+                </View>
               ) : (
                 <Text style={styles.lyricsEmpty}>Текст не найден (lyrics.ovh)</Text>
               )}
@@ -2081,6 +2108,8 @@ const styles = StyleSheet.create({
   lyricsPanelTitle: { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   lyricsEmptyText: { color: '#888', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   lyricsEmptyHint: { color: '#555', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  lyricsNoChordMarkupHint: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 8, padding: 10, backgroundColor: '#ff980012', borderRadius: 10, borderWidth: 1, borderColor: '#ff980044' },
+  lyricsNoChordMarkupText: { flex: 1, color: '#888', fontSize: 11, lineHeight: 16 },
   lyricsEmptyBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#1e1e28', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, marginTop: 6 },
   lyricsEmptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   lyricsImportBtn:  { color: '#ff9800', fontSize: 10 },
