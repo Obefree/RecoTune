@@ -25,7 +25,9 @@ import {
 const MAX_TRACKS    = 10;
 const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.json';
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
-const LATENCY_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
+const LATENCY_FILE        = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
+const CUSTOM_PRESET_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_custom_preset.json';
+const AUDIO_ROUTING_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_audio_routing.json';
 
 // Android mic hardware latency is typically 80–200 ms.
 // prerollMs = how long to wait (after rec starts) before starting playback.
@@ -46,6 +48,52 @@ const TRACK_LABELS = [
 
 function fmt(s: number) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+}
+
+/* ─── HoldButton — tap once, hold to auto-repeat every 80 ms ─── */
+function HoldButton({ onPress, children, style }: {
+  onPress: () => void;
+  children: React.ReactNode;
+  style?: object;
+}) {
+  const onPressRef  = useRef(onPress);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef  = useRef<ReturnType<typeof setTimeout>  | null>(null);
+
+  // Keep latest onPress accessible inside stable PanResponder closure
+  useEffect(() => { onPressRef.current = onPress; }, [onPress]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        // Clear any leftover timers (safety)
+        if (timeoutRef.current)  { clearTimeout(timeoutRef.current);   timeoutRef.current  = null; }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        // Immediate first fire
+        onPressRef.current();
+        // Start repeat after 380 ms hold
+        timeoutRef.current = setTimeout(() => {
+          timeoutRef.current  = null;
+          intervalRef.current = setInterval(() => onPressRef.current(), 80);
+        }, 380);
+      },
+      onPanResponderRelease: () => {
+        if (timeoutRef.current)  { clearTimeout(timeoutRef.current);   timeoutRef.current  = null; }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      },
+      onPanResponderTerminate: () => {
+        if (timeoutRef.current)  { clearTimeout(timeoutRef.current);   timeoutRef.current  = null; }
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      },
+    })
+  ).current;
+
+  return (
+    <View {...panResponder.panHandlers} style={style}>
+      {children}
+    </View>
+  );
 }
 
 /* ─── TrackRow component (solo play + scrub + mute + offset) ─── */
@@ -116,23 +164,28 @@ function TrackRow({ track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos,
               {fmt(soloPos)} / {fmt(soloDur)}
             </Text>
           )}
-          {/* Per-track offset adjustment (only for tracks 2+) */}
+          {/* Per-track offset (tracks 2+ only) — hold to auto-repeat, long-press value to reset */}
           {index > 0 && (
             <View style={styles.trackOffsetRow}>
-              <TouchableOpacity onPress={() => onOffsetChange(track, -20)} hitSlop={{ top: 8, bottom: 8, left: 10, right: 4 }}>
+              <HoldButton onPress={() => onOffsetChange(track, -10)}
+                style={styles.trackOffsetBtnArea}>
                 <Text style={styles.trackOffsetBtn}>−</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => onOffsetChange(track, -(track.offsetMs ?? 0))}
-                hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
+              </HoldButton>
+              <TouchableOpacity
+                onLongPress={() => onOffsetChange(track, -(track.offsetMs ?? 0))}
+                delayLongPress={500}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                style={styles.trackOffsetValArea}>
                 <Text style={[styles.trackOffsetVal, {
-                  color: (track.offsetMs ?? 0) > 0 ? '#00e676' : (track.offsetMs ?? 0) < 0 ? '#ff9800' : '#888'
+                  color: (track.offsetMs ?? 0) > 100 ? '#00e676' : (track.offsetMs ?? 0) < 0 ? '#ff9800' : '#888'
                 }]}>
                   {(track.offsetMs ?? 0) > 0 ? '+' : ''}{track.offsetMs ?? 0}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => onOffsetChange(track, +20)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 10 }}>
+              <HoldButton onPress={() => onOffsetChange(track, +10)}
+                style={styles.trackOffsetBtnArea}>
                 <Text style={styles.trackOffsetBtn}>+</Text>
-              </TouchableOpacity>
+              </HoldButton>
             </View>
           )}
         </View>
@@ -201,9 +254,14 @@ export default function StudioScreen() {
   const [showQuality, setShowQuality]     = useState(false);
   const qualityRef = useRef<RecQuality>(DEFAULT_QUALITY);
 
-  // Latency compensation: preroll playback before recording starts
+  // Latency compensation
   const [prerollMs, setPrerollMs]         = useState(DEFAULT_PREROLL_MS);
   const prerollRef = useRef(DEFAULT_PREROLL_MS);
+  const [customPreset, setCustomPreset]   = useState<number | null>(null);
+
+  // Audio routing
+  const [audioRouting, setAudioRouting]   = useState<{ output: 'auto'|'earpiece'|'speaker'; mic: 'auto'|'builtin' }>({ output: 'auto', mic: 'auto' });
+  const audioRoutingRef = useRef<{ output: 'auto'|'earpiece'|'speaker'; mic: 'auto'|'builtin' }>({ output: 'auto', mic: 'auto' });
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { prerollRef.current = prerollMs; }, [prerollMs]);
 
@@ -270,9 +328,22 @@ export default function StudioScreen() {
       const info = await FileSystem.getInfoAsync(LATENCY_FILE);
       if (info.exists) {
         const ms = JSON.parse(await FileSystem.readAsStringAsync(LATENCY_FILE));
-        // 0 was a bad default we shipped — treat it as "not set", use DEFAULT
         const effective = (typeof ms === 'number' && ms > 0) ? ms : DEFAULT_PREROLL_MS;
         setPrerollMs(effective); prerollRef.current = effective;
+      }
+    } catch {}
+    try {
+      const info = await FileSystem.getInfoAsync(CUSTOM_PRESET_FILE);
+      if (info.exists) {
+        const val = JSON.parse(await FileSystem.readAsStringAsync(CUSTOM_PRESET_FILE));
+        if (typeof val === 'number' && val > 0) setCustomPreset(val);
+      }
+    } catch {}
+    try {
+      const info = await FileSystem.getInfoAsync(AUDIO_ROUTING_FILE);
+      if (info.exists) {
+        const val = JSON.parse(await FileSystem.readAsStringAsync(AUDIO_ROUTING_FILE));
+        if (val) setAudioRouting(val);
       }
     } catch {}
   }, []);
@@ -281,6 +352,24 @@ export default function StudioScreen() {
     setPrerollMs(ms); prerollRef.current = ms;
     await FileSystem.writeAsStringAsync(LATENCY_FILE, JSON.stringify(ms));
   }, []);
+
+  const saveCustomPreset = useCallback(async (ms: number) => {
+    setCustomPreset(ms);
+    await FileSystem.writeAsStringAsync(CUSTOM_PRESET_FILE, JSON.stringify(ms));
+  }, []);
+
+  const saveAudioRouting = useCallback(async (r: typeof audioRouting) => {
+    setAudioRouting(r);
+    audioRoutingRef.current = r;
+    await FileSystem.writeAsStringAsync(AUDIO_ROUTING_FILE, JSON.stringify(r));
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        playThroughEarpieceAndroid: r.output === 'earpiece',
+      });
+    } catch {}
+  }, [audioRouting]);
 
   useEffect(() => { loadSessions(); loadQuality(); }, []);
 
@@ -381,7 +470,11 @@ export default function StudioScreen() {
     setAllPlayPos(0);
     setAllPlayDur(0);
     try {
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        playThroughEarpieceAndroid: audioRoutingRef.current.output === 'earpiece',
+      });
 
       // Load every sound pre-positioned at its offset so playAsync() fires
       // immediately without a second round-trip to the bridge.
@@ -433,7 +526,11 @@ export default function StudioScreen() {
     await killAllSounds();
 
     try {
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        playThroughEarpieceAndroid: audioRoutingRef.current.output === 'earpiece',
+      });
 
       // Load all existing tracks with the SAME offsets and mute state as playAll,
       // so the musician hears exactly what will be heard during playback.
@@ -522,7 +619,7 @@ export default function StudioScreen() {
   const updateTrackOffset = useCallback(async (track: Track, delta: number) => {
     const sess = activeSessionRef.current;
     if (!sess) return;
-    const newOffset = Math.max(-800, Math.min(800, (track.offsetMs ?? 0) + delta));
+    const newOffset = Math.max(-1000, Math.min(1000, (track.offsetMs ?? 0) + delta));
     const updatedTracks = sess.tracks.map(t =>
       t.id === track.id ? { ...t, offsetMs: newOffset } : t
     );
@@ -914,32 +1011,38 @@ function normArr(arr){
                 {/* Divider */}
                 <View style={{ width: 1, height: 16, backgroundColor: '#2a2a38' }} />
 
-                {/* Mic latency offset */}
+                {/* Latency offset with BT/wired presets */}
                 <Ionicons name="timer-outline" size={13} color="#888" />
-                <Text style={[styles.latencyLabel, { fontSize: 10 }]}>Мик. задержка:</Text>
-                <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))} style={styles.latencyBtn}>
+                <HoldButton onPress={() => savePreroll(Math.max(0, prerollMs - 10))} style={styles.latencyBtn}>
                   <Text style={styles.latencyBtnText}>−</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)} style={{ paddingHorizontal: 2 }}>
+                </HoldButton>
+                <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)} style={{ paddingHorizontal: 3 }}>
                   <Text style={styles.latencyVal}>{prerollMs}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => savePreroll(Math.min(500, prerollMs + 20))} style={styles.latencyBtn}>
+                <HoldButton onPress={() => savePreroll(Math.min(1000, prerollMs + 10))} style={styles.latencyBtn}>
                   <Text style={styles.latencyBtnText}>+</Text>
-                </TouchableOpacity>
+                </HoldButton>
                 <Text style={{ color: '#555', fontSize: 9 }}>мс</Text>
+                {/* Quick presets */}
+                <TouchableOpacity onPress={() => savePreroll(100)}
+                  style={{ backgroundColor: prerollMs === 100 ? '#00e67633' : '#1a1a28', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: prerollMs === 100 ? '#00e676' : '#2a2a38' }}>
+                  <Text style={{ color: prerollMs === 100 ? '#00e676' : '#555', fontSize: 9, fontWeight: '700' }}>🎧</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => savePreroll(300)}
+                  style={{ backgroundColor: prerollMs === 300 ? '#00bcd433' : '#1a1a28', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: prerollMs === 300 ? '#00bcd4' : '#2a2a38' }}>
+                  <Text style={{ color: prerollMs === 300 ? '#00bcd4' : '#555', fontSize: 9, fontWeight: '700' }}>BT</Text>
+                </TouchableOpacity>
+                {/* Custom preset — tap to apply, long-press to save current value */}
+                <TouchableOpacity
+                  onPress={() => customPreset !== null && savePreroll(customPreset)}
+                  onLongPress={() => saveCustomPreset(prerollMs)}
+                  delayLongPress={600}
+                  style={{ backgroundColor: customPreset !== null && prerollMs === customPreset ? '#ffeb3b33' : '#1a1a28', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: customPreset !== null && prerollMs === customPreset ? '#ffeb3b' : '#2a2a38' }}>
+                  <Text style={{ color: customPreset !== null && prerollMs === customPreset ? '#ffeb3b' : customPreset !== null ? '#888' : '#444', fontSize: 9, fontWeight: '700' }}>
+                    {customPreset !== null ? `${customPreset}` : '★'}
+                  </Text>
+                </TouchableOpacity>
 
-                {/* Divider */}
-                {activeSession && activeSession.tracks.length > 1 && (
-                  <>
-                    <View style={{ width: 1, height: 16, backgroundColor: '#2a2a38' }} />
-                    <TouchableOpacity
-                      onPress={resetAllOffsets}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#ff800022', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 }}>
-                      <Ionicons name="refresh-outline" size={11} color="#ff8000" />
-                      <Text style={{ color: '#ff8000', fontSize: 9, fontWeight: '700' }}>СБРОС СМЕЩЕНИЙ</Text>
-                    </TouchableOpacity>
-                  </>
-                )}
               </View>
             </>
           )}
@@ -1153,11 +1256,20 @@ function normArr(arr){
             <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
               <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация латентности (мс)</Text>
               <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
-                Микрофон Android включается с задержкой ~80–200 мс.{'\n'}
-                Рекомендуется: 150 мс.{'\n'}
+                Встроенный микрофон: ~100 мс (стабильно){'\n'}
+                Bluetooth наушники: ~300 мс (нестабильно){'\n'}{'\n'}
                 Если 2-я дорожка запаздывает — увеличь.{'\n'}
                 Если опережает — уменьши.
               </Text>
+              {/* Bluetooth tip */}
+              <View style={{ backgroundColor: '#00bcd410', borderRadius: 8, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#00bcd430' }}>
+                <Text style={{ color: '#00bcd4', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>💡 Лучший вариант: BT слушать + телефонный микрофон</Text>
+                <Text style={{ color: '#aaa', fontSize: 10, lineHeight: 15 }}>
+                  В настройках телефона → Bluetooth → твои наушники → выключи{' '}
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>"Звонки" / "Phone calls"</Text>
+                  {'\n'}Тогда: слушаешь через BT (A2DP), пишет встроенный микрофон — задержка стабильная ~100 мс.
+                </Text>
+              </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
                 <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
                   style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
@@ -1173,6 +1285,57 @@ function normArr(arr){
                 style={{ alignSelf: 'center', marginTop: 8 }}>
                 <Text style={{ color: '#555', fontSize: 11 }}>сброс → {DEFAULT_PREROLL_MS} мс</Text>
               </TouchableOpacity>
+            </View>
+
+            {/* Audio routing section */}
+            <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
+              <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 8 }]}>Маршрутизация аудио</Text>
+
+              {/* Output device */}
+              <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Воспроизведение:</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                {([
+                  { id: 'auto',     label: 'Авто',       icon: 'hardware-chip-outline' },
+                  { id: 'speaker',  label: 'Динамик',    icon: 'volume-high-outline' },
+                  { id: 'earpiece', label: 'Трубка',     icon: 'call-outline' },
+                ] as const).map(opt => {
+                  const active = audioRouting.output === opt.id;
+                  return (
+                    <TouchableOpacity key={opt.id}
+                      onPress={() => saveAudioRouting({ ...audioRouting, output: opt.id })}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
+                        backgroundColor: active ? '#7c4dff22' : '#1e1e28',
+                        borderColor: active ? '#7c4dff' : '#2a2a38' }}>
+                      <Ionicons name={opt.icon} size={13} color={active ? '#7c4dff' : '#555'} />
+                      <Text style={{ color: active ? '#7c4dff' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Input device */}
+              <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Микрофон:</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                {([
+                  { id: 'auto',    label: 'Авто (система)', icon: 'mic-outline' },
+                  { id: 'builtin', label: 'Встроенный',     icon: 'phone-portrait-outline' },
+                ] as const).map(opt => {
+                  const active = audioRouting.mic === opt.id;
+                  return (
+                    <TouchableOpacity key={opt.id}
+                      onPress={() => saveAudioRouting({ ...audioRouting, mic: opt.id })}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
+                        backgroundColor: active ? '#00e67622' : '#1e1e28',
+                        borderColor: active ? '#00e676' : '#2a2a38' }}>
+                      <Ionicons name={opt.icon} size={13} color={active ? '#00e676' : '#555'} />
+                      <Text style={{ color: active ? '#00e676' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={{ color: '#444', fontSize: 10, lineHeight: 14 }}>
+                Выбор микрофона зависит от системы. Для принудительного выбора встроенного — отключи «Звонки» в настройках Bluetooth.
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -1256,9 +1419,11 @@ const styles = StyleSheet.create({
   masterSeekThumb: { position: 'absolute', width: 16, height: 16, borderRadius: 8, top: -5, marginLeft: -8, backgroundColor: '#00e676', borderWidth: 2, borderColor: '#0a0a12' },
   masterSeekTime: { color: '#888', fontSize: 11, minWidth: 38, textAlign: 'center' },
 
-  trackOffsetRow:  { flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 6, backgroundColor: '#1a1a28', borderRadius: 8, paddingHorizontal: 4, paddingVertical: 2 },
-  trackOffsetBtn:  { color: '#7c4dff', fontSize: 16, fontWeight: '700', paddingHorizontal: 3 },
-  trackOffsetVal:  { color: '#aaa', fontSize: 10, fontWeight: '700', minWidth: 34, textAlign: 'center' },
+  trackOffsetRow:     { flexDirection: 'row', alignItems: 'center', gap: 0, marginLeft: 6, backgroundColor: '#1a1a28', borderRadius: 10, overflow: 'hidden' },
+  trackOffsetBtnArea: { paddingHorizontal: 10, paddingVertical: 6, justifyContent: 'center', alignItems: 'center' },
+  trackOffsetBtn:     { color: '#7c4dff', fontSize: 18, fontWeight: '700', lineHeight: 20 },
+  trackOffsetValArea: { paddingHorizontal: 4, paddingVertical: 6, justifyContent: 'center', alignItems: 'center' },
+  trackOffsetVal:     { color: '#aaa', fontSize: 10, fontWeight: '700', minWidth: 38, textAlign: 'center' },
 
   latencyBar: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8, backgroundColor: '#0d0d18', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: '#1e1e30', flexWrap: 'wrap' },
   latencyLabel: { color: '#7c4dff', fontSize: 12, fontWeight: '700', flex: 1 },

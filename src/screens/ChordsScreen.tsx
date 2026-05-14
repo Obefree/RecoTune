@@ -1,12 +1,18 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, TextInput, Platform, Modal, FlatList,
   useWindowDimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import WebView from 'react-native-webview';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { SONGS, type SongEntry } from '../data/songDatabase';
+import { LYRICS_DB } from '../data/lyricsDatabase';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as DocumentPicker from 'expo-document-picker';
 
 /* ─── Persistent storage paths ─── */
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
@@ -22,11 +28,6 @@ async function loadJson<T>(path: string, fallback: T): Promise<T> {
 async function saveJson(path: string, data: unknown) {
   try { await FileSystem.writeAsStringAsync(path, JSON.stringify(data)); } catch {}
 }
-import * as DocumentPicker from 'expo-document-picker';
-import { Ionicons } from '@expo/vector-icons';
-import WebView from 'react-native-webview';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 
 /* ─── Types ─── */
 interface AuddResult {
@@ -360,43 +361,94 @@ function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
 }
 
 /* ─── Chord+lyrics line renderer ─── */
-// Input: "[Am]Hello [F]world" → renders chord names (orange) above words
-function ChordLyricsLine({ line, currentChord, onChordTap }: { line: string; currentChord: string; onChordTap: (c: string) => void }) {
-  // Split into segments: [{chord?, text}]
+// Normalise any chord-annotation format to [Chord] before parsing.
+// Handles: [Am]text  (Am)text  [Am] text  (Am) text
+function normalizeLine(raw: string): string {
+  // (Am)text or (Am) text → [Am]text
+  return raw.replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
+}
+
+// Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
+// activeChordPos: if provided and matches a chord in this line, that chord glows green
+function ChordLyricsLine({
+  line, currentChord, onChordTap, lineIdx, activeChordPos,
+}: {
+  line: string;
+  currentChord: string;
+  onChordTap: (c: string) => void;
+  lineIdx: number;
+  activeChordPos: { lineIdx: number; posInLine: number } | null;
+}) {
+  const normalized = normalizeLine(line);
   const segs: { chord?: string; text: string }[] = [];
-  let remaining = line;
+  let remaining = normalized;
+  let chordPosInLine = 0;
   while (remaining.length > 0) {
-    const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/);
+    const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/s);
     if (m) {
-      // find next chord marker or end
       const afterChord = m[2];
-      const nextChord = afterChord.match(/\[([A-G][^\]]*)\]/);
-      const word = nextChord ? afterChord.slice(0, afterChord.indexOf('[')) : afterChord;
-      segs.push({ chord: m[1], text: word });
-      remaining = nextChord ? afterChord.slice(afterChord.indexOf('[')) : '';
+      const nextIdx = afterChord.search(/\[[A-G]/);
+      const word = nextIdx >= 0 ? afterChord.slice(0, nextIdx) : afterChord;
+      segs.push({ chord: m[1].trim(), text: word });
+      remaining = nextIdx >= 0 ? afterChord.slice(nextIdx) : '';
     } else {
       segs.push({ text: remaining });
       remaining = '';
     }
   }
-  if (segs.length === 0) return <Text style={{ color: '#777', fontSize: 15, lineHeight: 22, marginBottom: 2 }}>{line || ' '}</Text>;
-  return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
-      {segs.map((seg, i) => (
-        <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 2 }}>
-          {seg.chord ? (
-            <TouchableOpacity onPress={() => onChordTap(seg.chord!)}>
+  if (segs.length === 0) return <View style={{ height: 8 }} />;
+
+  const allChordsOnly = segs.every(s => s.chord && !s.text.trim());
+
+  let posCounter = 0;
+  const getChordStyle = (chord: string) => {
+    const pos = posCounter++;
+    const isActive = activeChordPos?.lineIdx === lineIdx && activeChordPos?.posInLine === pos;
+    const isCurrent = chord === currentChord;
+    if (isActive) return { color: '#00e676', bg: '#00e67630' };
+    if (isCurrent) return { color: '#ff9800', bg: '#ff980022' };
+    return { color: '#7c4dff', bg: 'transparent' };
+  };
+
+  if (allChordsOnly) {
+    posCounter = 0;
+    return (
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8, gap: 8 }}>
+        {segs.filter(s => s.chord).map((seg, i) => {
+          const cs = getChordStyle(seg.chord!);
+          return (
+            <TouchableOpacity key={i} onPress={() => onChordTap(seg.chord!)}>
               <Text style={{
-                color: seg.chord === currentChord ? '#ff9800' : '#7c4dff',
-                fontSize: 13, fontWeight: '900', lineHeight: 17, marginBottom: 1,
-                backgroundColor: seg.chord === currentChord ? '#ff980022' : 'transparent',
-                paddingHorizontal: 2, borderRadius: 3,
+                color: cs.color, fontSize: 14, fontWeight: '900',
+                backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
+                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
               }}>{seg.chord}</Text>
             </TouchableOpacity>
-          ) : <View style={{ height: 18 }} />}
-          <Text style={{ color: '#ccc', fontSize: 15, lineHeight: 20 }}>{seg.text || ' '}</Text>
-        </View>
-      ))}
+          );
+        })}
+      </View>
+    );
+  }
+
+  posCounter = 0;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+      {segs.map((seg, i) => {
+        const cs = seg.chord ? getChordStyle(seg.chord) : null;
+        return (
+          <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 2 }}>
+            {seg.chord && cs ? (
+              <TouchableOpacity onPress={() => onChordTap(seg.chord!)}>
+                <Text style={{
+                  color: cs.color, fontSize: 13, fontWeight: '900', lineHeight: 17, marginBottom: 1,
+                  backgroundColor: cs.bg, paddingHorizontal: 2, borderRadius: 3,
+                }}>{seg.chord}</Text>
+              </TouchableOpacity>
+            ) : <View style={{ height: 18 }} />}
+            <Text style={{ color: '#ccc', fontSize: 15, lineHeight: 20 }}>{seg.text || ' '}</Text>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -457,6 +509,61 @@ export default function ChordsScreen() {
   const [practiceLyrics, setPracticeLyrics] = useState('');
   const [lyricsEditMode, setLyricsEditMode] = useState(false);
   // showDiagram declared near top of component before lyricsScrollH
+
+  /* ── Auto-scroll ── */
+  const [autoScroll, setAutoScroll]       = useState(false);
+  const [practiceBpm, setPracticeBpm]     = useState(80);
+  const lyricsScrollRef                   = useRef<ScrollView>(null);
+  const autoScrollIntervalRef             = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollYRef                        = useRef(0);
+  const scrollContentHRef                 = useRef(0);
+
+  const startAutoScroll = useCallback((bpm: number, viewH: number) => {
+    if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
+    // scroll speed: 1 line per beat ≈ contentHeight / totalBeats
+    // We use a simpler approach: scroll whole content in estimated song duration
+    // Approx 1 line per 2 beats, content scrolls ~2px per beat interval
+    const msPerBeat = 60000 / bpm;
+    autoScrollIntervalRef.current = setInterval(() => {
+      scrollYRef.current += 1.2;
+      if (scrollYRef.current < scrollContentHRef.current - viewH) {
+        lyricsScrollRef.current?.scrollTo({ y: scrollYRef.current, animated: false });
+      } else {
+        // reached bottom — stop
+        if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
+        setAutoScroll(false);
+      }
+    }, msPerBeat / 8); // scroll 8 small steps per beat
+  }, []);
+
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollIntervalRef.current) { clearInterval(autoScrollIntervalRef.current); autoScrollIntervalRef.current = null; }
+    setAutoScroll(false);
+  }, []);
+
+  /* ── Lyric chord-following (mic-driven scroll) ── */
+  // Flat list of every chord in lyrics with line index and position within line
+  const lyricChordList = useMemo(() => {
+    if (!practiceLyrics) return [];
+    return practiceLyrics.split('\n').flatMap((rawLine, li) => {
+      const normalized = normalizeLine(rawLine);
+      return [...normalized.matchAll(/\[([A-G][^\]]*)\]/g)].map((m, ci) => ({
+        lineIdx: li, posInLine: ci, chord: m[1].trim(),
+      }));
+    });
+  }, [practiceLyrics]);
+
+  const [activeLyricIdx, setActiveLyricIdx] = useState(-1);
+  const activeLyricIdxRef = useRef(-1);
+  const lyricChordListRef = useRef(lyricChordList);
+  const lineYRef = useRef<Record<number, number>>({});
+
+  useEffect(() => {
+    lyricChordListRef.current = lyricChordList;
+    activeLyricIdxRef.current = -1;
+    setActiveLyricIdx(-1);
+    lineYRef.current = {};
+  }, [lyricChordList]);
 
   /* ── Live mode error display ── */
   const [liveError, setLiveError] = useState<string | null>(null);
@@ -531,6 +638,25 @@ export default function ChordsScreen() {
         // Stable chord segment detected by the engine
         if (msg.chord && msg.chord !== '?' && msg.durationMs > 400) {
           setSegments(prev => [...prev, { chord: msg.chord, durationMs: msg.durationMs }]);
+          // Advance through lyric chords — find next matching chord and scroll to it
+          const chordList = lyricChordListRef.current;
+          if (chordList.length > 0) {
+            const curPos = activeLyricIdxRef.current;
+            const lookFrom = curPos + 1;
+            const lookTo = Math.min(lookFrom + 6, chordList.length);
+            const detected = msg.chord as string;
+            for (let i = lookFrom; i < lookTo; i++) {
+              const lc = chordList[i];
+              // Exact match OR prefix match (e.g. detected "Am7" matches lyric "Am")
+              if (detected === lc.chord || detected.startsWith(lc.chord) || lc.chord.startsWith(detected)) {
+                activeLyricIdxRef.current = i;
+                setActiveLyricIdx(i);
+                const lineY = lineYRef.current[lc.lineIdx] ?? 0;
+                lyricsScrollRef.current?.scrollTo({ y: Math.max(0, lineY - 60), animated: true });
+                break;
+              }
+            }
+          }
         }
       } else if (msg.type === 'update') {
         setLiveError(null);
@@ -675,7 +801,9 @@ export default function ChordsScreen() {
       const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
       const data = await res.json();
       if (!data.error && data.lyrics) {
-        const lyr = data.lyrics.trim();
+        // Normalize (Am) → [Am] so chords always render above text
+        const lyr = data.lyrics.trim()
+          .replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
         setLyrics(lyr);
         setPracticeLyrics(lyr);
       }
@@ -761,7 +889,8 @@ export default function ChordsScreen() {
     loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
   }, []));
 
-  const allSongs = [...SONGS, ...customSongs];
+  // Merge LYRICS_DB into built-in songs (external lyrics file wins over inline)
+  const allSongs = [...SONGS.map(s => LYRICS_DB[s.id] ? { ...s, lyrics: LYRICS_DB[s.id] } : s), ...customSongs];
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   const libResults = (() => {
@@ -795,6 +924,68 @@ export default function ChordsScreen() {
       : [...customSongs, song];
     setCustomSongs(next);
     await saveJson(CUSTOM_SONGS_FILE, next);
+  }
+
+  async function importChordProFile() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/plain', 'application/octet-stream', '*/*'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      const raw = await FileSystem.readAsStringAsync(asset.uri);
+
+      // Parse ChordPro / plain-text files.
+      // Supports: {title:}, {artist:}, {key:}, {tempo:}, [Chord] inline markers
+      const lines = raw.split('\n');
+      let title = asset.name.replace(/\.(cho|txt|chordpro|pro)$/i, '') || 'Без названия';
+      let artist = 'Unknown';
+      let key = '';
+      let bpm: number | undefined;
+      const lyricsLines: string[] = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        // Directives: {title: ...}, {t: ...}
+        const titleM = trimmed.match(/^\{(?:title|t):\s*(.+)\}/i);
+        if (titleM) { title = titleM[1].trim(); continue; }
+        const artistM = trimmed.match(/^\{(?:artist|a|subtitle|st):\s*(.+)\}/i);
+        if (artistM) { artist = artistM[1].trim(); continue; }
+        const keyM = trimmed.match(/^\{key:\s*(.+)\}/i);
+        if (keyM) { key = keyM[1].trim(); continue; }
+        const tempoM = trimmed.match(/^\{(?:tempo|bpm):\s*(\d+)\}/i);
+        if (tempoM) { bpm = parseInt(tempoM[1]); continue; }
+        // Skip other directives
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) continue;
+        // Keep lyric lines (including [Chord] markers)
+        lyricsLines.push(line);
+      }
+
+      // Extract chord names from lyrics for the `chords` field
+      const chordMatches = raw.match(/\[([A-G][^\]]*)\]/g) ?? [];
+      const uniqueChords = [...new Set(chordMatches.map(c => c.replace(/[\[\]]/g, '')))];
+
+      const song: SongEntry = {
+        id: `custom_${Date.now()}`,
+        title,
+        artist,
+        chords: uniqueChords.slice(0, 8).join(' ') || 'C G Am F',
+        key: key || undefined,
+        bpm,
+        difficulty: uniqueChords.length <= 3 ? 1 : uniqueChords.length <= 5 ? 2 : 3,
+        genre: 'Импорт',
+        lyrics: lyricsLines.join('\n').trim(),
+      };
+
+      const next = [...customSongs, song];
+      setCustomSongs(next);
+      await saveJson(CUSTOM_SONGS_FILE, next);
+      Alert.alert('Импортировано', `"${title}" добавлена в библиотеку`);
+    } catch (e) {
+      Alert.alert('Ошибка импорта', String(e));
+    }
   }
 
   async function deleteCustomSong(id: string) {
@@ -1204,6 +1395,41 @@ export default function ChordsScreen() {
                   </Text>
                 )}
               </View>
+              {/* Mic-following indicator — shows when mic is on and lyrics have chords */}
+              {practiceLyrics && !lyricsEditMode && liveActive && lyricChordList.length > 0 && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 7, paddingVertical: 4,
+                  backgroundColor: '#00e67618', borderRadius: 8, marginRight: 4,
+                  borderWidth: 1, borderColor: '#00e67666' }}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#00e676' }} />
+                  <Text style={{ color: '#00e676', fontSize: 9, fontWeight: '700' }}>МИК</Text>
+                </View>
+              )}
+              {/* Auto-scroll toggle (BPM timer) */}
+              {practiceLyrics && !lyricsEditMode && (
+                <TouchableOpacity
+                  onPress={() => {
+                    if (autoScroll) { stopAutoScroll(); }
+                    else { scrollYRef.current = 0; setAutoScroll(true); startAutoScroll(practiceBpm, lyricsScrollH); }
+                  }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 4,
+                    backgroundColor: autoScroll ? '#00e67622' : '#1a1a28', borderRadius: 8, marginRight: 4,
+                    borderWidth: 1, borderColor: autoScroll ? '#00e676' : '#2a2a38' }}>
+                  <Ionicons name={autoScroll ? 'pause' : 'play'} size={11} color={autoScroll ? '#00e676' : '#555'} />
+                  <Text style={{ color: autoScroll ? '#00e676' : '#555', fontSize: 9, fontWeight: '700' }}>
+                    {practiceBpm}
+                  </Text>
+                  <TouchableOpacity onPress={() => { const next = Math.min(240, practiceBpm + 10); setPracticeBpm(next); if (autoScroll) { stopAutoScroll(); startAutoScroll(next, lyricsScrollH); } }}
+                    style={{ paddingHorizontal: 6, paddingVertical: 4 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                    <Text style={{ color: '#aaa', fontSize: 15, fontWeight: '700', lineHeight: 16 }}>+</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { const next = Math.max(30, practiceBpm - 10); setPracticeBpm(next); if (autoScroll) { stopAutoScroll(); startAutoScroll(next, lyricsScrollH); } }}
+                    style={{ paddingHorizontal: 6, paddingVertical: 4 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
+                    <Text style={{ color: '#aaa', fontSize: 15, fontWeight: '700', lineHeight: 16 }}>−</Text>
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity onPress={() => setShowDiagram(v => !v)}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4, marginRight: 4 }}>
                 <Ionicons name={showDiagram ? 'chevron-up' : 'chevron-down'} size={14} color="#555" />
@@ -1232,17 +1458,36 @@ export default function ChordsScreen() {
               />
             </ScrollView>
           ) : practiceLyrics ? (
-            <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
+            <ScrollView
+              ref={lyricsScrollRef}
+              style={[styles.lyricsScroll, { height: lyricsScrollH }]}
               contentContainerStyle={{ padding: 10, paddingBottom: 12 }}
-              showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              {practiceLyrics.split('\n').map((line, li) => (
-                <ChordLyricsLine key={li} line={line} currentChord={practiceCurrentChord}
-                  onChordTap={(c) => {
-                    const idx = practiceChords.indexOf(c);
-                    if (idx >= 0) setPracticeChordIdx(idx);
-                  }}
-                />
-              ))}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              scrollEventThrottle={16}
+              onScroll={e => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+              onContentSizeChange={(_, h) => { scrollContentHRef.current = h; }}>
+              {practiceLyrics.split('\n').map((line, li) => {
+                const activeLyricEntry = activeLyricIdx >= 0 ? lyricChordList[activeLyricIdx] : null;
+                const activeChordPos = activeLyricEntry?.lineIdx === li
+                  ? { lineIdx: li, posInLine: activeLyricEntry.posInLine }
+                  : null;
+                return (
+                  <View key={li} onLayout={e => { lineYRef.current[li] = e.nativeEvent.layout.y; }}>
+                    <ChordLyricsLine
+                      line={line}
+                      currentChord={practiceCurrentChord}
+                      lineIdx={li}
+                      activeChordPos={activeChordPos}
+                      onChordTap={(c) => {
+                        if (autoScroll) stopAutoScroll();
+                        const idx = practiceChords.indexOf(c);
+                        if (idx >= 0) setPracticeChordIdx(idx);
+                      }}
+                    />
+                  </View>
+                );
+              })}
             </ScrollView>
           ) : (
             <ScrollView style={[styles.lyricsScroll, { height: lyricsScrollH }]}
@@ -1476,6 +1721,11 @@ export default function ChordsScreen() {
               <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
               <Text style={styles.libSubtitle}>{allSongs.length} песен ({customSongs.length} своих)</Text>
             </View>
+            <TouchableOpacity onPress={importChordProFile}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#00e67618', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 7, borderWidth: 1, borderColor: '#00e67644', marginRight: 6 }}>
+              <Ionicons name="document-text-outline" size={15} color="#00e676" />
+              <Text style={{ color: '#00e676', fontSize: 10, fontWeight: '700' }}>ИМПОРТ</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => openAddSong()}
               style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff22', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: '#7c4dff44', marginRight: 8 }}>
               <Ionicons name="add-circle-outline" size={16} color="#7c4dff" />
