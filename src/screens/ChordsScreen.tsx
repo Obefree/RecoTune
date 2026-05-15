@@ -15,6 +15,9 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 
+import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
+import { frequencyToNote } from '../utils/noteUtils';
+
 /* ─── Persistent storage paths ─── */
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
 const FAVORITES_FILE    = (FileSystem.documentDirectory ?? '') + 'song_favorites.json';
@@ -91,6 +94,7 @@ const MAJOR_P=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const MINOR_P=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 
 let ctx,analyser,src,running=false;
+let practiceVoiceMode=false;
 
 /* ── rolling window for averaged chromagram ── */
 const WIN=18;         // ~0.9s window — responsive but not jittery
@@ -156,6 +160,40 @@ function pitchHPS(fft,bHz,harmonics){
   if(best<0||fft[best]<-52)return-1;
   return best*bHz;
 }
+/** HPS with low-string attenuation + coarse gate when bass/guitar dominates (not full separation). */
+function pitchHPSVoice(fft,bHz,harmonics){
+  const n=fft.length;
+  let eLow=0,eVoice=0,eHi=0;
+  for(let i=1;i<n;i++){
+    const f=i*bHz;
+    const raw=fft[i]>-100?Math.pow(10,fft[i]/20):0;
+    if(f>=65&&f<=155)eLow+=raw;
+    if(f>=165&&f<=1100)eVoice+=raw;
+    if(f>=2200&&f<=4200)eHi+=raw;
+  }
+  if(eVoice<0.006)return-1;
+  if(eLow*1.05>=eVoice)return-1;
+  if(eVoice>0.03&&eHi<eVoice*0.018)return-1;
+
+  const lin=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    const f=i*bHz;
+    let g=fft[i]>-100?Math.pow(10,fft[i]/20):0;
+    if(f<135)g*=0.1;
+    else if(f<190)g*=0.5;
+    else if(f>4500)g*=0.65;
+    lin[i]=g;
+  }
+  const mx=Math.floor(n/harmonics);
+  const hps=new Float32Array(mx);
+  for(let i=0;i<mx;i++){hps[i]=lin[i];for(let h=2;h<=harmonics;h++)hps[i]*=(i*h<n?lin[i*h]:0);}
+  const minB=Math.max(1,Math.ceil(75/bHz));
+  const maxB=Math.min(mx-1,Math.floor(1050/bHz));
+  let best=-1,bestV=0;
+  for(let i=minB;i<=maxB;i++){if(hps[i]>bestV){bestV=hps[i];best=i;}}
+  if(best<0||bestV<1e-14||fft[best]<-50)return-1;
+  return best*bHz;
+}
 function avgWindow(){
   const avg=new Float32Array(12);
   const n=winBuf.length;if(!n)return avg;
@@ -174,8 +212,9 @@ function avgWindow(){
 function emitSegment(chord,durationMs){
   if(chord!=='?'&&durationMs>400)post({type:'segment',chord,durationMs});
 }
-async function start(){
+async function start(isVoicePractice){
   if(running)return;running=true;
+  practiceVoiceMode=!!isVoicePractice;
   winBuf=[];energyHist=[];onsetCooldown=0;
   candidate='?';stableCount=0;prevSegChord='?';segStart=Date.now();
   try{
@@ -218,7 +257,7 @@ async function start(){
       const chord=detectChord(avg);
       const key=estimateKey(avg);
       const notes=topNotes(avg,4);
-      const pitchHz=pitchHPS(fft,bHz,4);
+      const pitchHz=practiceVoiceMode?pitchHPSVoice(fft,bHz,4):pitchHPS(fft,bHz,4);
 
       // Display update every frame
       post({type:'update',chord:chord.conf>=MIN_CONF?chord.name:'?',confidence:chord.conf,key,notes,pitchHz});
@@ -245,13 +284,14 @@ async function start(){
 }
 function stop(){
   running=false;
+  practiceVoiceMode=false;
   // Emit final segment
   emitSegment(prevSegChord,Date.now()-segStart);
   try{if(src)src.disconnect();if(ctx)ctx.close();}catch{}
   winBuf=[];
 }
-document.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='start')start();else if(m.cmd==='stop')stop();}catch{}});
-window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='start')start();else if(m.cmd==='stop')stop();}catch{}});
+document.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='start')start(false);else if(m.cmd==='startPracticeVoice')start(true);else if(m.cmd==='stop')stop();}catch{}});
+window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='start')start(false);else if(m.cmd==='startPracticeVoice')start(true);else if(m.cmd==='stop')stop();}catch{}});
 </script></body></html>`;
 
 const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
@@ -459,6 +499,11 @@ export default function ChordsScreen() {
   /** Chord diagram instrument (guitar6, guitar7, ukulele, mandolin, bass4) */
   const [chordDiagramId, setChordDiagramId] = useState('guitar6');
 
+  const [mode, setMode]               = useState<Mode>('practice');
+  const [liveActive, setLiveActive]   = useState(false);
+  /** Practice: mic on for voice pitch + chart */
+  const [pitchActive, setPitchActive] = useState(false);
+
   /* ── Practice view height: full screen minus surrounding chrome ── */
   const practiceViewH = Math.max(200,
     windowH
@@ -468,18 +513,17 @@ export default function ChordsScreen() {
   );
 
   /* ── Lyrics scroll height: practice area minus all fixed elements ── */
+  const practiceVoiceChartReserve = mode === 'practice' && pitchActive ? 368 : 0;
   const lyricsScrollH = Math.max(80,
     practiceViewH
     - 60                      // bigLibBtn
     - 50                      // progInput
     - (showDiagram ? 178 : 0) // practiceTopPanel + instrument chips (collapsible)
     - 50                      // chordNav
+    - practiceVoiceChartReserve
     - 36                      // lyricsPanelHeader
     - 62                      // toolbar
   );
-
-  const [mode, setMode]               = useState<Mode>('practice');
-  const [liveActive, setLiveActive]   = useState(false);
 
   /* ── Chord state ── */
   const [chord, setChord]             = useState('—');
@@ -495,6 +539,13 @@ export default function ChordsScreen() {
   const [voiceNote, setVoiceNote]     = useState('—');
   const [voiceFreq, setVoiceFreq]     = useState(0);
   const [voiceCents, setVoiceCents]   = useState(0);
+  const [voiceHistory, setVoiceHistory] = useState<HistoryPoint[]>([]);
+  const practiceSmoothedFreqRef = useRef<number | null>(null);
+
+  const VOICE_CHART_EMA = 0.28;
+  const MAX_VOICE_HISTORY = 80;
+  const A4_FREQ_CHART = 440;
+  const A4_MIDI_CHART = 69;
 
   /* ── Practice recording ── */
   const [isPracticeRec, setIsPracticeRec] = useState(false);
@@ -566,6 +617,12 @@ export default function ChordsScreen() {
   const [liveError, setLiveError] = useState<string | null>(null);
   const wvReadyRef = useRef(false);
   const pendingStartRef = useRef(false);
+  const pendingPracticeVoiceRef = useRef(false);
+  const modeRef = useRef(mode);
+  const pitchActiveRef = useRef(pitchActive);
+
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { pitchActiveRef.current = pitchActive; }, [pitchActive]);
 
   /* ── Identify state ── */
   const [recSecs, setRecSecs]         = useState(0);
@@ -590,6 +647,9 @@ export default function ChordsScreen() {
       stopLive();
       stopRec();
       stopPracticeRec();
+      setPitchActive(false);
+      setVoiceHistory([]);
+      practiceSmoothedFreqRef.current = null;
     };
   }, []));
 
@@ -604,6 +664,7 @@ export default function ChordsScreen() {
     setLiveError(null);
     setChord('—'); setKey(''); setNotes([]);
     setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
+    pendingPracticeVoiceRef.current = false;
     if (wvReadyRef.current) {
       sendCmd('start');
     } else {
@@ -613,6 +674,7 @@ export default function ChordsScreen() {
   function stopLive() {
     setLiveActive(false);
     pendingStartRef.current = false;
+    pendingPracticeVoiceRef.current = false;
     sendCmd('stop');
   }
 
@@ -623,6 +685,9 @@ export default function ChordsScreen() {
         setLiveError(null);
       } else if (msg.type === 'error') {
         setLiveActive(false);
+        setPitchActive(false);
+        pendingStartRef.current = false;
+        pendingPracticeVoiceRef.current = false;
         const errText: string = msg.msg || msg.message || 'Ошибка микрофона';
         if (errText.toLowerCase().includes('denied') || errText.toLowerCase().includes('permission')) {
           setLiveError('Нет доступа к микрофону. Разрешите в настройках телефона.');
@@ -669,8 +734,28 @@ export default function ChordsScreen() {
           setVoiceFreq(Math.round(msg.pitchHz));
           const exactMidi = 12 * Math.log2(msg.pitchHz / 440) + 69;
           setVoiceCents(Math.round((exactMidi - midi) * 100));
+
+          if (modeRef.current === 'practice' && pitchActiveRef.current) {
+            const raw = msg.pitchHz as number;
+            const prev = practiceSmoothedFreqRef.current;
+            const freq = prev == null ? raw : VOICE_CHART_EMA * raw + (1 - VOICE_CHART_EMA) * prev;
+            practiceSmoothedFreqRef.current = freq;
+            const info = frequencyToNote(freq);
+            const midiF = 12 * Math.log2(freq / A4_FREQ_CHART) + A4_MIDI_CHART;
+            setVoiceHistory(hprev => {
+              const pt: HistoryPoint = {
+                cents: info.cents, freq, midi: midiF,
+                note: info.name, octave: info.octave, ts: Date.now(),
+              };
+              const next = [...hprev, pt];
+              return next.length > MAX_VOICE_HISTORY ? next.slice(-MAX_VOICE_HISTORY) : next;
+            });
+          }
         } else {
           setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
+          if (modeRef.current === 'practice' && pitchActiveRef.current) {
+            practiceSmoothedFreqRef.current = null;
+          }
         }
       }
     } catch {}
@@ -678,7 +763,10 @@ export default function ChordsScreen() {
 
   function handleWVLoad() {
     wvReadyRef.current = true;
-    if (pendingStartRef.current) {
+    if (pendingPracticeVoiceRef.current) {
+      pendingPracticeVoiceRef.current = false;
+      sendCmd('startPracticeVoice');
+    } else if (pendingStartRef.current) {
       pendingStartRef.current = false;
       sendCmd('start');
     }
@@ -860,7 +948,6 @@ export default function ChordsScreen() {
   const [practiceInput, setPracticeInput]     = useState('Am F C G');
   const [practiceChords, setPracticeChords]   = useState<string[]>(['Am','F','C','G']);
   const [practiceChordIdx, setPracticeChordIdx] = useState(0);
-  const [pitchActive, setPitchActive]         = useState(false);
 
   /* ── Song library ── */
   const [showLibrary, setShowLibrary]         = useState(false);
@@ -1066,15 +1153,21 @@ export default function ChordsScreen() {
   function startPitchDetection() {
     setPitchActive(true);
     setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
+    setVoiceHistory([]);
+    practiceSmoothedFreqRef.current = null;
+    pendingStartRef.current = false;
     if (wvReadyRef.current) {
-      sendCmd('start');
+      sendCmd('startPracticeVoice');
     } else {
-      pendingStartRef.current = true;
+      pendingPracticeVoiceRef.current = true;
     }
   }
   function stopPitchDetection() {
     setPitchActive(false);
     pendingStartRef.current = false;
+    pendingPracticeVoiceRef.current = false;
+    practiceSmoothedFreqRef.current = null;
+    setVoiceHistory([]);
     sendCmd('stop');
   }
 
@@ -1086,6 +1179,7 @@ export default function ChordsScreen() {
     if (m === 'live') {
       setChord('—'); setKey(''); setNotes([]);
       setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
+      pendingPracticeVoiceRef.current = false;
       if (wvReadyRef.current) { sendCmd('start'); } else { pendingStartRef.current = true; }
       setLiveActive(true);
     }
@@ -1396,6 +1490,16 @@ export default function ChordsScreen() {
                 color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
             </TouchableOpacity>
           </View>
+
+          {pitchActive && (
+            <View style={styles.practiceVoiceChart}>
+              <Text style={styles.practiceVoiceChartTitle}>Голос по нотам</Text>
+              <Text style={styles.practiceVoiceChartHint}>
+                Низ гитары приглушается в расчёте — полностью убрать гитару нельзя, по возможности пойте ближе к микрофону.
+              </Text>
+              <FrequencyChart history={voiceHistory} active={pitchActive} />
+            </View>
+          )}
 
           </View>{/* end fixed group */}
 
@@ -2051,6 +2155,18 @@ const styles = StyleSheet.create({
 
   /* Chord navigation */
   chordNav:        { flexShrink: 0, flexDirection: 'row', alignItems: 'center', backgroundColor: '#111118', borderBottomWidth: 1, borderColor: '#1e1e28', paddingVertical: 6 },
+  practiceVoiceChart: {
+    flexShrink: 0,
+    backgroundColor: '#0d0d14',
+    borderBottomWidth: 1,
+    borderColor: '#1e1e28',
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 4,
+    alignItems: 'center',
+  },
+  practiceVoiceChartTitle: { color: '#888', fontSize: 11, fontWeight: '800', letterSpacing: 1.2, marginBottom: 4, alignSelf: 'flex-start', marginLeft: 6 },
+  practiceVoiceChartHint: { color: '#444', fontSize: 9, lineHeight: 13, marginBottom: 6, alignSelf: 'stretch', marginHorizontal: 6 },
   chordNavArrow:   { padding: 10 },
   chordPillsScroll:{ flex: 1 },
   chordPillsRow:   { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4 },

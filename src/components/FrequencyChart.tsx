@@ -40,13 +40,16 @@ function colorForCents(c: number) {
 }
 
 /* ─── PITCH MODE ─── */
-const PITCH_ZOOMS  = [18, 12, 7, 4] as const;   // semitones each side
+/** Semitones each side of center → total span = 2× (e.g. 24 → 4 octaves across chart) */
+const PITCH_ZOOMS  = [24, 18, 12, 7, 4] as const;
 type  PitchZoom    = typeof PITCH_ZOOMS[number];
-const PITCH_LABELS: Record<PitchZoom, string> = { 18: '3oct', 12: '2oct', 7: '1oct', 4: '½oct' };
+const PITCH_LABELS: Record<PitchZoom, string> = {
+  24: '4 oct', 18: '3 oct', 12: '2 oct', 7: '1 oct', 4: '½ oct',
+};
 
 // Subtle background tint per octave
 const OCT_BG: Record<number, string> = {
-  0: '#6a0dad18', 1: '#1a237e18', 2: '#006064 18',
+  0: '#6a0dad18', 1: '#1a237e18', 2: '#00606418',
   3: '#1b5e2018', 4: '#e6510018', 5: '#b71c1c18', 6: '#880e4f18',
 };
 function octBg(oct: number) { return OCT_BG[Math.max(0, Math.min(oct, 6))] ?? '#ffffff08'; }
@@ -71,16 +74,12 @@ export default function FrequencyChart({ history, active }: Props) {
 
   const [mode,       setMode]      = useState<'cents' | 'pitch'>('cents');
   const [centZoomI,  setCentZoomI] = useState(0);
-  const [pitchZoomI, setPitchZoomI]= useState(1);  // default 2 oct
+  /** Default: widest pitch range (index 0 → ±24 semitones) */
+  const [pitchZoomI, setPitchZoomI]= useState(0);
 
   const pts  = history.slice(-MAX_POINTS);
   const ptW  = CHART_W / (MAX_POINTS - 1);
   const xOf  = (i: number) => ANCHOR_X - (pts.length - 1 - i) * ptW;
-
-  const cycleZoom = () => {
-    if (mode === 'cents')  setCentZoomI( i => (i + 1) % CENT_ZOOMS.length);
-    else                   setPitchZoomI(i => (i + 1) % PITCH_ZOOMS.length);
-  };
 
   /* ── CENTS mode geometry ── */
   const centRange  = CENT_ZOOMS[centZoomI];
@@ -163,11 +162,28 @@ export default function FrequencyChart({ history, active }: Props) {
   }, [mode, pts, xOf, centerMidi, pitchRange]);
 
   const latest = pts.length > 0 ? pts[pts.length - 1] : null;
-  const zoomLabel = mode === 'cents' ? CENT_LABELS[centRange] : PITCH_LABELS[pitchRange];
+  const blockW = PADDING_LEFT + CHART_W;
 
   return (
-    <View style={styles.wrapper}>
+    <View style={[styles.outer, { width: blockW }]}>
+      <View style={styles.modeRow}>
+        <TouchableOpacity
+          onPress={() => setMode('cents')}
+          style={[styles.modeChoice, mode === 'cents' && styles.modeChoiceActive]}
+          activeOpacity={0.85}>
+          <Text style={[styles.modeChoiceIcon, mode === 'cents' && styles.modeChoiceTextActive]}>¢</Text>
+          <Text style={[styles.modeChoiceLabel, mode === 'cents' && styles.modeChoiceTextActive]}>ЦЕНТЫ</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setMode('pitch')}
+          style={[styles.modeChoice, mode === 'pitch' && styles.modeChoiceActivePitch]}
+          activeOpacity={0.85}>
+          <Text style={[styles.modeChoiceIcon, mode === 'pitch' && styles.modeChoiceTextActivePitch]}>♩</Text>
+          <Text style={[styles.modeChoiceLabel, mode === 'pitch' && styles.modeChoiceTextActivePitch]}>НОТЫ</Text>
+        </TouchableOpacity>
+      </View>
 
+      <View style={styles.chartRow}>
       {/* Y-axis */}
       <View style={styles.yAxis}>
         {mode === 'cents'
@@ -198,7 +214,6 @@ export default function FrequencyChart({ history, active }: Props) {
       </View>
 
       {/* Chart */}
-      <TouchableOpacity onPress={cycleZoom} activeOpacity={0.95}>
         <View style={[styles.chart, { width: CHART_W, height: CHART_H }]}>
 
           {/* ── Cents mode backgrounds ── */}
@@ -292,31 +307,119 @@ export default function FrequencyChart({ history, active }: Props) {
             );
           })()}
 
-          {/* ── Bottom badges ── */}
-          <View style={styles.badges}>
-            {/* Mode toggle */}
-            <TouchableOpacity onPress={() => setMode(m => m === 'cents' ? 'pitch' : 'cents')}
-              style={styles.modeBadge} hitSlop={{ top:8,bottom:8,left:8,right:8 }}>
-              <Text style={styles.modeText}>{mode === 'cents' ? '¢' : '♩'}</Text>
-            </TouchableOpacity>
-            {/* Zoom badge */}
-            <TouchableOpacity onPress={cycleZoom}
-              style={styles.zoomBadge} hitSlop={{ top:8,bottom:8,left:8,right:8 }}>
-              <Text style={styles.zoomText}>{zoomLabel}</Text>
-            </TouchableOpacity>
-          </View>
-
           {history.length === 0 && (
             <Text style={styles.emptyText}>{active ? 'play a note…' : 'start tuner'}</Text>
           )}
         </View>
-      </TouchableOpacity>
+      </View>
+
+      {/* Zoom presets — one tap each, large rows */}
+      <View style={[styles.zoomPanel, { width: blockW }]}>
+        <Text style={styles.zoomPanelTitle}>{mode === 'cents' ? 'Диапазон (центы)' : 'Диапазон (октавы)'}</Text>
+        <View style={styles.zoomChipsRow}>
+          {mode === 'cents'
+            ? CENT_ZOOMS.map((z, i) => (
+                <TouchableOpacity
+                  key={z}
+                  onPress={() => setCentZoomI(i)}
+                  style={[styles.zoomChip, centZoomI === i && styles.zoomChipActive]}
+                  activeOpacity={0.85}>
+                  <Text style={[styles.zoomChipText, centZoomI === i && styles.zoomChipTextActive]}>
+                    {CENT_LABELS[z]}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            : PITCH_ZOOMS.map((z, i) => (
+                <TouchableOpacity
+                  key={z}
+                  onPress={() => setPitchZoomI(i)}
+                  style={[styles.zoomChip, pitchZoomI === i && styles.zoomChipActivePitch]}
+                  activeOpacity={0.85}>
+                  <Text style={[styles.zoomChipText, pitchZoomI === i && styles.zoomChipTextActivePitch]}>
+                    {PITCH_LABELS[z]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 4 },
+  outer:   { paddingVertical: 4 },
+  chartRow:{ flexDirection: 'row', alignItems: 'flex-start' },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  modeChoice: {
+    flex: 1,
+    minHeight: 48,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#111118',
+    borderWidth: 2,
+    borderColor: '#2a2a38',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modeChoiceActive: {
+    borderColor: '#00e676',
+    backgroundColor: '#00e67618',
+  },
+  modeChoiceActivePitch: {
+    borderColor: '#7c4dff',
+    backgroundColor: '#7c4dff18',
+  },
+  modeChoiceIcon: { fontSize: 22, fontWeight: '900', color: '#555' },
+  modeChoiceLabel: { fontSize: 13, fontWeight: '800', color: '#666', letterSpacing: 0.5 },
+  modeChoiceTextActive: { color: '#00e676' },
+  modeChoiceTextActivePitch: { color: '#7c4dff' },
+  zoomPanel: {
+    marginTop: 10,
+  },
+  zoomPanelTitle: {
+    color: '#444',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    marginBottom: 8,
+  },
+  zoomChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  zoomChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#15151e',
+    borderWidth: 2,
+    borderColor: '#252532',
+  },
+  zoomChipActive: {
+    borderColor: '#00e676',
+    backgroundColor: '#00e67614',
+  },
+  zoomChipActivePitch: {
+    borderColor: '#7c4dff',
+    backgroundColor: '#7c4dff14',
+  },
+  zoomChipText: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  zoomChipTextActive: { color: '#00e676' },
+  zoomChipTextActivePitch: { color: '#bb99ff' },
   yAxis:   { width: PADDING_LEFT, height: CHART_H, position: 'relative' },
   yLabel:  { position: 'absolute', right: 6, fontSize: 10, fontWeight: '700',
              width: 34, textAlign: 'right' },
@@ -334,22 +437,6 @@ const styles = StyleSheet.create({
   },
   noteBubbleText: { fontSize: 11, fontWeight: '800', color: '#fff' },
   centsHint: { fontSize: 9, fontWeight: '600', color: '#888' },
-  badges: {
-    position: 'absolute', bottom: 5, right: 5,
-    flexDirection: 'row', gap: 5, alignItems: 'center',
-  },
-  modeBadge: {
-    backgroundColor: '#1a1a2ecc', borderRadius: 5,
-    paddingHorizontal: 7, paddingVertical: 2,
-    borderWidth: 1, borderColor: '#7c4dff88',
-  },
-  modeText: { color: '#7c4dff', fontSize: 12, fontWeight: '900' },
-  zoomBadge: {
-    backgroundColor: '#1a1a2ecc', borderRadius: 5,
-    paddingHorizontal: 5, paddingVertical: 2,
-    borderWidth: 1, borderColor: '#2a2a40',
-  },
-  zoomText: { color: '#7c4dff', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   emptyText: {
     color: '#2a2a3a', fontSize: 12, position: 'absolute',
     top: '42%', left: 0, right: 0, textAlign: 'center',

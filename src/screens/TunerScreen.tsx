@@ -147,15 +147,15 @@ export default function TunerScreen() {
               onPress={() => setShowGraph(false)}
               style={[styles.viewBtn, !showGraph && styles.viewBtnActive]}
             >
-              <Ionicons name="radio-button-on-outline" size={15} color={!showGraph ? '#00e676' : '#555'} />
-              <Text style={[styles.viewBtnText, !showGraph && { color: '#00e676' }]}>NEEDLE</Text>
+              <Ionicons name="radio-button-on-outline" size={20} color={!showGraph ? '#00e676' : '#555'} />
+              <Text style={[styles.viewBtnText, !showGraph && { color: '#00e676' }]}>СТРЕЛКА</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowGraph(true)}
               style={[styles.viewBtn, showGraph && styles.viewBtnActive]}
             >
-              <Ionicons name="analytics-outline" size={15} color={showGraph ? '#7c4dff' : '#555'} />
-              <Text style={[styles.viewBtnText, showGraph && { color: '#7c4dff' }]}>GRAPH</Text>
+              <Ionicons name="analytics-outline" size={20} color={showGraph ? '#7c4dff' : '#555'} />
+              <Text style={[styles.viewBtnText, showGraph && { color: '#7c4dff' }]}>ГРАФИК</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -308,16 +308,16 @@ const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: '#0a0a0f' },
   scroll:  { paddingHorizontal: 16, paddingBottom: 24 },
 
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 12 },
-  instrumentBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111118', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, borderWidth: 1, borderColor: '#222' },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 12, gap: 10 },
+  instrumentBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111118', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, borderWidth: 1, borderColor: '#222', flexShrink: 1 },
   instEmoji: { fontSize: 18 },
   instName:  { color: '#ccc', fontSize: 13, fontWeight: '700' },
   instTuning:{ color: '#555', fontSize: 10 },
 
-  viewToggle: { flexDirection: 'row', backgroundColor: '#111118', borderRadius: 12, borderWidth: 1, borderColor: '#222', overflow: 'hidden' },
-  viewBtn:     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 7 },
+  viewToggle: { flexDirection: 'row', flex: 1, minWidth: 168, backgroundColor: '#111118', borderRadius: 14, borderWidth: 2, borderColor: '#2a2a38', overflow: 'hidden' },
+  viewBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, flex: 1, paddingHorizontal: 12, paddingVertical: 14, minHeight: 50 },
   viewBtnActive:{ backgroundColor: '#1e1e2a' },
-  viewBtnText: { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  viewBtnText: { color: '#555', fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
 
   // Main card - just padding, no fixed height
   mainCard: { backgroundColor: '#111118', borderRadius: 20, paddingVertical: 12, paddingHorizontal: 8, marginBottom: 12, borderWidth: 1, borderColor: '#1e1e28' },
