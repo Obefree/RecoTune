@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   PanResponder, useWindowDimensions, Alert,
-  StatusBar,
+  StatusBar, Pressable,
 } from 'react-native';
 import { Video, AVPlaybackStatus } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
@@ -24,6 +24,66 @@ function fmtMs(ms: number) {
   return `${m}:${sec.toString().padStart(2,'0')}`;
 }
 
+/** Tap zone long-press threshold (slow / fast motion) */
+const ZONE_LONG_MS = 450;
+const TAP_SEEK_SEC = 10;
+
+/**
+ * Left third: tap — seek back. Center: short tap — show controls; long press — 0.25× (until release).
+ * Right third: short tap — seek forward; long press — 2× (until release).
+ */
+function VideoTapZones({
+  width: zw,
+  height: zh,
+  seekBack,
+  seekForward,
+  bumpControls,
+  syncRate,
+}: {
+  width: number;
+  height: number;
+  seekBack: () => void;
+  seekForward: () => void;
+  bumpControls: () => void;
+  syncRate: (rate: number) => void;
+}) {
+  const pressStartCenterRef = useRef(0);
+  const pressStartRightRef = useRef(0);
+
+  if (zw <= 0 || zh <= 0) return null;
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{ position: 'absolute', top: 0, left: 0, width: zw, height: zh, flexDirection: 'row', zIndex: 1 }}
+    >
+      <Pressable style={{ flex: 1 }} onPress={seekBack} />
+      <Pressable
+        style={{ flex: 1 }}
+        delayLongPress={ZONE_LONG_MS}
+        onPressIn={() => { pressStartCenterRef.current = Date.now(); }}
+        onLongPress={() => syncRate(0.25)}
+        onPressOut={() => syncRate(1)}
+        onPress={() => {
+          if (Date.now() - pressStartCenterRef.current >= ZONE_LONG_MS) return;
+          bumpControls();
+        }}
+      />
+      <Pressable
+        style={{ flex: 1 }}
+        delayLongPress={ZONE_LONG_MS}
+        onPressIn={() => { pressStartRightRef.current = Date.now(); }}
+        onLongPress={() => syncRate(2)}
+        onPressOut={() => syncRate(1)}
+        onPress={() => {
+          if (Date.now() - pressStartRightRef.current >= ZONE_LONG_MS) return;
+          seekForward();
+        }}
+      />
+    </View>
+  );
+}
+
 export default function VideoScreen() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -36,6 +96,7 @@ export default function VideoScreen() {
   const [fullscreen, setFullscreen] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [ctrlsVis, setCtrlsVis]     = useState(true);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   const current    = currentIdx >= 0 && currentIdx < videos.length ? videos[currentIdx] : null;
   const videoRef   = useRef<Video>(null);
@@ -57,6 +118,16 @@ export default function VideoScreen() {
 
   useEffect(() => { bumpControls(); }, [fullscreen]);
 
+  const syncRate = useCallback((r: number) => {
+    setPlaybackRate(r);
+    videoRef.current?.setRateAsync(r, true).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setPlaybackRate(1);
+    videoRef.current?.setRateAsync(1, true).catch(() => {});
+  }, [currentIdx]);
+
   /* ── Orientation lock ── */
   const enterFullscreen = useCallback(async () => {
     setFullscreen(true);
@@ -65,6 +136,8 @@ export default function VideoScreen() {
   }, []);
 
   const exitFullscreen = useCallback(async () => {
+    setPlaybackRate(1);
+    videoRef.current?.setRateAsync(1, true).catch(() => {});
     setFullscreen(false);
     setShowSwitcher(false);
     StatusBar.setHidden(false, 'fade');
@@ -128,6 +201,16 @@ export default function VideoScreen() {
 
   const playPrev = useCallback(() => playAt(currentIdx - 1), [currentIdx, playAt]);
   const playNext = useCallback(() => playAt(currentIdx + 1), [currentIdx, playAt]);
+
+  const seekBackTap = useCallback(() => {
+    videoRef.current?.setPositionAsync(Math.max(0, pos - TAP_SEEK_SEC) * 1000).catch(() => {});
+    bumpControls();
+  }, [pos, bumpControls]);
+
+  const seekForwardTap = useCallback(() => {
+    videoRef.current?.setPositionAsync(Math.min(dur, pos + TAP_SEEK_SEC) * 1000).catch(() => {});
+    bumpControls();
+  }, [dur, pos, bumpControls]);
 
   /* ── Playback ── */
   const onStatus = useCallback((st: AVPlaybackStatus) => {
@@ -258,38 +341,59 @@ export default function VideoScreen() {
       {/* ── Inline player (always rendered — never unmounts Video) ── */}
       <View style={[styles.player, { height: VIDEO_H + 90 }]}>
         {current ? (
-          <Video
-            ref={videoRef}
-            source={{ uri: current.uri }}
-            style={[styles.video, { height: VIDEO_H }]}
-            resizeMode={'contain' as any}
-            shouldPlay
-            onPlaybackStatusUpdate={onStatus}
-          />
+          <>
+            <View style={styles.videoWrap}>
+              <Video
+                ref={videoRef}
+                source={{ uri: current.uri }}
+                style={[styles.video, { height: VIDEO_H }]}
+                resizeMode={'contain' as any}
+                rate={playbackRate}
+                shouldCorrectPitch
+                shouldPlay
+                onPlaybackStatusUpdate={onStatus}
+              />
+              {!fullscreen && (
+                <VideoTapZones
+                  width={width}
+                  height={VIDEO_H}
+                  seekBack={seekBackTap}
+                  seekForward={seekForwardTap}
+                  bumpControls={bumpControls}
+                  syncRate={syncRate}
+                />
+              )}
+            </View>
+            {!fullscreen && <Controls inFullscreen={false} />}
+          </>
         ) : (
           <TouchableOpacity style={[styles.videoPlaceholder, { height: VIDEO_H }]} onPress={pickVideos}>
             <Ionicons name="film-outline" size={48} color="#2a2a3a" />
             <Text style={styles.placeholderText}>Выберите видео из списка ниже</Text>
           </TouchableOpacity>
         )}
-        {current && !fullscreen && <Controls inFullscreen={false} />}
       </View>
 
       {/* ── Fullscreen overlay (no Modal — avoids Video remount) ── */}
       {fullscreen && current && (
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={bumpControls}
-          style={[StyleSheet.absoluteFillObject, styles.fsOverlay, { width: fsW, height: fsH }]}
-        >
-          {/* Video fills the overlay — still backed by the same ref */}
+        <View style={[StyleSheet.absoluteFillObject, styles.fsOverlay, { width: fsW, height: fsH }]}>
           <Video
             ref={videoRef}
             source={{ uri: current.uri }}
             style={{ width: fsW, height: fsH }}
             resizeMode={'contain' as any}
+            rate={playbackRate}
+            shouldCorrectPitch
             shouldPlay={isPlaying}
             onPlaybackStatusUpdate={onStatus}
+          />
+          <VideoTapZones
+            width={fsW}
+            height={fsH}
+            seekBack={seekBackTap}
+            seekForward={seekForwardTap}
+            bumpControls={bumpControls}
+            syncRate={syncRate}
           />
           <Controls inFullscreen />
 
@@ -315,7 +419,7 @@ export default function VideoScreen() {
               />
             </View>
           )}
-        </TouchableOpacity>
+        </View>
       )}
 
       {/* Prev/Next nav */}
@@ -370,6 +474,7 @@ const THUMB_TOP = (BAR_H - THUMB_D) / 2;   // 6
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0f' },
   player:    { width: '100%', backgroundColor: '#000', position: 'relative' },
+  videoWrap: { position: 'relative', width: '100%' },
   video:     { width: '100%' },
   videoPlaceholder: { width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0d0d14' },
   placeholderText:  { color: '#2a2a3a', fontSize: 13, marginTop: 10 },
@@ -377,6 +482,7 @@ const styles = StyleSheet.create({
   overlay: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#000000dd', paddingHorizontal: 12, paddingVertical: 8,
+    zIndex: 4,
   },
   overlayTop:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   videoTitle:  { flex: 1, color: '#bbb', fontSize: 12, fontWeight: '600', marginRight: 8 },
@@ -422,7 +528,7 @@ const styles = StyleSheet.create({
   fsOverlay: { backgroundColor: '#000', zIndex: 999 },
 
   /* Floating switcher */
-  switcher:      { position: 'absolute', right: 0, top: 0, bottom: 72, width: 220, backgroundColor: '#000000ee', padding: 10, borderLeftWidth: 1, borderColor: '#1e1e28' },
+  switcher:      { position: 'absolute', right: 0, top: 0, bottom: 72, width: 220, backgroundColor: '#000000ee', padding: 10, borderLeftWidth: 1, borderColor: '#1e1e28', zIndex: 6 },
   switcherTitle: { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700', marginBottom: 6 },
   switchItem:    { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 4, borderBottomWidth: 1, borderColor: '#111' },
   switchItemActive: { backgroundColor: '#40c4ff11' },

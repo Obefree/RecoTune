@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { LYRICS_DB } from '../data/lyricsDatabase';
+import { CHORD_DIAGRAM_OPTIONS, getChordShape, getDiagramOption } from '../data/chordShapes';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -255,52 +256,24 @@ window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd===
 
 const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
 
-/* ─── Guitar chord fingering database ─────────────────────────────────────
- * frets[i] → string order: E6 A5 D4 G3 B2 e1
- * -1 = muted, 0 = open, N = fret number
- * barre = fret number of barre bar (if any)
- * ─────────────────────────────────────────────────────────────────────── */
-const CHORD_DB: Record<string, { frets: number[]; barre?: number }> = {
-  'C':    { frets: [-1,3,2,0,1,0] },    'Cm':   { frets: [-1,3,5,5,4,3], barre:3 },
-  'C7':   { frets: [-1,3,2,3,1,0] },    'Cmaj7':{ frets: [-1,3,2,0,0,0] },
-  'Cadd9':{ frets: [-1,3,2,0,3,3] },    'Csus2':{ frets: [-1,3,0,0,1,3] },
-  'D':    { frets: [-1,-1,0,2,3,2] },   'Dm':   { frets: [-1,-1,0,2,3,1] },
-  'D7':   { frets: [-1,-1,0,2,1,2] },   'Dmaj7':{ frets: [-1,-1,0,2,2,2] },
-  'Dsus2':{ frets: [-1,-1,0,2,3,0] },   'Dsus4':{ frets: [-1,-1,0,2,3,3] },
-  'E':    { frets: [0,2,2,1,0,0] },     'Em':   { frets: [0,2,2,0,0,0] },
-  'E7':   { frets: [0,2,0,1,0,0] },     'Emaj7':{ frets: [0,2,1,1,0,0] },
-  'F':    { frets: [1,3,3,2,1,1], barre:1 }, 'Fm': { frets: [1,3,3,1,1,1], barre:1 },
-  'F7':   { frets: [1,3,1,2,1,1], barre:1 }, 'Fmaj7':{ frets: [-1,-1,3,2,1,0] },
-  'G':    { frets: [3,2,0,0,0,3] },     'Gm':   { frets: [3,5,5,3,3,3], barre:3 },
-  'G7':   { frets: [3,2,0,0,0,1] },     'Gmaj7':{ frets: [3,2,0,0,0,2] },
-  'A':    { frets: [-1,0,2,2,2,0] },    'Am':   { frets: [-1,0,2,2,1,0] },
-  'A7':   { frets: [-1,0,2,0,2,0] },    'Amaj7':{ frets: [-1,0,2,1,2,0] },
-  'Asus2':{ frets: [-1,0,2,2,0,0] },    'Asus4':{ frets: [-1,0,2,2,3,0] },
-  'B':    { frets: [-1,2,4,4,4,2], barre:2 }, 'Bm':  { frets: [-1,2,4,4,3,2], barre:2 },
-  'B7':   { frets: [-1,2,1,2,0,2] },    'Bmaj7':{ frets: [-1,2,4,3,4,2], barre:2 },
-  'Bb':   { frets: [-1,1,3,3,3,1], barre:1 }, 'Bbm': { frets: [-1,1,3,3,2,1], barre:1 },
-  'F#m':  { frets: [2,4,4,2,2,2], barre:2 }, 'C#m': { frets: [-1,4,6,6,5,4], barre:4 },
-  'G#m':  { frets: [4,6,6,4,4,4], barre:4 }, 'D#m': { frets: [-1,6,8,8,7,6], barre:6 },
-  'Am7':  { frets: [-1,0,2,0,1,0] },    'Em7':  { frets: [0,2,2,0,3,0] },
-  'Dm7':  { frets: [-1,-1,0,2,1,1] },   'Bm7':  { frets: [-1,2,4,2,3,2], barre:2 },
-  'Cm7':  { frets: [-1,3,5,3,4,3], barre:3 }, 'Fm7': { frets: [1,3,1,1,1,1], barre:1 },
-};
+/* ─── Chord diagram (multi-instrument fingerings in ../data/chordShapes) ─── */
+function ChordDiagram({ name, diagramId, size = 'md' }: { name: string; diagramId: string; size?: 'sm' | 'md' | 'lg' }) {
+  const def = getChordShape(diagramId, name);
+  const opt = getDiagramOption(diagramId);
+  const stringLabels = opt?.stringLabels ?? [];
 
-/* ─── Guitar chord diagram component ─── */
-function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg' }) {
-  const def = CHORD_DB[name] ?? null;
-  const S = 6; const NF = 4;
-  // Size variants
-  const G  = size === 'lg' ? 26 : size === 'sm' ? 16 : 22;   // gap between strings
-  const FH = size === 'lg' ? 28 : size === 'sm' ? 18 : 24;   // fret height
-  const PL = size === 'lg' ? 16 : size === 'sm' ? 10 : 14;   // left/right padding
-  const PT = size === 'lg' ? 22 : size === 'sm' ? 14 : 18;   // top padding
+  const S = def ? def.frets.length : 6;
+  const NF = 4;
+  const G  = size === 'lg' ? 26 : size === 'sm' ? 16 : 22;
+  const FH = size === 'lg' ? 28 : size === 'sm' ? 18 : 24;
+  const PL = size === 'lg' ? 16 : size === 'sm' ? 10 : 14;
+  const PT = size === 'lg' ? 22 : size === 'sm' ? 14 : 18;
+  const LABEL_H = 14;
   const W  = (S - 1) * G + PL * 2;
-  const H  = NF * FH + PT + 14;
-  const DOT = G * 0.40;   // finger dot radius
+  const H  = NF * FH + PT + 8 + LABEL_H;
+  const DOT = G * 0.40;
 
   if (!def) {
-    // Show chord name hint if not in DB
     const label = (!name || name === '—' || name === '?') ? '?' : name + '\n?';
     return (
       <View style={{ width: W, height: H, alignItems: 'center', justifyContent: 'center',
@@ -311,7 +284,8 @@ function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
     );
   }
 
-  const { frets, barre } = def;
+  const { frets, barre, barreFromString } = def;
+  const bStart = barre != null ? (barreFromString ?? 0) : 0;
   const fNums = frets.filter(f => f > 0);
   const minF  = fNums.length ? Math.min(...fNums) : 1;
   const base  = barre != null ? barre : (minF > 3 ? minF - 1 : 1);
@@ -321,25 +295,28 @@ function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
 
   return (
     <View style={{ width: W, height: H, borderWidth: 1, borderColor: '#2a2a3a', borderRadius: 8, overflow: 'hidden' }}>
-      {/* Nut (thick bar at top) */}
       {!showNum ? (
         <View style={{ position:'absolute', left:PL, top:PT - 2, width:(S-1)*G, height:4, backgroundColor:'#aaa', borderRadius:2 }} />
       ) : (
         <Text style={{ position:'absolute', right: 4, top: PT + FH * 0.3, color:'#888', fontSize: size === 'lg' ? 11 : 9, fontWeight:'700' }}>{base}fr</Text>
       )}
-      {/* Fret lines — visible medium gray */}
       {Array.from({ length: NF + 1 }).map((_, fi) => (
         <View key={fi} style={{ position:'absolute', left:PL, top:gy(fi), width:(S-1)*G, height:1, backgroundColor:'#3a3a55' }} />
       ))}
-      {/* String lines — visible gray */}
       {Array.from({ length: S }).map((_, si) => (
-        <View key={si} style={{ position:'absolute', left:gx(si), top:PT, width: si === 0 || si === 5 ? 2 : 1, height:NF*FH, backgroundColor:'#4a4a65' }} />
+        <View key={si} style={{ position:'absolute', left:gx(si), top:PT, width: si === 0 ? 2 : 1, height:NF*FH, backgroundColor:'#4a4a65' }} />
       ))}
-      {/* Barre bar */}
       {barre != null && (
-        <View style={{ position:'absolute', left:PL + DOT, top:gy(barre - base) + FH * 0.18, width:(S-1)*G - DOT*2, height:FH * 0.64, backgroundColor:'#ff980099', borderRadius: FH * 0.32 }} />
+        <View style={{
+          position:'absolute',
+          left: gx(bStart) + DOT,
+          top: gy(barre - base) + FH * 0.18,
+          width: (S - 1 - bStart) * G - DOT * 2,
+          height: FH * 0.64,
+          backgroundColor:'#ff980099',
+          borderRadius: FH * 0.32,
+        }} />
       )}
-      {/* Per-string markers */}
       {frets.map((f, si) => {
         const x = gx(si);
         if (f < 0) {
@@ -351,11 +328,29 @@ function ChordDiagram({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' 
         const rf = f - base + 1;
         if (rf < 1 || rf > NF) return null;
         const cy = gy(rf - 1) + FH * 0.5;
-        const isBarre = barre != null && f === barre;
+        const isBarre = barre != null && f === barre && si >= bStart;
         return (
           <View key={si} style={{ position:'absolute', left:x - DOT, top:cy - DOT, width:DOT*2, height:DOT*2, borderRadius:DOT, backgroundColor: isBarre ? '#ff9800' : '#7c4dff' }} />
         );
       })}
+      {Array.from({ length: S }).map((_, si) => (
+        <Text
+          key={`lbl-${si}`}
+          style={{
+            position: 'absolute',
+            left: gx(si) - (size === 'sm' ? 5 : 6),
+            top: PT + NF * FH + 1,
+            color: '#555',
+            fontSize: size === 'lg' ? 9 : 7,
+            fontWeight: '700',
+            width: G + 4,
+            textAlign: 'center',
+          }}
+          numberOfLines={1}
+        >
+          {stringLabels[si] ?? ''}
+        </Text>
+      ))}
     </View>
   );
 }
@@ -461,6 +456,8 @@ export default function ChordsScreen() {
 
   // Must be declared before lyricsScrollH that uses it
   const [showDiagram, setShowDiagram] = useState(true);
+  /** Chord diagram instrument (guitar6, guitar7, ukulele, mandolin, bass4) */
+  const [chordDiagramId, setChordDiagramId] = useState('guitar6');
 
   /* ── Practice view height: full screen minus surrounding chrome ── */
   const practiceViewH = Math.max(200,
@@ -475,7 +472,7 @@ export default function ChordsScreen() {
     practiceViewH
     - 60                      // bigLibBtn
     - 50                      // progInput
-    - (showDiagram ? 148 : 0) // practiceTopPanel (collapsible)
+    - (showDiagram ? 178 : 0) // practiceTopPanel + instrument chips (collapsible)
     - 50                      // chordNav
     - 36                      // lyricsPanelHeader
     - 62                      // toolbar
@@ -1299,9 +1296,27 @@ export default function ChordsScreen() {
 
           {/* ── CHORD PANEL: diagram + name + tones + voice (collapsible) ── */}
           {showDiagram && <View style={styles.practiceTopPanel}>
-            {/* Diagram — centered, medium size */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.chordInstScroll}
+              contentContainerStyle={styles.chordInstScrollContent}>
+              {CHORD_DIAGRAM_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.id}
+                  onPress={() => setChordDiagramId(opt.id)}
+                  style={[styles.chordInstChip, chordDiagramId === opt.id && styles.chordInstChipActive]}
+                  activeOpacity={0.85}>
+                  <Text style={[styles.chordInstChipText, chordDiagramId === opt.id && styles.chordInstChipTextActive]} numberOfLines={1}>
+                    {opt.label}
+                  </Text>
+                  <Text style={styles.chordInstChipHint} numberOfLines={1}>{opt.tuningHint}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={styles.practiceDiagRow}>
             <View style={styles.practiceDiagLeft}>
-              <ChordDiagram name={practiceCurrentChord} size="md" />
+              <ChordDiagram name={practiceCurrentChord} diagramId={chordDiagramId} size="md" />
             </View>
 
             {/* Right: chord name, tones, voice */}
@@ -1346,6 +1361,7 @@ export default function ChordsScreen() {
                 <Text style={[styles.centsVal, { color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b' }]}>
                   {voiceCents > 0 ? '+' : ''}{voiceCents}¢
                 </Text>
+              </View>
               </View>
             </View>
           </View>}
@@ -1589,7 +1605,7 @@ export default function ChordsScreen() {
               ) : lyrics ? (
                 <Text style={styles.resultLyricsText}>{lyrics}</Text>
               ) : (
-                <Text style={styles.lyricsEmpty}>Текст не найден (lyrics.ovh)</Text>
+                <Text style={styles.identifyLyricsEmpty}>Текст не найден (lyrics.ovh)</Text>
               )}
 
               <View style={{ height: 40 }} />
@@ -2064,7 +2080,15 @@ const styles = StyleSheet.create({
 
   /* Practice: diagram row */
   /* Fixed-height practice panel — no jitter */
-  practiceTopPanel:  { flexShrink: 0, flexDirection: 'row', height: 148, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#2a2a3a', paddingHorizontal: 12, paddingVertical: 8, gap: 12 },
+  practiceTopPanel:  { flexShrink: 0, flexDirection: 'column', minHeight: 178, backgroundColor: '#0d0d14', borderBottomWidth: 1, borderColor: '#2a2a3a', paddingHorizontal: 10, paddingVertical: 6, gap: 4 },
+  chordInstScroll:     { maxHeight: 44, flexGrow: 0 },
+  chordInstScrollContent: { alignItems: 'center', paddingRight: 8, gap: 6 },
+  chordInstChip:     { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: '#111118', borderWidth: 1, borderColor: '#222', minWidth: 72 },
+  chordInstChipActive:{ backgroundColor: '#00e67614', borderColor: '#00e67655' },
+  chordInstChipText: { color: '#888', fontSize: 10, fontWeight: '800' },
+  chordInstChipTextActive: { color: '#00e676' },
+  chordInstChipHint: { color: '#333', fontSize: 7, marginTop: 1, fontWeight: '600' },
+  practiceDiagRow:   { flexDirection: 'row', flex: 1, alignItems: 'center', gap: 10, minHeight: 120 },
   practiceDiagLeft:  { alignItems: 'center', justifyContent: 'center' },
   practiceDiagRight: { flex: 1, justifyContent: 'space-between', paddingTop: 2 },
   practiceChordName: { color: '#fff', fontSize: 28, fontWeight: '900', letterSpacing: 1 },
@@ -2123,7 +2147,7 @@ const styles = StyleSheet.create({
   resultLyricsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   resultLyricsText: { color: '#aaa', fontSize: 14, lineHeight: 24 },
   lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
-  lyricsEmpty:      { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
+  identifyLyricsEmpty: { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
 
   cancelBtn:  { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
   cancelText: { color: '#888', fontSize: 13 },

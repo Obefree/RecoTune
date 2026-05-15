@@ -20,7 +20,7 @@ const A4_FREQ    = 440;
 const A4_MIDI    = 69;
 
 const MAX_HISTORY = 80;
-const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', Ukulele: '🪗', Bass: '🎸' };
+const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', 'Guitar 7': '🎸', Ukulele: '🪗', Bass: '🎸', Mandolin: '🪕' };
 
 interface NoteState { name: string; octave: number; cents: number; frequency: number }
 

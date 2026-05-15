@@ -106,6 +106,20 @@ export const TUNINGS: Tuning[] = [
     ],
   },
   {
+    id: 'guitar_7string',
+    label: '7-String',
+    instrument: 'Guitar 7',
+    strings: [
+      { string: 7, note: 'B1', frequency: 61.74 },
+      { string: 6, note: 'E2', frequency: 82.41 },
+      { string: 5, note: 'A2', frequency: 110.00 },
+      { string: 4, note: 'D3', frequency: 146.83 },
+      { string: 3, note: 'G3', frequency: 196.00 },
+      { string: 2, note: 'B3', frequency: 246.94 },
+      { string: 1, note: 'E4', frequency: 329.63 },
+    ],
+  },
+  {
     id: 'ukulele_standard',
     label: 'Standard',
     instrument: 'Ukulele',
@@ -136,6 +150,17 @@ export const TUNINGS: Tuning[] = [
       { string: 3, note: 'G3', frequency: 196.00 },
       { string: 2, note: 'B3', frequency: 246.94 },
       { string: 1, note: 'E4', frequency: 329.63 },
+    ],
+  },
+  {
+    id: 'mandolin_standard',
+    label: 'Standard',
+    instrument: 'Mandolin',
+    strings: [
+      { string: 4, note: 'G3', frequency: 196.00 },
+      { string: 3, note: 'D4', frequency: 293.66 },
+      { string: 2, note: 'A4', frequency: 440.00 },
+      { string: 1, note: 'E5', frequency: 659.25 },
     ],
   },
   {
