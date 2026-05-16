@@ -11,6 +11,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 
+import { useTabBarVisibility } from '../context/TabBarVisibility';
+
 interface VideoItem {
   id: string; uri: string; title: string; duration: number;
 }
@@ -87,6 +89,7 @@ function VideoTapZones({
 export default function VideoScreen() {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { setTabBarHidden } = useTabBarVisibility();
 
   const [videos, setVideos]         = useState<VideoItem[]>([]);
   const [currentIdx, setCurrentIdx] = useState(-1);
@@ -144,11 +147,16 @@ export default function VideoScreen() {
     try { await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); } catch {}
   }, []);
 
+  useEffect(() => {
+    setTabBarHidden(fullscreen);
+  }, [fullscreen, setTabBarHidden]);
+
   useFocusEffect(useCallback(() => () => {
     setFullscreen(false);
     StatusBar.setHidden(false, 'fade');
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
-  }, []));
+    setTabBarHidden(false);
+  }, [setTabBarHidden]));
 
   /* ── Seek PanResponder ── */
   const seekPan = useRef(PanResponder.create({

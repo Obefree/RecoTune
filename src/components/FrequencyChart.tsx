@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 
 const PADDING_LEFT = 44;
-const CHART_H      = 220;
+const DEFAULT_CHART_H = 220;
 const MAX_POINTS   = 80;
 
 const A4_FREQ = 440;
@@ -21,6 +23,12 @@ export interface HistoryPoint {
 interface Props {
   history: HistoryPoint[];
   active: boolean;
+  /** When set, chart plot uses this width (embedded column). Otherwise derived from window. */
+  chartPlotWidth?: number;
+  /** Tight layout: narrower axis, pitch mode, less chrome (pinch & pan still work). */
+  compact?: boolean;
+  /** Vertical plot height (default 220). Use ~100–140 in tight layouts. */
+  chartHeight?: number;
 }
 
 /* ─── CENTS MODE ─── */
@@ -28,9 +36,9 @@ const CENT_ZOOMS  = [500, 250, 100, 50] as const;
 type  CentZoom    = typeof CENT_ZOOMS[number];
 const CENT_LABELS: Record<CentZoom, string> = { 500: '±500¢', 250: '±250¢', 100: '±100¢', 50: '±50¢' };
 
-function centsToY(cents: number, range: number) {
+function centsToY(cents: number, range: number, h: number) {
   const c = Math.max(-range, Math.min(range, cents));
-  return CHART_H / 2 - (c / range) * (CHART_H / 2 - 4);
+  return h / 2 - (c / range) * (h / 2 - 4);
 }
 function colorForCents(c: number) {
   const a = Math.abs(c);
@@ -61,25 +69,130 @@ const OCT_LINE: string[] = [
 ];
 function octLine(oct: number) { return OCT_LINE[Math.max(0, Math.min(oct, OCT_LINE.length - 1))]; }
 
-function midiToY(midi: number, center: number, semiRange: number) {
+function midiToY(midi: number, center: number, semiRange: number, h: number) {
   const norm = (midi - center) / semiRange;
-  return CHART_H / 2 - norm * (CHART_H / 2 - 4);
+  return h / 2 - norm * (h / 2 - 4);
+}
+
+function clamp3(n: number, lo: number, hi: number) {
+  return Math.min(Math.max(n, lo), hi);
+}
+
+/** Max horizontal scroll (time axis) in px */
+function maxHScroll(nPts: number, cellW: number, chartW: number) {
+  if (nPts <= 1) return 0;
+  const tw = Math.max(chartW, (nPts - 1) * cellW + 8);
+  return Math.max(0, tw - chartW);
 }
 
 /* ─── Component ─── */
-export default function FrequencyChart({ history, active }: Props) {
+export default function FrequencyChart({
+  history, active, chartPlotWidth, compact = false, chartHeight,
+}: Props) {
+  const plotH = Math.max(72, Math.min(300, chartHeight ?? DEFAULT_CHART_H));
   const { width }  = useWindowDimensions();
-  const CHART_W    = width - 32 - 16 - PADDING_LEFT - 6;
+  const padLeft    = compact ? 30 : PADDING_LEFT;
+  const CHART_W    = chartPlotWidth ?? (width - 32 - 16 - PADDING_LEFT - 6);
   const ANCHOR_X   = CHART_W * 0.60;
+  const BASE_CELL  = useMemo(() => CHART_W / Math.max(1, MAX_POINTS - 1), [CHART_W]);
 
-  const [mode,       setMode]      = useState<'cents' | 'pitch'>('cents');
+  const [mode,       setMode]      = useState<'cents' | 'pitch'>(compact ? 'pitch' : 'cents');
   const [centZoomI,  setCentZoomI] = useState(0);
   /** Default: widest pitch range (index 0 → ±24 semitones) */
   const [pitchZoomI, setPitchZoomI]= useState(0);
 
+  useEffect(() => {
+    if (compact) setMode('pitch');
+  }, [compact]);
+
+  /** Horizontal time zoom (pinch) — vertical range still via chips */
+  const [hZoom, setHZoom] = useState(1);
+  const [hScroll, setHScroll] = useState(0);
+
+  const hsRef = useRef(0);
+  const hzRef = useRef(1);
+  const panOriginScroll = useRef(0);
+  const pinchOriginZoom = useRef(1);
+
+  useEffect(() => { hsRef.current = hScroll; }, [hScroll]);
+  useEffect(() => { hzRef.current = hZoom; }, [hZoom]);
+
   const pts  = history.slice(-MAX_POINTS);
-  const ptW  = CHART_W / (MAX_POINTS - 1);
-  const xOf  = (i: number) => ANCHOR_X - (pts.length - 1 - i) * ptW;
+  const cellW = BASE_CELL * hZoom;
+  const totalW = Math.max(CHART_W, Math.max(0, pts.length - 1) * cellW + 8);
+  const xOf = (i: number) => i * cellW;
+
+  useEffect(() => {
+    if (history.length === 0) {
+      setHScroll(0);
+      setHZoom(1);
+    }
+  }, [history.length]);
+
+  useEffect(() => {
+    const max = maxHScroll(pts.length, cellW, CHART_W);
+    setHScroll(s => clamp3(s, 0, max));
+  }, [hZoom, pts.length, cellW, CHART_W]);
+
+  const lastTs = pts[pts.length - 1]?.ts ?? 0;
+
+  useEffect(() => {
+    if (pts.length === 0) return;
+    const max = maxHScroll(pts.length, cellW, CHART_W);
+    setHScroll(prev => {
+      const nearEnd = prev >= max - 24;
+      if (nearEnd) {
+        return clamp3((pts.length - 1) * cellW - ANCHOR_X, 0, max);
+      }
+      return clamp3(prev, 0, max);
+    });
+  }, [lastTs, pts.length]);
+
+  const beginPan = useCallback(() => {
+    panOriginScroll.current = hsRef.current;
+  }, []);
+
+  const onPanUpdate = useCallback((translationX: number) => {
+    const cw = BASE_CELL * hzRef.current;
+    const max = maxHScroll(pts.length, cw, CHART_W);
+    const next = clamp3(panOriginScroll.current - translationX, 0, max);
+    setHScroll(next);
+  }, [pts.length, BASE_CELL, CHART_W]);
+
+  const beginPinch = useCallback(() => {
+    pinchOriginZoom.current = hzRef.current;
+  }, []);
+
+  const onPinchUpdate = useCallback((scale: number) => {
+    const z = clamp3(pinchOriginZoom.current * scale, 0.35, 4);
+    hzRef.current = z;
+    setHZoom(z);
+    const cw = BASE_CELL * z;
+    const max = maxHScroll(pts.length, cw, CHART_W);
+    setHScroll(s => clamp3(s, 0, max));
+  }, [pts.length, BASE_CELL, CHART_W]);
+
+  const composedGesture = useMemo(
+    () =>
+      Gesture.Simultaneous(
+        Gesture.Pan()
+          .activeOffsetX([-10, 10])
+          .onBegin(() => {
+            runOnJS(beginPan)();
+          })
+          .onUpdate(e => {
+            runOnJS(onPanUpdate)(e.translationX);
+          }),
+        Gesture.Pinch()
+          .onBegin(() => {
+            runOnJS(beginPinch)();
+          })
+          .onUpdate(e => {
+            runOnJS(onPinchUpdate)(e.scale);
+          }),
+      ),
+    [beginPan, onPanUpdate, beginPinch, onPinchUpdate],
+  );
 
   /* ── CENTS mode geometry ── */
   const centRange  = CENT_ZOOMS[centZoomI];
@@ -95,13 +208,13 @@ export default function FrequencyChart({ history, active }: Props) {
     if (mode !== 'cents' || pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
       const x1 = xOf(i), x2 = xOf(i + 1);
-      const y1 = centsToY(pts[i].cents, centRange);
-      const y2 = centsToY(p.cents,      centRange);
+      const y1 = centsToY(pts[i].cents, centRange, plotH);
+      const y2 = centsToY(p.cents,      centRange, plotH);
       const dx = x2-x1, dy = y2-y1;
       return { x: x1, y: y1, len: Math.sqrt(dx*dx+dy*dy),
                angle: Math.atan2(dy,dx)*(180/Math.PI), color: colorForCents(p.cents) };
     });
-  }, [mode, pts, xOf, centRange]);
+  }, [mode, pts, cellW, centRange, plotH]);
 
   /* ── PITCH mode geometry ── */
   const pitchRange  = PITCH_ZOOMS[pitchZoomI];
@@ -121,13 +234,13 @@ export default function FrequencyChart({ history, active }: Props) {
     const hi = Math.ceil(maxMidi  / 12) + 2;
     for (let oct = lo; oct <= hi; oct++) {
       const cMidi = (oct + 1) * 12;   // C of this octave
-      const y1 = midiToY(cMidi + 12, centerMidi, pitchRange); // top (higher pitch)
-      const y2 = midiToY(cMidi,      centerMidi, pitchRange); // bottom
-      if (y1 > CHART_H || y2 < 0) continue;
-      bands.push({ oct, y: Math.max(0, y1), h: Math.min(CHART_H, y2) - Math.max(0, y1) });
+      const y1 = midiToY(cMidi + 12, centerMidi, pitchRange, plotH);
+      const y2 = midiToY(cMidi,      centerMidi, pitchRange, plotH);
+      if (y1 > plotH || y2 < 0) continue;
+      bands.push({ oct, y: Math.max(0, y1), h: Math.min(plotH, y2) - Math.max(0, y1) });
     }
     return bands;
-  }, [minMidi, maxMidi, centerMidi, pitchRange]);
+  }, [minMidi, maxMidi, centerMidi, pitchRange, plotH]);
 
   const pitchGrids = useMemo(() => {
     const lines: number[] = [];
@@ -152,20 +265,22 @@ export default function FrequencyChart({ history, active }: Props) {
     if (mode !== 'pitch' || pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
       const x1 = xOf(i), x2 = xOf(i + 1);
-      const y1 = midiToY(pts[i].midi, centerMidi, pitchRange);
-      const y2 = midiToY(p.midi,      centerMidi, pitchRange);
+      const y1 = midiToY(pts[i].midi, centerMidi, pitchRange, plotH);
+      const y2 = midiToY(p.midi,      centerMidi, pitchRange, plotH);
       const dx = x2-x1, dy = y2-y1;
       return { x: x1, y: y1, len: Math.sqrt(dx*dx+dy*dy),
                angle: Math.atan2(dy,dx)*(180/Math.PI),
                color: octLine(p.octave) };
     });
-  }, [mode, pts, xOf, centerMidi, pitchRange]);
+  }, [mode, pts, cellW, centerMidi, pitchRange, plotH]);
 
   const latest = pts.length > 0 ? pts[pts.length - 1] : null;
-  const blockW = PADDING_LEFT + CHART_W;
+  const blockW = padLeft + CHART_W;
 
   return (
-    <View style={[styles.outer, { width: blockW }]}>
+    <View style={[styles.outer, compact && styles.outerCompact, { width: blockW }]}>
+      {!compact && (
+        <>
       <View style={styles.modeRow}>
         <TouchableOpacity
           onPress={() => setMode('cents')}
@@ -183,13 +298,19 @@ export default function FrequencyChart({ history, active }: Props) {
         </TouchableOpacity>
       </View>
 
+      <Text style={styles.gestureHint}>
+        Свайп влево/вправо — листать · Щипок двумя пальцами — масштаб по времени
+      </Text>
+        </>
+      )}
+
       <View style={styles.chartRow}>
       {/* Y-axis */}
-      <View style={styles.yAxis}>
+      <View style={[styles.yAxis, { width: padLeft, height: plotH }]}>
         {mode === 'cents'
           ? centLabels.map(c => (
               <Text key={c} style={[styles.yLabel, {
-                top:   centsToY(c, centRange) - 7,
+                top:   centsToY(c, centRange, plotH) - 7,
                 color: c === 0 ? '#00e676' : Math.abs(c) === centRange ? '#ff525288' : '#444',
               }]}>
                 {c > 0 ? `+${c}` : c}
@@ -198,8 +319,8 @@ export default function FrequencyChart({ history, active }: Props) {
           : pitchAxisLabels.map(m => {
               const ni  = ((m % 12) + 12) % 12;
               const oct = Math.floor(m / 12) - 1;
-              const y   = midiToY(m, centerMidi, pitchRange);
-              if (y < -8 || y > CHART_H + 8) return null;
+              const y   = midiToY(m, centerMidi, pitchRange, plotH);
+              if (y < -8 || y > plotH + 8) return null;
               return (
                 <Text key={m} style={[styles.yLabel, {
                   top: y - 7,
@@ -214,19 +335,23 @@ export default function FrequencyChart({ history, active }: Props) {
       </View>
 
       {/* Chart */}
-        <View style={[styles.chart, { width: CHART_W, height: CHART_H }]}>
+        <GestureDetector gesture={composedGesture}>
+          <View style={[styles.chart, { width: CHART_W, height: plotH }]}>
+            <View
+              style={[styles.chartInner, { width: totalW, height: plotH, transform: [{ translateX: -hScroll }] }]}
+              collapsable={false}>
 
           {/* ── Cents mode backgrounds ── */}
           {mode === 'cents' && <>
             <View style={[styles.zoneBand, { backgroundColor: '#00e67610',
-              top: centsToY(centRange*0.1, centRange),
-              height: Math.max(0, centsToY(-centRange*0.1, centRange) - centsToY(centRange*0.1, centRange)) }]} />
+              top: centsToY(centRange*0.1, centRange, plotH),
+              height: Math.max(0, centsToY(-centRange*0.1, centRange, plotH) - centsToY(centRange*0.1, centRange, plotH)) }]} />
             <View style={[styles.zoneBand, { backgroundColor: '#ffeb3b08',
-              top: centsToY(centRange*0.3, centRange),
-              height: Math.max(0, centsToY(-centRange*0.3, centRange) - centsToY(centRange*0.3, centRange)) }]} />
+              top: centsToY(centRange*0.3, centRange, plotH),
+              height: Math.max(0, centsToY(-centRange*0.3, centRange, plotH) - centsToY(centRange*0.3, centRange, plotH)) }]} />
             {centGrids.map(c => (
               <View key={c} style={[styles.gridLine, {
-                top: centsToY(c, centRange) - 0.5,
+                top: centsToY(c, centRange, plotH) - 0.5,
                 backgroundColor: c === 0 ? '#00e67650' : '#ffffff0a',
                 height: c === 0 ? 1.5 : 1,
               }]} />
@@ -241,8 +366,8 @@ export default function FrequencyChart({ history, active }: Props) {
             ))}
             {pitchGrids.map(m => {
               const ni = ((m % 12) + 12) % 12;
-              const y  = midiToY(m, centerMidi, pitchRange);
-              if (y < 0 || y > CHART_H) return null;
+              const y  = midiToY(m, centerMidi, pitchRange, plotH);
+              if (y < 0 || y > plotH) return null;
               return (
                 <View key={m} style={[styles.gridLine, {
                   top: y - 0.5,
@@ -268,8 +393,8 @@ export default function FrequencyChart({ history, active }: Props) {
           {pts.map((p, i) => {
             const x = xOf(i);
             const y = mode === 'cents'
-              ? centsToY(p.cents, centRange)
-              : midiToY(p.midi,  centerMidi, pitchRange);
+              ? centsToY(p.cents, centRange, plotH)
+              : midiToY(p.midi,  centerMidi, pitchRange, plotH);
             const color = mode === 'cents' ? colorForCents(p.cents) : octLine(p.octave);
             return (
               <View key={i} style={{
@@ -285,11 +410,11 @@ export default function FrequencyChart({ history, active }: Props) {
           {/* ── Latest note bubble ── */}
           {latest && (() => {
             const y = mode === 'cents'
-              ? centsToY(latest.cents, centRange)
-              : midiToY(latest.midi, centerMidi, pitchRange);
+              ? centsToY(latest.cents, centRange, plotH)
+              : midiToY(latest.midi, centerMidi, pitchRange, plotH);
             const color = mode === 'cents' ? colorForCents(latest.cents) : octLine(latest.octave);
-            // bubble sits just right of the anchor point, clamped inside chart
-            const bubbleX = Math.min(CHART_W - 58, Math.max(4, ANCHOR_X + 6));
+            const lx = (pts.length - 1) * cellW;
+            const bubbleX = Math.min(totalW - 58, Math.max(4, lx + 6));
             return (
               <View style={[styles.noteBubble, {
                 left: bubbleX,
@@ -307,13 +432,17 @@ export default function FrequencyChart({ history, active }: Props) {
             );
           })()}
 
-          {history.length === 0 && (
-            <Text style={styles.emptyText}>{active ? 'play a note…' : 'start tuner'}</Text>
-          )}
-        </View>
+            </View>
+
+            {history.length === 0 && (
+              <Text style={styles.emptyText}>{active ? 'play a note…' : 'start tuner'}</Text>
+            )}
+          </View>
+        </GestureDetector>
       </View>
 
       {/* Zoom presets — one tap each, large rows */}
+      {!compact && (
       <View style={[styles.zoomPanel, { width: blockW }]}>
         <Text style={styles.zoomPanelTitle}>{mode === 'cents' ? 'Диапазон (центы)' : 'Диапазон (октавы)'}</Text>
         <View style={styles.zoomChipsRow}>
@@ -342,17 +471,27 @@ export default function FrequencyChart({ history, active }: Props) {
               ))}
         </View>
       </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   outer:   { paddingVertical: 4 },
+  outerCompact: { paddingVertical: 0 },
   chartRow:{ flexDirection: 'row', alignItems: 'flex-start' },
   modeRow: {
     flexDirection: 'row',
     gap: 10,
-    marginBottom: 10,
+    marginBottom: 6,
+  },
+  gestureHint: {
+    color: '#3a3a55',
+    fontSize: 9,
+    fontWeight: '600',
+    lineHeight: 13,
+    marginBottom: 8,
+    paddingHorizontal: 2,
   },
   modeChoice: {
     flex: 1,
@@ -420,13 +559,17 @@ const styles = StyleSheet.create({
   },
   zoomChipTextActive: { color: '#00e676' },
   zoomChipTextActivePitch: { color: '#bb99ff' },
-  yAxis:   { width: PADDING_LEFT, height: CHART_H, position: 'relative' },
+  yAxis:   { position: 'relative' },
   yLabel:  { position: 'absolute', right: 6, fontSize: 10, fontWeight: '700',
              width: 34, textAlign: 'right' },
   chart: {
     position: 'relative', overflow: 'hidden',
     backgroundColor: '#0a0a12', borderRadius: 10,
     borderWidth: 1, borderColor: '#1e1e2a',
+  },
+  chartInner: {
+    position: 'relative',
+    overflow: 'hidden',
   },
   zoneBand: { position: 'absolute', left: 0, right: 0 },
   gridLine: { position: 'absolute', left: 0, right: 0 },

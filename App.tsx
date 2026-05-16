@@ -5,7 +5,9 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Platform, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { TabBarVisibilityProvider, useTabBarVisibility } from './src/context/TabBarVisibility';
 import TunerScreen from './src/screens/TunerScreen';
 import RecorderScreen from './src/screens/RecorderScreen';
 import StudioScreen from './src/screens/StudioScreen';
@@ -17,17 +19,29 @@ import AILabScreen from './src/screens/AILabScreen';
 const Tab = createBottomTabNavigator();
 
 const DARK_BG = '#0a0a0f';
-const TAB_BG = '#0f0f17';
+/** Как фон экрана — иначе под Chords видна «лишняя» тёмная полоса между контентом и системной зоной */
+const TAB_BG = DARK_BG;
 const BORDER = '#1e1e2a';
 const ACTIVE = '#00e676';
 const INACTIVE = '#3a3a4a';
 
 function AppInner() {
   const insets = useSafeAreaInsets();
-  const tabBarHeight = 56 + insets.bottom;
+  const { tabBarHidden } = useTabBarVisibility();
+  const tabBarHeight = tabBarHidden ? 0 : 56 + insets.bottom;
+
+  const tabSafeInsets = React.useMemo(
+    () => ({
+      top: insets.top,
+      left: insets.left,
+      right: insets.right,
+      bottom: 0,
+    }),
+    [insets.top, insets.left, insets.right],
+  );
 
   return (
-    <>
+    <View style={{ flex: 1 }}>
       <NavigationContainer
         theme={{
           dark: true,
@@ -48,15 +62,19 @@ function AppInner() {
         }}
       >
         <Tab.Navigator
+          /* Сцена не должна дублировать нижний safe area — его даёт tabBarStyle.paddingBottom */
+          safeAreaInsets={tabSafeInsets}
           screenOptions={({ route }) => ({
             headerShown: false,
             tabBarStyle: {
               backgroundColor: TAB_BG,
               borderTopColor: BORDER,
-              borderTopWidth: 1,
+              borderTopWidth: tabBarHidden ? 0 : 1,
               height: tabBarHeight,
-              paddingBottom: insets.bottom || 8,
-              paddingTop: 8,
+              paddingBottom: tabBarHidden ? 0 : insets.bottom || 8,
+              paddingTop: tabBarHidden ? 0 : 4,
+              display: tabBarHidden ? 'none' : 'flex',
+              overflow: 'hidden',
             },
             tabBarInactiveTintColor: INACTIVE,
             tabBarLabelStyle: {
@@ -111,14 +129,18 @@ function AppInner() {
         </Tab.Navigator>
       </NavigationContainer>
       <StatusBar style="light" />
-    </>
+    </View>
   );
 }
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AppInner />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider style={{ flex: 1 }}>
+        <TabBarVisibilityProvider>
+          <AppInner />
+        </TabBarVisibilityProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
