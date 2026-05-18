@@ -450,7 +450,7 @@ function ChordLyricsLine({
   if (allChordsOnly) {
     posCounter = 0;
     return (
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8, gap: 8 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10, gap: 8 }}>
         {segs.filter(s => s.chord).map((seg, i) => {
           const cs = getChordStyle(seg.chord!);
           return (
@@ -469,20 +469,20 @@ function ChordLyricsLine({
 
   posCounter = 0;
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 6 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
       {segs.map((seg, i) => {
         const cs = seg.chord ? getChordStyle(seg.chord) : null;
         return (
-          <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 2 }}>
+          <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             {seg.chord && cs ? (
               <TouchableOpacity onPress={() => onChordTap(seg.chord!)}>
                 <Text style={{
-                  color: cs.color, fontSize: 13, fontWeight: '900', lineHeight: 17, marginBottom: 1,
+                  color: cs.color, fontSize: 14, fontWeight: '900', lineHeight: 19, marginBottom: 2,
                   backgroundColor: cs.bg, paddingHorizontal: 2, borderRadius: 3,
                 }}>{seg.chord}</Text>
               </TouchableOpacity>
-            ) : <View style={{ height: 18 }} />}
-            <Text style={{ color: '#ccc', fontSize: 15, lineHeight: 20 }}>{seg.text || ' '}</Text>
+            ) : <View style={{ height: 21 }} />}
+            <Text style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
           </View>
         );
       })}
@@ -629,14 +629,6 @@ export default function ChordsScreen() {
       setTabBarHidden(false);
     }
   }, [mode, immersiveLyrics, setTabBarHidden]);
-
-  useEffect(() => {
-    if (__DEV__) {
-      console.warn(
-        '[RecoTune] ChordsScreen loaded: practiceDock-absolute-v2 — if this line is missing in Metro, the app is running an old JS bundle.',
-      );
-    }
-  }, []);
 
   const [liveError, setLiveError] = useState<string | null>(null);
   const wvReadyRef = useRef(false);
@@ -1232,12 +1224,37 @@ export default function ChordsScreen() {
 
   const currentInstrumentLabel = CHORD_DIAGRAM_OPTIONS.find(o => o.id === chordDiagramId)?.label ?? '—';
 
-  const practiceEmbedChartH = immersiveLyrics ? 108 : 128;
+  const hasLyricsBody = practiceLyrics.trim().length > 0;
+  /** Гриф / график / ноты — если всё выкл., не держим пустую строку под шапкой панели */
+  const practiceDiagAny =
+    showPracticeFretboard || showPracticePitchGraph || showPracticeNoteMatch;
+  /** Высота колонки практики (оценка): текст — ~70% при открытой панели, ~92% при свёрнутой (гриф+график скрыты) */
+  const bottomTabsH = tabBarHidden ? 0 : 56 + (insets.bottom || 8);
+  const practiceBodyApproxH = Math.max(
+    220,
+    windowH - insets.top - 8 - 44 - 52 - bottomTabsH - practiceDockHeight - 10,
+  );
+  const lyricsMinHeightRaw = hasLyricsBody
+    ? Math.round(practiceBodyApproxH * (showPracticePanel ? 0.7 : 0.92))
+    : 0;
+  /** При свёрнутой панели — нижний предел по полному экрану, чтобы зона текста реально росла */
+  const lyricsMinHeight =
+    hasLyricsBody && !showPracticePanel
+      ? Math.max(lyricsMinHeightRaw, Math.round(windowH * 0.76))
+      : lyricsMinHeightRaw;
+  /** Верхняя панель не больше ~30% тела практики при тексте — больше места строкам */
+  const practiceTopMaxH = hasLyricsBody && showPracticePanel
+    ? Math.round(practiceBodyApproxH * (practiceDiagAny ? 0.3 : 0.18))
+    : undefined;
+  /** С текстом песни — компактнее график, чтобы зона текста+аккордов занимала больше экрана */
+  const practiceEmbedChartH = hasLyricsBody
+    ? (immersiveLyrics ? 44 : 56)
+    : (immersiveLyrics ? 108 : 128);
 
   return (
     <View style={styles.screenFill}>
     <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
-      <View style={styles.mainScreenColumn}>
+      <View style={[styles.mainScreenColumn, mode === 'practice' && { paddingBottom: practiceDockHeight }]}>
       {/* ── Header ── */}
       <View style={styles.header}>
         <Text style={styles.title}>CHORDS</Text>
@@ -1429,6 +1446,17 @@ export default function ChordsScreen() {
             </View>
 
             {showPracticePanel && (
+              <ScrollView
+                style={[
+                  { flexShrink: 0 },
+                  practiceTopMaxH != null && { maxHeight: practiceTopMaxH },
+                ]}
+                scrollEnabled={hasLyricsBody}
+                nestedScrollEnabled={hasLyricsBody}
+                showsVerticalScrollIndicator={hasLyricsBody}
+                keyboardShouldPersistTaps="handled"
+                bounces={false}
+              >
               <View style={styles.practiceTopPanel}>
                 <View style={styles.practicePanelBar}>
                   <Text style={styles.practicePanelBarTitle} numberOfLines={1}>
@@ -1458,10 +1486,11 @@ export default function ChordsScreen() {
                     </TouchableOpacity>
                   </View>
                 </View>
+                {practiceDiagAny ? (
                 <View style={styles.practiceDiagRow}>
                   {showPracticeFretboard ? (
                     <View style={styles.practiceDiagLeft}>
-                      <ChordDiagram name={practiceCurrentChord} diagramId={chordDiagramId} size="lg" />
+                      <ChordDiagram name={practiceCurrentChord} diagramId={chordDiagramId} size={hasLyricsBody ? 'md' : 'lg'} />
                     </View>
                   ) : null}
                   {showPracticeNoteMatch ? (
@@ -1529,6 +1558,7 @@ export default function ChordsScreen() {
                     </View>
                   ) : null}
                 </View>
+                ) : null}
 
                 <View style={styles.practiceChordNavRow}>
                   <TouchableOpacity onPress={practicePrev} style={styles.practiceChordNavArrow} disabled={practiceChordIdx <= 0}>
@@ -1557,10 +1587,16 @@ export default function ChordsScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
+              </ScrollView>
             )}
           </View>
 
-          <View style={[styles.practiceLyricsStack, { paddingBottom: practiceDockHeight }]}>
+          <View
+            style={[
+              styles.practiceLyricsStack,
+              hasLyricsBody && lyricsMinHeight > 0 && { minHeight: lyricsMinHeight },
+            ]}
+          >
             <View style={styles.lyricsPanelHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.lyricsPanelTitle}>
@@ -1578,7 +1614,7 @@ export default function ChordsScreen() {
                   backgroundColor: '#00e67618', borderRadius: 8, marginRight: 4,
                   borderWidth: 1, borderColor: '#00e67666' }}>
                   <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#00e676' }} />
-                  <Text style={{ color: '#00e676', fontSize: 9, fontWeight: '700' }}>МИК</Text>
+                  <Text style={{ color: '#00e676', fontSize: 9, fontWeight: '700' }}>MIC</Text>
                 </View>
               )}
               {/* Auto-scroll toggle (BPM timer) */}
@@ -1695,55 +1731,6 @@ export default function ChordsScreen() {
             </ScrollView>
           )}
             </View>
-          </View>
-
-          <View
-            onLayout={e => {
-              const h = Math.round(e.nativeEvent.layout.height);
-              setPracticeDockHeight(prev => (Math.abs(prev - h) < 2 ? prev : h));
-            }}
-            style={[
-              styles.practiceToolbarDockBar,
-              styles.practiceToolbarDockFixed,
-              {
-                /*
-                 * Нижнее меню (таб-бар) уже отступает от «домашней» зоны (paddingBottom в App).
-                 * В immersive — доп. отступ от «чёлки»/дом. индикатора.
-                 */
-                paddingBottom:
-                  tabBarHidden && immersiveLyrics ? Math.max(6, insets.bottom) : 0,
-              },
-            ]}
-          >
-            <TouchableOpacity
-              style={[
-                styles.mainBtnPracticeDock,
-                pitchActive && styles.mainBtnStop,
-                { flex: 1 },
-              ]}
-              onPress={pitchActive ? stopPitchDetection : startPitchDetection}
-              activeOpacity={0.8}
-            >
-              <Ionicons name={pitchActive ? 'stop-circle' : 'mic-circle'} size={20} color="#fff" />
-              <Text style={styles.mainBtnPracticeDockText}>
-                {pitchActive ? 'Выкл' : 'Мик'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.recBtnPracticeDock,
-                isPracticeRec && styles.recBtnActive,
-              ]}
-              onPress={isPracticeRec ? stopPracticeRec : startPracticeRec}
-              activeOpacity={0.8}
-            >
-              <View style={[styles.recDot, isPracticeRec && styles.recDotActive]} />
-              <Text style={[styles.recBtnPracticeDockText, isPracticeRec && { color: '#ff5252' }]}>
-                {isPracticeRec
-                  ? `${Math.floor(practiceRecDur / 60)}:${(practiceRecDur % 60).toString().padStart(2, '0')}`
-                  : 'REC'}
-              </Text>
-            </TouchableOpacity>
           </View>
 
         </View>
@@ -1928,6 +1915,55 @@ export default function ChordsScreen() {
       )}
 
       </View>
+
+      {/* Мик/REC: привязка к низу экрана Chords (контейнер), а не к внутренней колонке практики —
+          иначе при сбое flex-высоты остаётся пустая полоса между доком и нижними вкладками. */}
+      {mode === 'practice' && (
+        <View
+          onLayout={e => {
+            const h = Math.round(e.nativeEvent.layout.height);
+            setPracticeDockHeight(prev => (Math.abs(prev - h) < 2 ? prev : h));
+          }}
+          style={[
+            styles.practiceToolbarDockBar,
+            styles.practiceToolbarDockFixed,
+            {
+              paddingBottom:
+                tabBarHidden && immersiveLyrics ? Math.max(6, insets.bottom) : 0,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[
+              styles.mainBtnPracticeDock,
+              pitchActive && styles.mainBtnStop,
+              { flex: 1 },
+            ]}
+            onPress={pitchActive ? stopPitchDetection : startPitchDetection}
+            activeOpacity={0.8}
+          >
+            <Ionicons name={pitchActive ? 'stop-circle' : 'mic-circle'} size={20} color="#fff" />
+            <Text style={styles.mainBtnPracticeDockText}>
+              {pitchActive ? 'Выкл' : 'Mic'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.recBtnPracticeDock,
+              isPracticeRec && styles.recBtnActive,
+            ]}
+            onPress={isPracticeRec ? stopPracticeRec : startPracticeRec}
+            activeOpacity={0.8}
+          >
+            <View style={[styles.recDot, isPracticeRec && styles.recDotActive]} />
+            <Text style={[styles.recBtnPracticeDockText, isPracticeRec && { color: '#ff5252' }]}>
+              {isPracticeRec
+                ? `${Math.floor(practiceRecDur / 60)}:${(practiceRecDur % 60).toString().padStart(2, '0')}`
+                : 'REC'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* ── Song Library Modal ── */}
       <Modal visible={showLibrary} animationType="slide" onRequestClose={() => setShowLibrary(false)}>
@@ -2290,7 +2326,8 @@ export default function ChordsScreen() {
 
 const styles = StyleSheet.create({
   screenFill: { flex: 1, minHeight: 0, width: '100%' },
-  container:  { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f' },
+  /** relative — абсолютный док практики (Мик/REC) позиционируется от низа этого контейнера */
+  container:  { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f', position: 'relative' },
   /** Шапка + режимы — без модалок/WebView как соседей во flex (иначе снизу «пустая зона» до таб-бара) */
   mainScreenColumn: { flex: 1, minHeight: 0, flexDirection: 'column' },
   header:     { flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 8 },
@@ -2441,14 +2478,13 @@ const styles = StyleSheet.create({
   basicChordKind: { color: '#666', fontSize: 11, fontWeight: '700', marginTop: 2 },
 
   lyricsScroll: { flex: 1, backgroundColor: '#0a0a0f' },
-  /** Колонка практики: верх + растягиваемый текст; Мик/REC прибиты к низу (не остаётся пустоты под ними) */
+  /** Колонка практики: верх + текст; Мик/REC вынесен в container (абсолют снизу экрана). */
   practiceRootColumn: {
     flex: 1,
     minHeight: 0,
     flexDirection: 'column',
-    position: 'relative',
   },
-  /** D: шапка текста + скролл — flex:1, отступ снизу = высота док-бара */
+  /** D: при загруженном тексте — flex:1 + minHeight, чтобы полоска текста не сжималась в «ленточку» */
   practiceLyricsStack: {
     flex: 1,
     minHeight: 0,

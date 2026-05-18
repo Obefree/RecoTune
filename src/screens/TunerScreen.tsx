@@ -15,7 +15,10 @@ import TunerNeedle from '../components/TunerNeedle';
 import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
 import MiniCentsStrip from '../components/MiniCentsStrip';
 
-const EMA_ALPHA  = 0.28;   // 0=frozen, 1=raw — lower = smoother
+/** Частота: ниже α — меньше дёрганье стрелки (было 0.28 — слишком «нервно»). */
+const EMA_ALPHA_FREQ = 0.14;
+/** Центы отдельно сглаживаем — стрелка не дёргается на шуме ±2–5 ¢ */
+const EMA_ALPHA_CENTS = 0.22;
 const A4_FREQ    = 440;
 const A4_MIDI    = 69;
 
@@ -43,6 +46,7 @@ export default function TunerScreen() {
   const signalAnim      = useRef(new Animated.Value(0)).current;
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const smoothedFreqRef = useRef<number | null>(null);
+  const smoothedCentsRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isActive) {
@@ -65,22 +69,37 @@ export default function TunerScreen() {
     if (msg.type === 'ready') {
       setError(null);
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
-      // EMA smoothing — reduces jitter on needle and chart
       const raw  = msg.frequency;
-      const prev = smoothedFreqRef.current;
-      const freq = prev == null ? raw : EMA_ALPHA * raw + (1 - EMA_ALPHA) * prev;
+      const prevF = smoothedFreqRef.current;
+      const freq = prevF == null ? raw : EMA_ALPHA_FREQ * raw + (1 - EMA_ALPHA_FREQ) * prevF;
       smoothedFreqRef.current = freq;
 
       const info = frequencyToNote(freq);
       const midi = 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
-      const n: NoteState = { name: info.name, octave: info.octave, cents: info.cents, frequency: freq };
+      const rawCents = info.cents;
+      const prevC = smoothedCentsRef.current;
+      let dispCents = rawCents;
+      if (prevC != null) {
+        const next = prevC + EMA_ALPHA_CENTS * (rawCents - prevC);
+        smoothedCentsRef.current = next;
+        dispCents = Math.round(next);
+      } else {
+        smoothedCentsRef.current = rawCents;
+      }
+
+      const n: NoteState = {
+        name: info.name,
+        octave: info.octave,
+        cents: dispCents,
+        frequency: freq,
+      };
 
       setFrequency(freq);
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
       setHistory(prev => {
         const pt: HistoryPoint = {
-          cents: info.cents, freq, midi,
+          cents: dispCents, freq, midi,
           note: info.name, octave: info.octave, ts: Date.now(),
         };
         const next = [...prev, pt];
@@ -88,9 +107,11 @@ export default function TunerScreen() {
       });
     } else if (msg.type === 'signal') {
       smoothedFreqRef.current = null;
+      smoothedCentsRef.current = null;
       setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
       smoothedFreqRef.current = null;
+      smoothedCentsRef.current = null;
       setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
       setError(msg.message ?? 'Microphone error'); setIsActive(false);
@@ -100,11 +121,16 @@ export default function TunerScreen() {
   const start = useCallback(async () => {
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') { setError('Microphone permission denied'); return; }
-    setError(null); setHistory([]); setIsActive(true);
+    setError(null); setHistory([]);
+    smoothedFreqRef.current = null;
+    smoothedCentsRef.current = null;
+    setIsActive(true);
   }, []);
 
   const stop = useCallback(() => {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
+    smoothedFreqRef.current = null;
+    smoothedCentsRef.current = null;
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
 
