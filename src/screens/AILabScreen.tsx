@@ -11,7 +11,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert,
+  ActivityIndicator, Alert, Modal, FlatList, TouchableWithoutFeedback,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -169,6 +169,13 @@ window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd===
 document.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='separate')separate(m.b64);}catch{}});
 </script></body></html>`;
 
+/* ─── App sandbox audio folders (same as RecorderScreen / StudioScreen) ─── */
+const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
+const STUDIO_DIR     = (FileSystem.documentDirectory ?? '') + 'studio/';
+const APP_AUDIO_EXT  = /\.(m4a|wav|mp3|aac|caf)$/i;
+
+interface AppAudioRow { uri: string; name: string; badge: string }
+
 /* ─── Helpers ─── */
 function fmt(s: number) { return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`; }
 function fmtMs(ms: number) { return fmt(ms / 1000); }
@@ -201,6 +208,9 @@ export default function AILabScreen() {
   const chordsWvRef = useRef<WebView>(null);
   const stemsWvRef  = useRef<WebView>(null);
 
+  const [appModalVisible, setAppModalVisible] = useState(false);
+  const [appAudioRows, setAppAudioRows]     = useState<AppAudioRow[]>([]);
+
   /* ── Cleanup sounds on unmount ── */
   useEffect(() => {
     return () => {
@@ -232,17 +242,13 @@ export default function AILabScreen() {
     }
   }, [previewSound, previewPlaying]);
 
-  /* ── Pick file and run chord analysis ── */
-  const pickAndAnalyse = useCallback(async () => {
+  const analyseWithUri = useCallback(async (uri: string, displayName: string) => {
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
-      if (res.canceled) return;
-      const { uri, name } = res.assets[0];
       setChordsStatus('loading');
       setChordsMsg('Чтение файла...');
       setChordEvents([]); setSongKey(''); setSongBpm(0); setSongDur(0);
 
-      await loadPreview(uri, name ?? 'аудиофайл');
+      await loadPreview(uri, displayName);
       const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
       setChordsHtml(CHORD_ANALYSIS_HTML);
       setTimeout(() => {
@@ -255,6 +261,46 @@ export default function AILabScreen() {
       setChordsStatus('error');
     }
   }, [loadPreview]);
+
+  const loadAppAudioRows = useCallback(async (): Promise<AppAudioRow[]> => {
+    const rows: AppAudioRow[] = [];
+    const scan = async (dir: string, badge: string) => {
+      try {
+        const info = await FileSystem.getInfoAsync(dir);
+        if (!info.exists || !info.isDirectory) return;
+        const files = await FileSystem.readDirectoryAsync(dir);
+        for (const f of files) {
+          if (!APP_AUDIO_EXT.test(f)) continue;
+          rows.push({ uri: dir + f, name: f, badge });
+        }
+      } catch {}
+    };
+    await scan(RECORDINGS_DIR, 'REC');
+    await scan(STUDIO_DIR, 'STUDIO');
+    rows.sort((a, b) => a.name.localeCompare(b.name));
+    return rows;
+  }, []);
+
+  const openAppFilesModal = useCallback(async () => {
+    const rows = await loadAppAudioRows();
+    if (!rows.length) {
+      Alert.alert(
+        'Нет файлов',
+        'Записи Recorder и Studio хранятся внутри приложения. Сначала сделайте запись в Recorder или экспортируйте дорожку в Studio.',
+      );
+      return;
+    }
+    setAppAudioRows(rows);
+    setAppModalVisible(true);
+  }, [loadAppAudioRows]);
+
+  /* ── Pick file and run chord analysis ── */
+  const pickAndAnalyse = useCallback(async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+    if (res.canceled) return;
+    const { uri, name } = res.assets[0];
+    await analyseWithUri(uri, name ?? 'аудиофайл');
+  }, [analyseWithUri]);
 
   const handleChordsMsg = useCallback((e: any) => {
     try {
@@ -291,17 +337,14 @@ export default function AILabScreen() {
     } catch (e) { Alert.alert('Ошибка', String(e)); }
   }, [chordEvents, songKey, songBpm, songDur]);
 
-  /* ── Pick file and run stem separation ── */
-  const pickAndSeparate = useCallback(async () => {
+  const separateWithUri = useCallback(async (uri: string) => {
     try {
-      const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
-      if (res.canceled) return;
-      const { uri } = res.assets[0];
       setStemStatus('loading');
       setStemMsg('Чтение файла...');
-      // Unload old stems
-      stemItems.forEach(s => s.sound?.unloadAsync());
-      setStemItems([]);
+      setStemItems(prev => {
+        prev.forEach(s => s.sound?.unloadAsync());
+        return [];
+      });
 
       const info = await FileSystem.getInfoAsync(uri);
       if (info.exists && (info as any).size > 20 * 1024 * 1024) {
@@ -318,7 +361,21 @@ export default function AILabScreen() {
       Alert.alert('Ошибка', String(e));
       setStemStatus('error');
     }
-  }, [stemItems]);
+  }, []);
+
+  /* ── Pick file and run stem separation ── */
+  const pickAndSeparate = useCallback(async () => {
+    const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+    if (res.canceled) return;
+    const { uri } = res.assets[0];
+    await separateWithUri(uri);
+  }, [separateWithUri]);
+
+  const onPickAppAudioRow = useCallback((row: AppAudioRow) => {
+    setAppModalVisible(false);
+    if (tab === 'chords') void analyseWithUri(row.uri, `${row.badge} · ${row.name}`);
+    else void separateWithUri(row.uri);
+  }, [tab, analyseWithUri, separateWithUri]);
 
   /* ── After stems done: save to temp files + create Sound objects ── */
   const handleStemsMsg = useCallback(async (e: any) => {
@@ -418,13 +475,25 @@ export default function AILabScreen() {
             <Text style={styles.infoText}>
               Загрузите аудиофайл — получите аккорды, тональность и темп.{'\n'}
               Анализ через хромаграмму + шаблонное сопоставление (офлайн, без интернета).{'\n'}
-              Точность выше для живых записей гитары/пианино.
+              Точность выше для живых записей гитары/пианино.{'\n'}
+              <Text style={{ color: '#666' }}>
+                Записи Recorder и Studio лежат внутри приложения (не в папке «Музыка»). Открыть их как обычную папку в проводнике нельзя — выберите файл ниже или через «Другое устройство».
+              </Text>
             </Text>
           </View>
 
           <TouchableOpacity style={styles.actionBtn} onPress={pickAndAnalyse} disabled={chordsStatus === 'loading'}>
             <Ionicons name="folder-open" size={22} color="#fff" />
-            <Text style={styles.actionBtnText}>ВЫБРАТЬ ФАЙЛ ДЛЯ АНАЛИЗА</Text>
+            <Text style={styles.actionBtnText}>ФАЙЛ С ТЕЛЕФОНА (ЛЮБОЙ)</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionBtnSecondary]}
+            onPress={openAppFilesModal}
+            disabled={chordsStatus === 'loading'}
+          >
+            <Ionicons name="mic" size={20} color="#7c4dff" />
+            <Text style={styles.actionBtnTextSecondary}>ИЗ RECORDER / STUDIO</Text>
           </TouchableOpacity>
 
           {/* File preview strip */}
@@ -529,7 +598,8 @@ export default function AILabScreen() {
               Разделение на 5 дорожек:{'\n'}
               <Text style={{ color: '#7c4dff' }}>Бас</Text> (20–250 Гц) · <Text style={{ color: '#00e676' }}>Середина</Text> (250–4к) · <Text style={{ color: '#40c4ff' }}>Высокие</Text> (4к+){'\n'}
               <Text style={{ color: '#ff9800' }}>Голос</Text> (центральный канал 200–5к Гц) · <Text style={{ color: '#ff5252' }}>Минус</Text> (оригинал без голоса){'\n'}
-              Голос и Минус лучше работают на стерео треках.
+              Голос и Минус лучше работают на стерео треках.{'\n'}
+              <Text style={{ color: '#666' }}>Тот же список Recorder/Studio, что и во вкладке «Аккорды».</Text>
             </Text>
           </View>
 
@@ -539,7 +609,16 @@ export default function AILabScreen() {
             disabled={stemStatus === 'loading'}
           >
             <Ionicons name="git-branch" size={22} color="#fff" />
-            <Text style={styles.actionBtnText}>ВЫБРАТЬ ФАЙЛ ДЛЯ РАЗДЕЛЕНИЯ</Text>
+            <Text style={styles.actionBtnText}>ФАЙЛ С ТЕЛЕФОНА (ЛЮБОЙ)</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.actionBtnSecondary, { borderColor: '#40c4ff44' }]}
+            onPress={openAppFilesModal}
+            disabled={stemStatus === 'loading'}
+          >
+            <Ionicons name="mic" size={20} color="#40c4ff" />
+            <Text style={[styles.actionBtnTextSecondary, { color: '#40c4ff' }]}>ИЗ RECORDER / STUDIO</Text>
           </TouchableOpacity>
 
           {stemStatus === 'loading' && (
@@ -609,6 +688,38 @@ export default function AILabScreen() {
         </ScrollView>
       )}
 
+      <Modal visible={appModalVisible} animationType="slide" transparent onRequestClose={() => setAppModalVisible(false)}>
+        <TouchableWithoutFeedback onPress={() => setAppModalVisible(false)}>
+          <View style={styles.modalBackdrop}>
+            <TouchableWithoutFeedback>
+              <View style={[styles.modalCard, { paddingBottom: insets.bottom + 16 }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Записи в RecoTune</Text>
+                  <TouchableOpacity onPress={() => setAppModalVisible(false)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                    <Ionicons name="close" size={26} color="#888" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.modalHint}>
+                  Это не папка «Загрузки»: Android и iOS хранят данные приложения отдельно. Чтобы скинуть дорожку из Studio, в Studio есть «Поделиться» у трека или экспорт микса.
+                </Text>
+                <FlatList
+                  data={appAudioRows}
+                  keyExtractor={it => it.uri}
+                  style={{ maxHeight: 360 }}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={styles.modalRow} onPress={() => onPickAppAudioRow(item)}>
+                      <Text style={styles.modalBadge}>{item.badge}</Text>
+                      <Text style={styles.modalFileName} numberOfLines={2}>{item.name}</Text>
+                      <Ionicons name="chevron-forward" size={18} color="#444" />
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
       {/* Hidden WebViews */}
       {chordsHtml && (
         <WebView ref={chordsWvRef} source={{ html: chordsHtml }} style={styles.hiddenWV}
@@ -638,7 +749,18 @@ const styles = StyleSheet.create({
   infoText:  { flex: 1, color: '#555', fontSize: 12, lineHeight: 18 },
 
   actionBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: '#7c4dff88', borderRadius: 14, padding: 14 },
+  actionBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#7c4dff44' },
   actionBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
+  actionBtnTextSecondary: { color: '#7c4dff', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
+
+  modalBackdrop: { flex: 1, backgroundColor: '#000c', justifyContent: 'flex-end' },
+  modalCard:     { backgroundColor: '#12121a', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingHorizontal: 16, paddingTop: 12, borderWidth: 1, borderColor: '#2a2a36', maxHeight: '72%' },
+  modalHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  modalTitle:    { color: '#ccc', fontSize: 16, fontWeight: '800', letterSpacing: 1 },
+  modalHint:     { color: '#555', fontSize: 11, lineHeight: 16, marginBottom: 12 },
+  modalRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderColor: '#1e1e28' },
+  modalBadge:    { color: '#7c4dff', fontSize: 10, fontWeight: '800', width: 56 },
+  modalFileName: { flex: 1, color: '#aaa', fontSize: 13 },
 
   /* File preview strip */
   previewStrip:   { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111118', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#7c4dff33' },

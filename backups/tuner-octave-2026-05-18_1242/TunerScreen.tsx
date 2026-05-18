@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Animated, Modal, ScrollView,
-  Pressable, Platform, useWindowDimensions,
+  Animated, Modal, FlatList, ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,8 +29,6 @@ interface NoteState { name: string; octave: number; cents: number; frequency: nu
 
 export default function TunerScreen() {
   const insets = useSafeAreaInsets();
-  const { height: windowH } = useWindowDimensions();
-  const tunerPickerScrollMaxH = Math.max(200, Math.round(windowH * 0.58) - insets.bottom - 32);
 
   const [isActive, setIsActive]       = useState(false);
   const [note, setNote]               = useState<NoteState | null>(null);
@@ -286,41 +283,31 @@ export default function TunerScreen() {
       </ScrollView>
 
       {/* ── Tuning picker ── */}
-      <Modal
-        visible={showPicker}
-        transparent
-        animationType="slide"
-        statusBarTranslucent={Platform.OS === 'android'}
-        onRequestClose={() => setShowPicker(false)}
-      >
+      <Modal visible={showPicker} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowPicker(false)} accessibilityLabel="Закрыть" />
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16, maxHeight: Math.round(windowH * 0.92) }]}>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-              style={{ maxHeight: tunerPickerScrollMaxH }}
-              contentContainerStyle={{ paddingBottom: 4 }}
-            >
-              <View style={styles.handle} />
-              <Text style={styles.modalTitle}>Instrument & Tuning</Text>
+          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.handle} />
+            <Text style={styles.modalTitle}>Instrument & Tuning</Text>
 
-              <View style={styles.instTabRow}>
-                {INSTRUMENTS.map(inst => (
-                  <TouchableOpacity
-                    key={inst}
-                    onPress={() => setInstrument(inst)}
-                    style={[styles.instTab, instrument === inst && styles.instTabActive]}
-                  >
-                    <Text style={styles.instTabEmoji}>{INSTRUMENT_ICONS[inst] ?? '🎵'}</Text>
-                    <Text style={[styles.instTabText, instrument === inst && { color: '#00e676' }]}>{inst}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {getTuningsForInstrument(instrument).map(item => (
+            <View style={styles.instTabRow}>
+              {INSTRUMENTS.map(inst => (
                 <TouchableOpacity
-                  key={item.id}
+                  key={inst}
+                  onPress={() => setInstrument(inst)}
+                  style={[styles.instTab, instrument === inst && styles.instTabActive]}
+                >
+                  <Text style={styles.instTabEmoji}>{INSTRUMENT_ICONS[inst] ?? '🎵'}</Text>
+                  <Text style={[styles.instTabText, instrument === inst && { color: '#00e676' }]}>{inst}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <FlatList
+              data={getTuningsForInstrument(instrument)}
+              keyExtractor={t => t.id}
+              style={{ maxHeight: 300 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
                   onPress={() => { setTuning(item); setShowPicker(false); }}
                   style={[styles.tuningRow, tuning.id === item.id && styles.tuningRowActive]}
                 >
@@ -330,12 +317,12 @@ export default function TunerScreen() {
                   </View>
                   {tuning.id === item.id && <Ionicons name="checkmark-circle" size={18} color="#00e676" />}
                 </TouchableOpacity>
-              ))}
+              )}
+            />
 
-              <TouchableOpacity onPress={() => setShowPicker(false)} style={styles.closeBtn}>
-                <Text style={styles.closeBtnText}>Close</Text>
-              </TouchableOpacity>
-            </ScrollView>
+            <TouchableOpacity onPress={() => setShowPicker(false)} style={styles.closeBtn}>
+              <Text style={styles.closeBtnText}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

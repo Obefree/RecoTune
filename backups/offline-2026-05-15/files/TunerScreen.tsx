@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Animated, Modal, ScrollView,
-  Pressable, Platform, useWindowDimensions,
+  Animated, Modal, FlatList, ScrollView,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,10 +15,7 @@ import TunerNeedle from '../components/TunerNeedle';
 import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
 import MiniCentsStrip from '../components/MiniCentsStrip';
 
-/** Частота: ниже α — меньше дёрганье стрелки (было 0.28 — слишком «нервно»). */
-const EMA_ALPHA_FREQ = 0.14;
-/** Центы отдельно сглаживаем — стрелка не дёргается на шуме ±2–5 ¢ */
-const EMA_ALPHA_CENTS = 0.22;
+const EMA_ALPHA  = 0.28;   // 0=frozen, 1=raw — lower = smoother
 const A4_FREQ    = 440;
 const A4_MIDI    = 69;
 
@@ -30,8 +26,6 @@ interface NoteState { name: string; octave: number; cents: number; frequency: nu
 
 export default function TunerScreen() {
   const insets = useSafeAreaInsets();
-  const { height: windowH } = useWindowDimensions();
-  const tunerPickerScrollMaxH = Math.max(200, Math.round(windowH * 0.58) - insets.bottom - 32);
 
   const [isActive, setIsActive]       = useState(false);
   const [note, setNote]               = useState<NoteState | null>(null);
@@ -49,7 +43,6 @@ export default function TunerScreen() {
   const signalAnim      = useRef(new Animated.Value(0)).current;
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const smoothedFreqRef = useRef<number | null>(null);
-  const smoothedCentsRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isActive) {
@@ -72,37 +65,22 @@ export default function TunerScreen() {
     if (msg.type === 'ready') {
       setError(null);
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
+      // EMA smoothing — reduces jitter on needle and chart
       const raw  = msg.frequency;
-      const prevF = smoothedFreqRef.current;
-      const freq = prevF == null ? raw : EMA_ALPHA_FREQ * raw + (1 - EMA_ALPHA_FREQ) * prevF;
+      const prev = smoothedFreqRef.current;
+      const freq = prev == null ? raw : EMA_ALPHA * raw + (1 - EMA_ALPHA) * prev;
       smoothedFreqRef.current = freq;
 
       const info = frequencyToNote(freq);
       const midi = 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
-      const rawCents = info.cents;
-      const prevC = smoothedCentsRef.current;
-      let dispCents = rawCents;
-      if (prevC != null) {
-        const next = prevC + EMA_ALPHA_CENTS * (rawCents - prevC);
-        smoothedCentsRef.current = next;
-        dispCents = Math.round(next);
-      } else {
-        smoothedCentsRef.current = rawCents;
-      }
-
-      const n: NoteState = {
-        name: info.name,
-        octave: info.octave,
-        cents: dispCents,
-        frequency: freq,
-      };
+      const n: NoteState = { name: info.name, octave: info.octave, cents: info.cents, frequency: freq };
 
       setFrequency(freq);
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
       setHistory(prev => {
         const pt: HistoryPoint = {
-          cents: dispCents, freq, midi,
+          cents: info.cents, freq, midi,
           note: info.name, octave: info.octave, ts: Date.now(),
         };
         const next = [...prev, pt];
@@ -110,11 +88,9 @@ export default function TunerScreen() {
       });
     } else if (msg.type === 'signal') {
       smoothedFreqRef.current = null;
-      smoothedCentsRef.current = null;
       setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
       smoothedFreqRef.current = null;
-      smoothedCentsRef.current = null;
       setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
       setError(msg.message ?? 'Microphone error'); setIsActive(false);
@@ -124,16 +100,11 @@ export default function TunerScreen() {
   const start = useCallback(async () => {
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') { setError('Microphone permission denied'); return; }
-    setError(null); setHistory([]);
-    smoothedFreqRef.current = null;
-    smoothedCentsRef.current = null;
-    setIsActive(true);
+    setError(null); setHistory([]); setIsActive(true);
   }, []);
 
   const stop = useCallback(() => {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
-    smoothedFreqRef.current = null;
-    smoothedCentsRef.current = null;
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
 
@@ -286,41 +257,31 @@ export default function TunerScreen() {
       </ScrollView>
 
       {/* ── Tuning picker ── */}
-      <Modal
-        visible={showPicker}
-        transparent
-        animationType="slide"
-        statusBarTranslucent={Platform.OS === 'android'}
-        onRequestClose={() => setShowPicker(false)}
-      >
+      <Modal visible={showPicker} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowPicker(false)} accessibilityLabel="Закрыть" />
-          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16, maxHeight: Math.round(windowH * 0.92) }]}>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-              style={{ maxHeight: tunerPickerScrollMaxH }}
-              contentContainerStyle={{ paddingBottom: 4 }}
-            >
-              <View style={styles.handle} />
-              <Text style={styles.modalTitle}>Instrument & Tuning</Text>
+          <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.handle} />
+            <Text style={styles.modalTitle}>Instrument & Tuning</Text>
 
-              <View style={styles.instTabRow}>
-                {INSTRUMENTS.map(inst => (
-                  <TouchableOpacity
-                    key={inst}
-                    onPress={() => setInstrument(inst)}
-                    style={[styles.instTab, instrument === inst && styles.instTabActive]}
-                  >
-                    <Text style={styles.instTabEmoji}>{INSTRUMENT_ICONS[inst] ?? '🎵'}</Text>
-                    <Text style={[styles.instTabText, instrument === inst && { color: '#00e676' }]}>{inst}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {getTuningsForInstrument(instrument).map(item => (
+            <View style={styles.instTabRow}>
+              {INSTRUMENTS.map(inst => (
                 <TouchableOpacity
-                  key={item.id}
+                  key={inst}
+                  onPress={() => setInstrument(inst)}
+                  style={[styles.instTab, instrument === inst && styles.instTabActive]}
+                >
+                  <Text style={styles.instTabEmoji}>{INSTRUMENT_ICONS[inst] ?? '🎵'}</Text>
+                  <Text style={[styles.instTabText, instrument === inst && { color: '#00e676' }]}>{inst}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <FlatList
+              data={getTuningsForInstrument(instrument)}
+              keyExtractor={t => t.id}
+              style={{ maxHeight: 300 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
                   onPress={() => { setTuning(item); setShowPicker(false); }}
                   style={[styles.tuningRow, tuning.id === item.id && styles.tuningRowActive]}
                 >
@@ -330,12 +291,12 @@ export default function TunerScreen() {
                   </View>
                   {tuning.id === item.id && <Ionicons name="checkmark-circle" size={18} color="#00e676" />}
                 </TouchableOpacity>
-              ))}
+              )}
+            />
 
-              <TouchableOpacity onPress={() => setShowPicker(false)} style={styles.closeBtn}>
-                <Text style={styles.closeBtnText}>Close</Text>
-              </TouchableOpacity>
-            </ScrollView>
+            <TouchableOpacity onPress={() => setShowPicker(false)} style={styles.closeBtn}>
+              <Text style={styles.closeBtnText}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

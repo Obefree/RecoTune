@@ -13,3 +13,5 @@
 |------------|------|------|
 | 2026-05-15 | Стабильность тюнера и стрелки | [2026-05-15-tuner-needle-stability.md](./2026-05-15-tuner-needle-stability.md) |
 | 2026-05-15 | Практика Chords: вёрстка, док, текст | [2026-05-15-chords-practice-layout.md](./2026-05-15-chords-practice-layout.md) |
+| 2026-05-18 | Chords LIVE: компакт + нижний док | [2026-05-18-chords-live-layout.md](./2026-05-18-chords-live-layout.md) |
+| 2026-05-18 | Studio: модалки на маленьком экране | [2026-05-18-studio-settings-modal.md](./2026-05-18-studio-settings-modal.md) |

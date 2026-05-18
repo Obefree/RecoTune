@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Alert, Animated, TextInput, Modal, PanResponder,
+  View, Text, StyleSheet, TouchableOpacity, FlatList, ScrollView,
+  Alert, Animated, TextInput, Modal, PanResponder, Pressable, Platform,
+  useWindowDimensions,
   GestureResponderEvent,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
@@ -11,6 +12,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WebView from 'react-native-webview';
+
+import { useTabBarVisibility } from '../context/TabBarVisibility';
 
 /* ─── Types ─── */
 interface Track { id: string; uri: string; label: string; color: string; offsetMs?: number }
@@ -230,6 +233,10 @@ function TrackRow({ track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos,
 /* ─── Main screen ─── */
 export default function StudioScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const { setTabBarHidden } = useTabBarVisibility();
+  /** Высота прокрутки модалок: иначе ScrollView раздувается по контенту и не скроллится на низких экранах */
+  const studioModalScrollMaxH = Math.max(280, Math.round(windowHeight * 0.88) - insets.top - insets.bottom - 24);
   const [sessions, setSessions]           = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [isRecording, setIsRecording]     = useState(false);
@@ -373,10 +380,11 @@ export default function StudioScreen() {
 
   useEffect(() => { loadSessions(); loadQuality(); }, []);
 
-  useFocusEffect(useCallback(() => {
-    loadSessions();
-    return () => { killAllSounds(); killSolo(); };
-  }, []));
+  const anyStudioModalOpen =
+    showQuality || showExport || showNewModal || renameTarget !== null;
+  useEffect(() => {
+    setTabBarHidden(anyStudioModalOpen);
+  }, [anyStudioModalOpen, setTabBarHidden]);
 
   /* ── Sound teardown ── */
   const killAllSounds = useCallback(async () => {
@@ -398,6 +406,20 @@ export default function StudioScreen() {
     setSoloDur(0);
     if (s) s.stopAsync().catch(() => {}).finally(() => s.unloadAsync().catch(() => {}));
   }, []);
+
+  useFocusEffect(useCallback(() => {
+    loadSessions();
+    return () => {
+      killAllSounds();
+      killSolo();
+      setTabBarHidden(false);
+      setShowQuality(false);
+      setShowExport(false);
+      setShowNewModal(false);
+      setRenameTarget(null);
+      setRenameText('');
+    };
+  }, [killAllSounds, killSolo, loadSessions, setTabBarHidden]));
 
   /* ── Solo playback ── */
   const toggleSolo = useCallback(async (track: Track) => {
@@ -448,6 +470,26 @@ export default function StudioScreen() {
       s.setStatusAsync({ positionMillis: Math.max(0, posMs + off) }).catch(() => {});
     });
     setAllPlayPos(Math.max(0, posMs) / 1000);
+  }, []);
+
+  /** Во время Play all — сразу пересчитать позиции файлов под новые offsetMs (та же логика, что у master seek). */
+  const liveResyncTrackOffsets = useCallback((sess: Session) => {
+    const sounds = allSounds.current;
+    if (sounds.length === 0 || sounds.length !== sess.tracks.length) return;
+    for (let i = 0; i < sess.tracks.length; i++) {
+      if (sess.tracks[i].id !== allSoundTrackIds.current[i]) return;
+    }
+    const ref0 = sounds[0];
+    void ref0.getStatusAsync().then(st => {
+      if (!st.isLoaded) return;
+      const ref0off = Math.max(0, sess.tracks[0]?.offsetMs ?? 0);
+      const T = Math.max(0, (st.positionMillis ?? 0) - ref0off);
+      sounds.forEach((sound, i) => {
+        const off = sess.tracks[i]?.offsetMs ?? 0;
+        sound.setStatusAsync({ positionMillis: Math.max(0, T + off) }).catch(() => {});
+      });
+      setAllPlayPos(T / 1000);
+    });
   }, []);
 
   /* ── Mute toggle ── */
@@ -628,7 +670,8 @@ export default function StudioScreen() {
     setSessions(next);
     setActiveSession(updated);
     await saveSessions(next);
-  }, [saveSessions]);
+    liveResyncTrackOffsets(updated);
+  }, [saveSessions, liveResyncTrackOffsets]);
 
   /* ── Reset all per-track offsets to defaults ── */
   const resetAllOffsets = useCallback(async () => {
@@ -644,7 +687,8 @@ export default function StudioScreen() {
     setSessions(next);
     setActiveSession(updated);
     await saveSessions(next);
-  }, [saveSessions]);
+    liveResyncTrackOffsets(updated);
+  }, [saveSessions, liveResyncTrackOffsets]);
 
   /* ── Session CRUD ── */
   const createSession = useCallback(async () => {
@@ -1082,268 +1126,334 @@ function normArr(arr){
       )}
 
       {/* New session modal */}
-      <Modal visible={showNewModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>New Session</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Session name..."
-              placeholderTextColor="#555"
-              value={newName}
-              onChangeText={setNewName}
-              autoFocus
-              onSubmitEditing={createSession}
-            />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity onPress={() => { setShowNewModal(false); setNewName(''); }} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={createSession} style={styles.modalConfirmBtn}>
-                <Text style={styles.modalConfirmText}>Create</Text>
-              </TouchableOpacity>
-            </View>
+      <Modal
+        visible={showNewModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => { setShowNewModal(false); setNewName(''); }}
+      >
+        <View style={[styles.studioModalOverlay, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => { setShowNewModal(false); setNewName(''); }}
+            accessibilityLabel="Закрыть"
+          />
+          <View style={styles.studioModalCardSm}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>New Session</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Session name..."
+                placeholderTextColor="#555"
+                value={newName}
+                onChangeText={setNewName}
+                autoFocus
+                onSubmitEditing={createSession}
+              />
+              <View style={styles.modalBtns}>
+                <TouchableOpacity onPress={() => { setShowNewModal(false); setNewName(''); }} style={styles.modalCancelBtn}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={createSession} style={styles.modalConfirmBtn}>
+                  <Text style={styles.modalConfirmText}>Create</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
 
       {/* Rename modal */}
-      <Modal visible={renameTarget !== null} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Rename</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={renameText}
-              onChangeText={setRenameText}
-              autoFocus
-              selectTextOnFocus
-              onSubmitEditing={applyRename}
-            />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity onPress={() => { setRenameTarget(null); setRenameText(''); }} style={styles.modalCancelBtn}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={applyRename} style={styles.modalConfirmBtn}>
-                <Text style={styles.modalConfirmText}>Save</Text>
-              </TouchableOpacity>
-            </View>
+      <Modal
+        visible={renameTarget !== null}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => { setRenameTarget(null); setRenameText(''); }}
+      >
+        <View style={[styles.studioModalOverlay, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => { setRenameTarget(null); setRenameText(''); }}
+            accessibilityLabel="Закрыть"
+          />
+          <View style={styles.studioModalCardSm}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Rename</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={renameText}
+                onChangeText={setRenameText}
+                autoFocus
+                selectTextOnFocus
+                onSubmitEditing={applyRename}
+              />
+              <View style={styles.modalBtns}>
+                <TouchableOpacity onPress={() => { setRenameTarget(null); setRenameText(''); }} style={styles.modalCancelBtn}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={applyRename} style={styles.modalConfirmBtn}>
+                  <Text style={styles.modalConfirmText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
 
       {/* Export modal */}
-      <Modal visible={showExport} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { maxHeight: '85%' }]}>
-            <Text style={styles.modalTitle}>Export Tracks</Text>
-
-            {/* Mix format selector */}
-            {(activeSession?.tracks.length ?? 0) > 1 && (
-              <View style={styles.formatRow}>
-                <Text style={styles.formatLabel}>Mix format:</Text>
-                {([16, 24] as const).map(d => (
-                  <TouchableOpacity key={d} onPress={() => setMixBitDepth(d)}
-                    style={[styles.fmtBtn, mixBitDepth === d && styles.fmtBtnActive]}>
-                    <Text style={[styles.fmtBtnText, mixBitDepth === d && { color: '#00e676' }]}>
-                      WAV {d}-bit
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-                <TouchableOpacity onPress={() => setMixBitDepth(mixBitDepth)}
-                  style={[styles.fmtBtn, { borderColor: '#7c4dff44' }]}>
-                  <Text style={[styles.fmtBtnText, { color: '#7c4dff' }]}>
-                    {quality.channels === 2 ? 'Stereo' : 'Mono'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Mix-all row */}
-            {(activeSession?.tracks.length ?? 0) > 1 && (
-              <TouchableOpacity
-                onPress={() => activeSession && startMix(activeSession)}
-                disabled={mixState === 'mixing' || mixState === 'loading'}
-                style={styles.mixAllBtn}
-                activeOpacity={0.75}
-              >
-                <Ionicons name="git-merge-outline" size={18} color="#00e676" />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.mixAllText}>
-                    {mixState === 'idle'
-                      ? `Merge all → WAV ${mixBitDepth}-bit ${quality.channels === 2 ? 'Stereo' : 'Mono'}`
-                      : mixProgress}
-                  </Text>
-                  {mixState === 'idle' && (
-                    <Text style={styles.mixAllSub}>
-                      {quality.sampleRate / 1000} kHz · {mixBitDepth}-bit · {quality.channels === 2 ? 'Stereo' : 'Mono'}
-                    </Text>
-                  )}
-                </View>
-                {(mixState === 'loading' || mixState === 'mixing') && (
-                  <Animated.Text style={{ color: '#00e676', fontSize: 18 }}>⏳</Animated.Text>
-                )}
-                {mixState === 'error' && <Ionicons name="alert-circle" size={18} color="#ff5252" />}
-              </TouchableOpacity>
-            )}
-
-            <Text style={[styles.exportHint, { marginTop: 10 }]}>
-              Or share individual tracks:
-            </Text>
-            <FlatList
-              data={activeSession?.tracks ?? []}
-              keyExtractor={t => t.id}
-              style={{ width: '100%', marginTop: 6 }}
-              renderItem={({ item }) => {
-                const busy = exportingId === item.id;
-                return (
-                  <TouchableOpacity
-                    onPress={() => activeSession && shareTrack(item, activeSession.name)}
-                    disabled={busy}
-                    style={[styles.exportTrackRow, { borderLeftColor: item.color }]}
-                    activeOpacity={0.75}
-                  >
-                    <View style={styles.exportTrackInfo}>
-                      <Text style={styles.exportTrackLabel}>{item.label}</Text>
-                      <Text style={styles.exportTrackSub}>tap to share</Text>
-                    </View>
-                    {busy
-                      ? <Text style={styles.exportBusy}>…</Text>
-                      : <Ionicons name="share-outline" size={20} color="#ffeb3b" />
-                    }
-                  </TouchableOpacity>
-                );
-              }}
-              ListEmptyComponent={<Text style={styles.emptyText}>No tracks in this session</Text>}
-            />
-            <TouchableOpacity
-              onPress={() => { setShowExport(false); setMixState('idle'); setMixHtml(null); }}
-              style={[styles.modalCancelBtn, { marginTop: 14, alignSelf: 'center', paddingHorizontal: 32 }]}
+      <Modal
+        visible={showExport}
+        transparent
+        animationType="slide"
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => {
+          if (mixState === 'mixing' || mixState === 'loading') return;
+          setShowExport(false);
+          setMixState('idle');
+          setMixHtml(null);
+        }}
+      >
+        <View style={[styles.studioModalOverlay, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (mixState === 'mixing' || mixState === 'loading') return;
+              setShowExport(false);
+              setMixState('idle');
+              setMixHtml(null);
+            }}
+            accessibilityLabel="Закрыть"
+          />
+          <View style={styles.studioModalCard}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+              style={{ maxHeight: studioModalScrollMaxH }}
+              contentContainerStyle={styles.studioModalScrollContent}
             >
-              <Text style={styles.modalCancelText}>Done</Text>
-            </TouchableOpacity>
+              <Text style={styles.modalTitle}>Export Tracks</Text>
+
+              {(activeSession?.tracks.length ?? 0) > 1 && (
+                <View style={styles.formatRow}>
+                  <Text style={styles.formatLabel}>Mix format:</Text>
+                  {([16, 24] as const).map(d => (
+                    <TouchableOpacity key={d} onPress={() => setMixBitDepth(d)}
+                      style={[styles.fmtBtn, mixBitDepth === d && styles.fmtBtnActive]}>
+                      <Text style={[styles.fmtBtnText, mixBitDepth === d && { color: '#00e676' }]}>
+                        WAV {d}-bit
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity onPress={() => setMixBitDepth(mixBitDepth)}
+                    style={[styles.fmtBtn, { borderColor: '#7c4dff44' }]}>
+                    <Text style={[styles.fmtBtnText, { color: '#7c4dff' }]}>
+                      {quality.channels === 2 ? 'Stereo' : 'Mono'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {(activeSession?.tracks.length ?? 0) > 1 && (
+                <TouchableOpacity
+                  onPress={() => activeSession && startMix(activeSession)}
+                  disabled={mixState === 'mixing' || mixState === 'loading'}
+                  style={styles.mixAllBtn}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="git-merge-outline" size={18} color="#00e676" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.mixAllText}>
+                      {mixState === 'idle'
+                        ? `Merge all → WAV ${mixBitDepth}-bit ${quality.channels === 2 ? 'Stereo' : 'Mono'}`
+                        : mixProgress}
+                    </Text>
+                    {mixState === 'idle' && (
+                      <Text style={styles.mixAllSub}>
+                        {quality.sampleRate / 1000} kHz · {mixBitDepth}-bit · {quality.channels === 2 ? 'Stereo' : 'Mono'}
+                      </Text>
+                    )}
+                  </View>
+                  {(mixState === 'loading' || mixState === 'mixing') && (
+                    <Animated.Text style={{ color: '#00e676', fontSize: 18 }}>⏳</Animated.Text>
+                  )}
+                  {mixState === 'error' && <Ionicons name="alert-circle" size={18} color="#ff5252" />}
+                </TouchableOpacity>
+              )}
+
+              <Text style={[styles.exportHint, { marginTop: 10 }]}>
+                Or share individual tracks:
+              </Text>
+              {(activeSession?.tracks ?? []).length === 0 ? (
+                <Text style={styles.emptyText}>No tracks in this session</Text>
+              ) : (
+                (activeSession?.tracks ?? []).map(item => {
+                  const busy = exportingId === item.id;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      onPress={() => activeSession && shareTrack(item, activeSession.name)}
+                      disabled={busy}
+                      style={[styles.exportTrackRow, { borderLeftColor: item.color }]}
+                      activeOpacity={0.75}
+                    >
+                      <View style={styles.exportTrackInfo}>
+                        <Text style={styles.exportTrackLabel}>{item.label}</Text>
+                        <Text style={styles.exportTrackSub}>tap to share</Text>
+                      </View>
+                      {busy
+                        ? <Text style={styles.exportBusy}>…</Text>
+                        : <Ionicons name="share-outline" size={20} color="#ffeb3b" />
+                      }
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+              <TouchableOpacity
+                onPress={() => { setShowExport(false); setMixState('idle'); setMixHtml(null); }}
+                style={[styles.modalCancelBtn, { marginTop: 16, marginBottom: 4, flexGrow: 0, alignSelf: 'center', paddingHorizontal: 32 }]}
+              >
+                <Text style={styles.modalCancelText}>Done</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
 
       {/* Quality settings modal */}
-      <Modal visible={showQuality} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Recording Quality</Text>
-            <Text style={styles.exportHint}>Applies to all new tracks in this session</Text>
-            {QUALITY_PRESETS.map((p, i) => {
-              const active =
-                p.q.sampleRate === quality.sampleRate &&
-                p.q.channels   === quality.channels   &&
-                p.q.bitRate    === quality.bitRate;
-              return (
-                <TouchableOpacity
-                  key={i}
-                  onPress={async () => { setQuality(p.q); qualityRef.current = p.q; await saveQualitySettings(p.q); }}
-                  style={[styles.qualityRow, active && styles.qualityRowActive]}
-                  activeOpacity={0.75}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.qualityName, active && { color: '#7c4dff' }]}>{p.label}</Text>
-                    <Text style={styles.qualitySub}>{p.sub}</Text>
-                  </View>
-                  {active && <Ionicons name="checkmark-circle" size={20} color="#7c4dff" />}
+      <Modal
+        visible={showQuality}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => setShowQuality(false)}
+      >
+        <View style={[styles.studioModalOverlay, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowQuality(false)}
+            accessibilityLabel="Закрыть"
+          />
+          <View style={styles.studioModalCard}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+              style={{ maxHeight: studioModalScrollMaxH }}
+              contentContainerStyle={styles.studioModalScrollContent}
+            >
+              <Text style={styles.modalTitle}>Recording Quality</Text>
+              <Text style={styles.exportHint}>Applies to all new tracks in this session</Text>
+              {QUALITY_PRESETS.map((p, i) => {
+                const active =
+                  p.q.sampleRate === quality.sampleRate &&
+                  p.q.channels   === quality.channels   &&
+                  p.q.bitRate    === quality.bitRate;
+                return (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={async () => { setQuality(p.q); qualityRef.current = p.q; await saveQualitySettings(p.q); }}
+                    style={[styles.qualityRow, active && styles.qualityRowActive]}
+                    activeOpacity={0.75}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.qualityName, active && { color: '#7c4dff' }]}>{p.label}</Text>
+                      <Text style={styles.qualitySub}>{p.sub}</Text>
+                    </View>
+                    {active && <Ionicons name="checkmark-circle" size={20} color="#7c4dff" />}
+                  </TouchableOpacity>
+                );
+              })}
+              <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
+                <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация латентности (мс)</Text>
+                <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
+                  Встроенный микрофон: ~100 мс (стабильно){'\n'}
+                  Bluetooth наушники: ~300 мс (нестабильно){'\n'}{'\n'}
+                  Если 2-я дорожка запаздывает — увеличь.{'\n'}
+                  Если опережает — уменьши.
+                </Text>
+                <View style={{ backgroundColor: '#00bcd410', borderRadius: 8, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#00bcd430' }}>
+                  <Text style={{ color: '#00bcd4', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>💡 Лучший вариант: BT слушать + телефонный микрофон</Text>
+                  <Text style={{ color: '#aaa', fontSize: 10, lineHeight: 15 }}>
+                    В настройках телефона → Bluetooth → твои наушники → выключи{' '}
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>"Звонки" / "Phone calls"</Text>
+                    {'\n'}Тогда: слушаешь через BT (A2DP), пишет встроенный микрофон — задержка стабильная ~100 мс.
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+                  <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
+                    style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', width: 60, textAlign: 'center' }}>{prerollMs}</Text>
+                  <TouchableOpacity onPress={() => savePreroll(Math.min(400, prerollMs + 20))}
+                    style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>+</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)}
+                  style={{ alignSelf: 'center', marginTop: 8 }}>
+                  <Text style={{ color: '#555', fontSize: 11 }}>сброс → {DEFAULT_PREROLL_MS} мс</Text>
                 </TouchableOpacity>
-              );
-            })}
-            {/* Latency compensation row */}
-            <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
-              <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация латентности (мс)</Text>
-              <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
-                Встроенный микрофон: ~100 мс (стабильно){'\n'}
-                Bluetooth наушники: ~300 мс (нестабильно){'\n'}{'\n'}
-                Если 2-я дорожка запаздывает — увеличь.{'\n'}
-                Если опережает — уменьши.
-              </Text>
-              {/* Bluetooth tip */}
-              <View style={{ backgroundColor: '#00bcd410', borderRadius: 8, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#00bcd430' }}>
-                <Text style={{ color: '#00bcd4', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>💡 Лучший вариант: BT слушать + телефонный микрофон</Text>
-                <Text style={{ color: '#aaa', fontSize: 10, lineHeight: 15 }}>
-                  В настройках телефона → Bluetooth → твои наушники → выключи{' '}
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>"Звонки" / "Phone calls"</Text>
-                  {'\n'}Тогда: слушаешь через BT (A2DP), пишет встроенный микрофон — задержка стабильная ~100 мс.
+              </View>
+
+              <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
+                <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 8 }]}>Маршрутизация аудио</Text>
+
+                <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Воспроизведение:</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                  {([
+                    { id: 'auto',     label: 'Авто',       icon: 'hardware-chip-outline' },
+                    { id: 'speaker',  label: 'Динамик',    icon: 'volume-high-outline' },
+                    { id: 'earpiece', label: 'Трубка',     icon: 'call-outline' },
+                  ] as const).map(opt => {
+                    const active = audioRouting.output === opt.id;
+                    return (
+                      <TouchableOpacity key={opt.id}
+                        onPress={() => saveAudioRouting({ ...audioRouting, output: opt.id })}
+                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
+                          backgroundColor: active ? '#7c4dff22' : '#1e1e28',
+                          borderColor: active ? '#7c4dff' : '#2a2a38' }}>
+                        <Ionicons name={opt.icon} size={13} color={active ? '#7c4dff' : '#555'} />
+                        <Text style={{ color: active ? '#7c4dff' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Микрофон:</Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                  {([
+                    { id: 'auto',    label: 'Авто (система)', icon: 'mic-outline' },
+                    { id: 'builtin', label: 'Встроенный',     icon: 'phone-portrait-outline' },
+                  ] as const).map(opt => {
+                    const active = audioRouting.mic === opt.id;
+                    return (
+                      <TouchableOpacity key={opt.id}
+                        onPress={() => saveAudioRouting({ ...audioRouting, mic: opt.id })}
+                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
+                          backgroundColor: active ? '#00e67622' : '#1e1e28',
+                          borderColor: active ? '#00e676' : '#2a2a38' }}>
+                        <Ionicons name={opt.icon} size={13} color={active ? '#00e676' : '#555'} />
+                        <Text style={{ color: active ? '#00e676' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={{ color: '#444', fontSize: 10, lineHeight: 14 }}>
+                  Выбор микрофона зависит от системы. Для принудительного выбора встроенного — отключи «Звонки» в настройках Bluetooth.
                 </Text>
               </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-                <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
-                  style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>−</Text>
-                </TouchableOpacity>
-                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', width: 60, textAlign: 'center' }}>{prerollMs}</Text>
-                <TouchableOpacity onPress={() => savePreroll(Math.min(400, prerollMs + 20))}
-                  style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>+</Text>
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)}
-                style={{ alignSelf: 'center', marginTop: 8 }}>
-                <Text style={{ color: '#555', fontSize: 11 }}>сброс → {DEFAULT_PREROLL_MS} мс</Text>
+
+              <TouchableOpacity
+                onPress={() => setShowQuality(false)}
+                style={[styles.modalCancelBtn, { marginTop: 18, marginBottom: 6, flexGrow: 0, alignSelf: 'center', paddingHorizontal: 32 }]}
+              >
+                <Text style={styles.modalCancelText}>Закрыть</Text>
               </TouchableOpacity>
-            </View>
-
-            {/* Audio routing section */}
-            <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
-              <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 8 }]}>Маршрутизация аудио</Text>
-
-              {/* Output device */}
-              <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Воспроизведение:</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                {([
-                  { id: 'auto',     label: 'Авто',       icon: 'hardware-chip-outline' },
-                  { id: 'speaker',  label: 'Динамик',    icon: 'volume-high-outline' },
-                  { id: 'earpiece', label: 'Трубка',     icon: 'call-outline' },
-                ] as const).map(opt => {
-                  const active = audioRouting.output === opt.id;
-                  return (
-                    <TouchableOpacity key={opt.id}
-                      onPress={() => saveAudioRouting({ ...audioRouting, output: opt.id })}
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
-                        backgroundColor: active ? '#7c4dff22' : '#1e1e28',
-                        borderColor: active ? '#7c4dff' : '#2a2a38' }}>
-                      <Ionicons name={opt.icon} size={13} color={active ? '#7c4dff' : '#555'} />
-                      <Text style={{ color: active ? '#7c4dff' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Input device */}
-              <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Микрофон:</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                {([
-                  { id: 'auto',    label: 'Авто (система)', icon: 'mic-outline' },
-                  { id: 'builtin', label: 'Встроенный',     icon: 'phone-portrait-outline' },
-                ] as const).map(opt => {
-                  const active = audioRouting.mic === opt.id;
-                  return (
-                    <TouchableOpacity key={opt.id}
-                      onPress={() => saveAudioRouting({ ...audioRouting, mic: opt.id })}
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
-                        backgroundColor: active ? '#00e67622' : '#1e1e28',
-                        borderColor: active ? '#00e676' : '#2a2a38' }}>
-                      <Ionicons name={opt.icon} size={13} color={active ? '#00e676' : '#555'} />
-                      <Text style={{ color: active ? '#00e676' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <Text style={{ color: '#444', fontSize: 10, lineHeight: 14 }}>
-                Выбор микрофона зависит от системы. Для принудительного выбора встроенного — отключи «Звонки» в настройках Bluetooth.
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => setShowQuality(false)}
-              style={[styles.modalCancelBtn, { marginTop: 14, alignSelf: 'center', paddingHorizontal: 32 }]}
-            >
-              <Text style={styles.modalCancelText}>Закрыть</Text>
-            </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1466,6 +1576,39 @@ const styles = StyleSheet.create({
   qualitySub:  { color: '#555', fontSize: 11, marginTop: 2 },
 
   modalOverlay: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'center', alignItems: 'center' },
+  /** Полноэкранный слой: таб-бар скрывается отдельно; карточка выше Pressable-затемнения */
+  studioModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  studioModalCard: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '92%',
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+    overflow: 'hidden',
+  },
+  studioModalCardSm: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 20,
+    padding: 22,
+    width: '100%',
+    maxWidth: 380,
+    maxHeight: '90%',
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+  },
+  studioModalScrollContent: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 12,
+  },
   modalBox: { backgroundColor: '#1a1a24', borderRadius: 20, padding: 24, width: '80%', borderWidth: 1, borderColor: '#2a2a38' },
   modalTitle: { color: '#ccc', fontSize: 16, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
   modalInput: { backgroundColor: '#0d0d15', borderRadius: 12, padding: 12, color: '#e0e0e0', fontSize: 15, borderWidth: 1, borderColor: '#2a2a38', marginBottom: 16 },

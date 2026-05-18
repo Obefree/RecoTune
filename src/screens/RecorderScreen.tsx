@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Alert, Animated, Modal, TextInput,
+  Alert, Animated, Modal, TextInput, ScrollView, Pressable, Platform, useWindowDimensions,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTabBarVisibility } from '../context/TabBarVisibility';
 import SeekBar from '../components/SeekBar';
 import {
   RecQuality, QUALITY_PRESETS, DEFAULT_QUALITY,
@@ -34,6 +35,9 @@ function fmtDate(ts: number) {
 
 export default function RecorderScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowH } = useWindowDimensions();
+  const { setTabBarHidden } = useTabBarVisibility();
+  const recorderModalScrollMaxH = Math.max(260, Math.round(windowH * 0.72) - insets.top - insets.bottom - 24);
   const [recordings, setRecordings]   = useState<Recording[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recDur, setRecDur]           = useState(0);
@@ -44,6 +48,11 @@ export default function RecorderScreen() {
   const [showQuality, setShowQuality] = useState(false);
   const qualityRef = useRef<RecQuality>(DEFAULT_QUALITY);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
+
+  const anyRecModalOpen = showQuality || renameRec !== null;
+  useEffect(() => {
+    setTabBarHidden(anyRecModalOpen);
+  }, [anyRecModalOpen, setTabBarHidden]);
 
   // Single-source-of-truth for playback
   const [playingId, setPlayingId]       = useState<string | null>(null);
@@ -102,11 +111,6 @@ export default function RecorderScreen() {
     loadQualitySettings().then(q => { setQuality(q); qualityRef.current = q; });
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    load();
-    return () => { killSound(); };
-  }, []));
-
   /* ─── Sound teardown (sync-safe) ─── */
   const killSound = useCallback(() => {
     const s = soundRef.current;
@@ -120,6 +124,17 @@ export default function RecorderScreen() {
         .finally(() => s.unloadAsync().catch(() => {}));
     }
   }, []);
+
+  useFocusEffect(useCallback(() => {
+    load();
+    return () => {
+      killSound();
+      setTabBarHidden(false);
+      setShowQuality(false);
+      setRenameRec(null);
+      setRenameText('');
+    };
+  }, [killSound, load, setTabBarHidden]));
 
   /* ─── Playback ─── */
   const togglePlay = useCallback(async (rec: Recording) => {
@@ -359,63 +374,90 @@ export default function RecorderScreen() {
           )}
       </View>
       {/* Quality modal */}
-      <Modal visible={showQuality} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Recording Quality</Text>
-            <Text style={styles.qualityHint}>Shared with Studio — applies to new recordings</Text>
-            {QUALITY_PRESETS.map((p, i) => {
-              const active =
-                p.q.sampleRate === quality.sampleRate &&
-                p.q.channels   === quality.channels   &&
-                p.q.bitRate    === quality.bitRate;
-              return (
-                <TouchableOpacity key={i}
-                  onPress={async () => {
-                    setQuality(p.q); qualityRef.current = p.q;
-                    await saveQualitySettings(p.q);
-                  }}
-                  style={[styles.qualityRow, active && styles.qualityRowActive]}
-                  activeOpacity={0.75}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.qualityName, active && { color: '#7c4dff' }]}>{p.label}</Text>
-                    <Text style={styles.qualitySub}>{p.sub}</Text>
-                  </View>
-                  {active && <Ionicons name="checkmark-circle" size={20} color="#7c4dff" />}
-                </TouchableOpacity>
-              );
-            })}
-            <TouchableOpacity onPress={() => setShowQuality(false)}
-              style={[styles.modalCancel, { marginTop: 14, alignSelf: 'center', paddingHorizontal: 32 }]}>
-              <Text style={styles.modalCancelText}>Close</Text>
-            </TouchableOpacity>
+      <Modal
+        visible={showQuality}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => setShowQuality(false)}
+      >
+        <View style={[styles.recModalOverlay, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowQuality(false)} accessibilityLabel="Закрыть" />
+          <View style={styles.recModalCard}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              style={{ maxHeight: recorderModalScrollMaxH }}
+              contentContainerStyle={styles.recModalScrollContent}
+            >
+              <Text style={styles.modalTitle}>Recording Quality</Text>
+              <Text style={styles.qualityHint}>Shared with Studio — applies to new recordings</Text>
+              {QUALITY_PRESETS.map((p, i) => {
+                const active =
+                  p.q.sampleRate === quality.sampleRate &&
+                  p.q.channels   === quality.channels   &&
+                  p.q.bitRate    === quality.bitRate;
+                return (
+                  <TouchableOpacity key={i}
+                    onPress={async () => {
+                      setQuality(p.q); qualityRef.current = p.q;
+                      await saveQualitySettings(p.q);
+                    }}
+                    style={[styles.qualityRow, active && styles.qualityRowActive]}
+                    activeOpacity={0.75}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.qualityName, active && { color: '#7c4dff' }]}>{p.label}</Text>
+                      <Text style={styles.qualitySub}>{p.sub}</Text>
+                    </View>
+                    {active && <Ionicons name="checkmark-circle" size={20} color="#7c4dff" />}
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity onPress={() => setShowQuality(false)}
+                style={[styles.modalCancel, { marginTop: 14, flexGrow: 0, alignSelf: 'center', paddingHorizontal: 32 }]}>
+                <Text style={styles.modalCancelText}>Close</Text>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </View>
       </Modal>
 
       {/* Rename modal */}
-      <Modal visible={renameRec !== null} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Rename</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={renameText}
-              onChangeText={setRenameText}
-              autoFocus
-              selectTextOnFocus
-              onSubmitEditing={applyRename}
-              returnKeyType="done"
-            />
-            <View style={styles.modalBtns}>
-              <TouchableOpacity onPress={() => { setRenameRec(null); setRenameText(''); }} style={styles.modalCancel}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={applyRename} style={styles.modalConfirm}>
-                <Text style={styles.modalConfirmText}>Save</Text>
-              </TouchableOpacity>
-            </View>
+      <Modal
+        visible={renameRec !== null}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => { setRenameRec(null); setRenameText(''); }}
+      >
+        <View style={[styles.recModalOverlay, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => { setRenameRec(null); setRenameText(''); }}
+            accessibilityLabel="Закрыть"
+          />
+          <View style={styles.recModalCardSm}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>Rename</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={renameText}
+                onChangeText={setRenameText}
+                autoFocus
+                selectTextOnFocus
+                onSubmitEditing={applyRename}
+                returnKeyType="done"
+              />
+              <View style={styles.modalBtns}>
+                <TouchableOpacity onPress={() => { setRenameRec(null); setRenameText(''); }} style={styles.modalCancel}>
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={applyRename} style={styles.modalConfirm}>
+                  <Text style={styles.modalConfirmText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -456,6 +498,34 @@ const styles = StyleSheet.create({
   seekWrap: { marginTop: 10, marginBottom: 2 },
   timeText: { color: '#7c4dff', fontSize: 11, marginTop: 2 },
   deleteBtn: { padding: 6 },
+  recModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  recModalCard: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '92%',
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+    overflow: 'hidden',
+  },
+  recModalCardSm: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 20,
+    padding: 22,
+    width: '100%',
+    maxWidth: 380,
+    maxHeight: '88%',
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+  },
+  recModalScrollContent: { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 10 },
   modalOverlay: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'center', alignItems: 'center' },
   modalBox: { backgroundColor: '#1a1a24', borderRadius: 20, padding: 24, width: '82%', borderWidth: 1, borderColor: '#2a2a38' },
   modalTitle: { color: '#ccc', fontSize: 15, fontWeight: '700', marginBottom: 14, textAlign: 'center' },
