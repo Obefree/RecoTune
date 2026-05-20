@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -16,27 +17,55 @@ import WebView from 'react-native-webview';
 import { useTabBarVisibility } from '../context/TabBarVisibility';
 
 /* ─── Types ─── */
-interface Track { id: string; uri: string; label: string; color: string; offsetMs?: number }
+interface Track {
+  id: string;
+  uri: string;
+  label: string;
+  color: string;
+  offsetMs?: number;
+  /** Линейная громкость в сведении / Play all (0…2, 1 = номинал). В expo-av ограничиваем до 1. */
+  gain?: number;
+}
 interface Session { id: string; name: string; createdAt: number; tracks: Track[] }
 
 import {
   RecQuality, QUALITY_PRESETS, DEFAULT_QUALITY,
   loadQualitySettings, saveQualitySettings, buildRecordingOptions, presetLabel,
 } from '../utils/qualitySettings';
+import {
+  PREROLL_MS_WIRED,
+  PREROLL_MS_BLUETOOTH,
+  DEFAULT_AUDIO_ROUTING,
+  OUTPUT_OPTIONS,
+  INPUT_GROUPS,
+  type StudioAudioRouting,
+  type AudioRouteSnapshot,
+  type AudioOutputRoute,
+  type RecordingInputInfo,
+  probeRecordingInputs,
+  migrateStudioAudioRouting,
+  applyStudioAudioMode,
+  applyRecordingInput,
+  labelKind,
+  prerollForInput,
+  prerollForOutput,
+  inputsOfKind,
+  suggestInputForOutput,
+  outputDeviceMissing,
+} from '../utils/studioAudioRouting';
 
 /* ─── Constants ─── */
 const MAX_TRACKS    = 10;
 const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.json';
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
 const LATENCY_FILE        = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
-const CUSTOM_PRESET_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_custom_preset.json';
 const AUDIO_ROUTING_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_audio_routing.json';
 
 // Android mic hardware latency is typically 80–200 ms.
 // prerollMs = how long to wait (after rec starts) before starting playback.
 // New track stores this as offsetMs so that silence is skipped during playback.
-// 150 ms works well on most Android devices. User can fine-tune via the bar.
-const DEFAULT_PREROLL_MS = 150;
+// Дорожки 2+ получают offsetMs = preroll при записи; пресеты: провод 150, BT 700.
+const DEFAULT_PREROLL_MS = PREROLL_MS_WIRED;
 
 const TRACK_COLORS = [
   '#7c4dff', '#00e676', '#ff5252', '#ffeb3b',
@@ -51,6 +80,12 @@ const TRACK_LABELS = [
 
 function fmt(s: number) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+}
+
+function playbackVolume(track: Track, muted: boolean): number {
+  if (muted) return 0;
+  const g = typeof track.gain === 'number' && Number.isFinite(track.gain) ? track.gain : 1;
+  return Math.min(1, Math.max(0, g));
 }
 
 /* ─── HoldButton — tap once, hold to auto-repeat every 80 ms ─── */
@@ -116,9 +151,14 @@ interface TrackRowProps {
   onRename: (track: Track) => void;
   onDelete: (track: Track) => void;
   onOffsetChange: (track: Track, delta: number) => void;
+  gain: number;
+  onGainChange: (track: Track, delta: number) => void;
 }
 
-function TrackRow({ track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos, allPlayDur, isPlayingAll, onSoloToggle, onMuteToggle, onSeek, onRename, onDelete, onOffsetChange }: TrackRowProps) {
+function TrackRow({
+  track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos, allPlayDur, isPlayingAll,
+  onSoloToggle, onMuteToggle, onSeek, onRename, onDelete, onOffsetChange, gain, onGainChange,
+}: TrackRowProps) {
   const rowWidthRef = useRef(0);
   const isSoloRef  = useRef(isSolo);
   const soloDurRef = useRef(soloDur);
@@ -161,17 +201,20 @@ function TrackRow({ track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos,
       {/* Info + progress bar */}
       <View style={styles.trackMid}>
         <View style={styles.trackLabelRow}>
-          <Text style={[styles.trackLabel, isMuted && { color: '#444' }]}>{track.label}</Text>
+          <Text style={[styles.trackLabel, isMuted && { color: '#444' }]} numberOfLines={1}>
+            {track.label}
+          </Text>
           {isSolo && (
             <Text style={[styles.trackTime, { color: track.color }]}>
               {fmt(soloPos)} / {fmt(soloDur)}
             </Text>
           )}
-          {/* Per-track offset (tracks 2+ only) — hold to auto-repeat, long-press value to reset */}
+        </View>
+        <View style={styles.trackAdjustRow}>
           {index > 0 && (
             <View style={styles.trackOffsetRow}>
-              <HoldButton onPress={() => onOffsetChange(track, -10)}
-                style={styles.trackOffsetBtnArea}>
+              <Text style={styles.trackChipTag}>мс</Text>
+              <HoldButton onPress={() => onOffsetChange(track, -10)} style={styles.trackOffsetBtnArea}>
                 <Text style={styles.trackOffsetBtn}>−</Text>
               </HoldButton>
               <TouchableOpacity
@@ -180,17 +223,28 @@ function TrackRow({ track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos,
                 hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
                 style={styles.trackOffsetValArea}>
                 <Text style={[styles.trackOffsetVal, {
-                  color: (track.offsetMs ?? 0) > 100 ? '#00e676' : (track.offsetMs ?? 0) < 0 ? '#ff9800' : '#888'
+                  color: (track.offsetMs ?? 0) > 100 ? '#00e676' : (track.offsetMs ?? 0) < 0 ? '#ff9800' : '#888',
                 }]}>
                   {(track.offsetMs ?? 0) > 0 ? '+' : ''}{track.offsetMs ?? 0}
                 </Text>
               </TouchableOpacity>
-              <HoldButton onPress={() => onOffsetChange(track, +10)}
-                style={styles.trackOffsetBtnArea}>
+              <HoldButton onPress={() => onOffsetChange(track, +10)} style={styles.trackOffsetBtnArea}>
                 <Text style={styles.trackOffsetBtn}>+</Text>
               </HoldButton>
             </View>
           )}
+          <View style={styles.trackOffsetRow}>
+            <Text style={styles.trackChipTag}>VOL</Text>
+            <HoldButton onPress={() => onGainChange(track, -0.05)} style={styles.trackOffsetBtnArea}>
+              <Text style={[styles.trackOffsetBtn, { color: '#aaa' }]}>−</Text>
+            </HoldButton>
+            <View style={styles.trackOffsetValArea}>
+              <Text style={styles.trackOffsetVal}>{Math.round(gain * 100)}%</Text>
+            </View>
+            <HoldButton onPress={() => onGainChange(track, +0.05)} style={styles.trackOffsetBtnArea}>
+              <Text style={[styles.trackOffsetBtn, { color: '#aaa' }]}>+</Text>
+            </HoldButton>
+          </View>
         </View>
 
         {/* Solo scrub bar */}
@@ -235,10 +289,15 @@ export default function StudioScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { setTabBarHidden } = useTabBarVisibility();
-  /** Высота прокрутки модалок: иначе ScrollView раздувается по контенту и не скроллится на низких экранах */
-  const studioModalScrollMaxH = Math.max(280, Math.round(windowHeight * 0.88) - insets.top - insets.bottom - 24);
+  /** Высота карточки модалки; кнопка «Закрыть» — снаружи ScrollView */
+  const studioModalScrollMaxH = Math.max(260, Math.round(windowHeight * 0.78) - insets.top - insets.bottom - 32);
+  const studioModalBodyMaxH = studioModalScrollMaxH - 56;
   const [sessions, setSessions]           = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
+  /** Список сессий: компактно с проектом, ~⅓ экрана без проекта */
+  const sessionsListMaxH = activeSession
+    ? 72
+    : Math.min(280, Math.round(windowHeight * 0.34));
   const [isRecording, setIsRecording]     = useState(false);
   const [recDuration, setRecDuration]     = useState(0);
   const [playingAll, setPlayingAll]       = useState(false);
@@ -264,11 +323,11 @@ export default function StudioScreen() {
   // Latency compensation
   const [prerollMs, setPrerollMs]         = useState(DEFAULT_PREROLL_MS);
   const prerollRef = useRef(DEFAULT_PREROLL_MS);
-  const [customPreset, setCustomPreset]   = useState<number | null>(null);
 
-  // Audio routing
-  const [audioRouting, setAudioRouting]   = useState<{ output: 'auto'|'earpiece'|'speaker'; mic: 'auto'|'builtin' }>({ output: 'auto', mic: 'auto' });
-  const audioRoutingRef = useRef<{ output: 'auto'|'earpiece'|'speaker'; mic: 'auto'|'builtin' }>({ output: 'auto', mic: 'auto' });
+  const [audioRouting, setAudioRouting]   = useState<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
+  const audioRoutingRef = useRef<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
+  const [audioRouteSnap, setAudioRouteSnap] = useState<AudioRouteSnapshot | null>(null);
+  const [audioRouteLoading, setAudioRouteLoading] = useState(false);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { prerollRef.current = prerollMs; }, [prerollMs]);
 
@@ -340,17 +399,12 @@ export default function StudioScreen() {
       }
     } catch {}
     try {
-      const info = await FileSystem.getInfoAsync(CUSTOM_PRESET_FILE);
-      if (info.exists) {
-        const val = JSON.parse(await FileSystem.readAsStringAsync(CUSTOM_PRESET_FILE));
-        if (typeof val === 'number' && val > 0) setCustomPreset(val);
-      }
-    } catch {}
-    try {
       const info = await FileSystem.getInfoAsync(AUDIO_ROUTING_FILE);
       if (info.exists) {
         const val = JSON.parse(await FileSystem.readAsStringAsync(AUDIO_ROUTING_FILE));
-        if (val) setAudioRouting(val);
+        const merged = migrateStudioAudioRouting(val);
+        setAudioRouting(merged);
+        audioRoutingRef.current = merged;
       }
     } catch {}
   }, []);
@@ -360,25 +414,56 @@ export default function StudioScreen() {
     await FileSystem.writeAsStringAsync(LATENCY_FILE, JSON.stringify(ms));
   }, []);
 
-  const saveCustomPreset = useCallback(async (ms: number) => {
-    setCustomPreset(ms);
-    await FileSystem.writeAsStringAsync(CUSTOM_PRESET_FILE, JSON.stringify(ms));
+  const refreshAudioRoutes = useCallback(async (): Promise<AudioRouteSnapshot> => {
+    setAudioRouteLoading(true);
+    try {
+      const snap = await probeRecordingInputs();
+      setAudioRouteSnap(snap);
+      return snap;
+    } finally {
+      setAudioRouteLoading(false);
+    }
   }, []);
 
-  const saveAudioRouting = useCallback(async (r: typeof audioRouting) => {
+  const saveAudioRouting = useCallback(async (r: StudioAudioRouting, suggestPreroll?: number) => {
     setAudioRouting(r);
     audioRoutingRef.current = r;
     await FileSystem.writeAsStringAsync(AUDIO_ROUTING_FILE, JSON.stringify(r));
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        playThroughEarpieceAndroid: r.output === 'earpiece',
-      });
+      await applyStudioAudioMode(r);
     } catch {}
-  }, [audioRouting]);
+    const pr = suggestPreroll ?? (r.mode === 'manual' ? prerollForOutput(r.output) : undefined);
+    if (typeof pr === 'number' && pr > 0) await savePreroll(pr);
+  }, [savePreroll]);
 
-  useEffect(() => { loadSessions(); loadQuality(); }, []);
+  const pickOutput = useCallback((output: AudioOutputRoute) => {
+    const snap = audioRouteSnap;
+    const suggestedInp = snap ? suggestInputForOutput(output, snap.inputs) : undefined;
+    const next: StudioAudioRouting = {
+      mode: 'manual',
+      output,
+      inputUid: suggestedInp?.uid ?? audioRoutingRef.current.inputUid,
+    };
+    void saveAudioRouting(next, prerollForOutput(output));
+  }, [audioRouteSnap, saveAudioRouting]);
+
+  const pickInput = useCallback((inp: RecordingInputInfo) => {
+    void saveAudioRouting(
+      { mode: 'manual', output: audioRoutingRef.current.output, inputUid: inp.uid },
+      prerollForInput(inp),
+    );
+  }, [saveAudioRouting]);
+
+  useEffect(() => {
+    if (showQuality) void refreshAudioRoutes();
+  }, [showQuality, refreshAudioRoutes]);
+
+  useEffect(() => {
+    loadSessions();
+    loadQuality().then(() => {
+      applyStudioAudioMode(audioRoutingRef.current).catch(() => {});
+    });
+  }, []);
 
   const anyStudioModalOpen =
     showQuality || showExport || showNewModal || renameTarget !== null;
@@ -434,10 +519,10 @@ export default function StudioScreen() {
       }
       killSolo();
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      await applyStudioAudioMode(audioRoutingRef.current);
       const { sound } = await Audio.Sound.createAsync(
         { uri: track.uri },
-        { shouldPlay: true, progressUpdateIntervalMillis: 80 },
+        { shouldPlay: true, progressUpdateIntervalMillis: 80, volume: playbackVolume(track, false) },
         (st: AVPlaybackStatus) => {
           if (!st.isLoaded) return;
           setSoloPos(st.positionMillis / 1000);
@@ -500,7 +585,8 @@ export default function StudioScreen() {
     // Apply live volume if currently playing
     const idx = allSoundTrackIds.current.indexOf(track.id);
     if (idx >= 0 && allSounds.current[idx]) {
-      allSounds.current[idx].setStatusAsync({ volume: next[track.id] ? 0 : 1 }).catch(() => {});
+      const v = playbackVolume(track, !!next[track.id]);
+      allSounds.current[idx].setStatusAsync({ volume: v }).catch(() => {});
     }
   }, []);
 
@@ -512,11 +598,7 @@ export default function StudioScreen() {
     setAllPlayPos(0);
     setAllPlayDur(0);
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        playThroughEarpieceAndroid: audioRoutingRef.current.output === 'earpiece',
-      });
+      await applyStudioAudioMode(audioRoutingRef.current);
 
       // Load every sound pre-positioned at its offset so playAsync() fires
       // immediately without a second round-trip to the bridge.
@@ -525,7 +607,7 @@ export default function StudioScreen() {
       const loaded = await Promise.all(
         session.tracks.map((t) => {
           const off = Math.max(0, t.offsetMs ?? 0); // negative handled via setTimeout below
-          const vol = mutedRef.current[t.id] ? 0 : 1;
+          const vol = playbackVolume(t, !!mutedRef.current[t.id]);
           return Audio.Sound.createAsync(
             { uri: t.uri },
             { shouldPlay: false, positionMillis: off, volume: vol }
@@ -568,18 +650,14 @@ export default function StudioScreen() {
     await killAllSounds();
 
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        playThroughEarpieceAndroid: audioRoutingRef.current.output === 'earpiece',
-      });
+      await applyStudioAudioMode(audioRoutingRef.current, { recording: true });
 
       // Load all existing tracks with the SAME offsets and mute state as playAll,
       // so the musician hears exactly what will be heard during playback.
       const playbackSounds = await Promise.all(
         session.tracks.map((t) => {
           const off = Math.max(0, t.offsetMs ?? 0);
-          const vol = mutedRef.current[t.id] ? 0 : 1;
+          const vol = playbackVolume(t, !!mutedRef.current[t.id]);
           return Audio.Sound.createAsync(
             { uri: t.uri },
             { shouldPlay: false, positionMillis: off, volume: vol }
@@ -591,6 +669,7 @@ export default function StudioScreen() {
       // Prepare recording
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
+      await applyRecordingInput(rec, audioRoutingRef.current);
 
       // ── Simultaneous start ───────────────────────────────────────────
       // Fire playback first (fire-and-forget), then await mic start.
@@ -644,6 +723,7 @@ export default function StudioScreen() {
           color:    TRACK_COLORS[idx % TRACK_COLORS.length],
           // Strip the leading silence introduced by the preroll approach
           offsetMs: idx > 0 ? prerollRef.current : 0,
+          gain:     1,
         };
         const updated: Session = { ...currentSession, tracks: [...currentSession.tracks, track] };
         const next = currentSessions.map(s => s.id === updated.id ? updated : s);
@@ -672,6 +752,86 @@ export default function StudioScreen() {
     await saveSessions(next);
     liveResyncTrackOffsets(updated);
   }, [saveSessions, liveResyncTrackOffsets]);
+
+  const updateTrackGain = useCallback(async (track: Track, delta: number) => {
+    const sess = activeSessionRef.current;
+    if (!sess) return;
+    const cur = typeof track.gain === 'number' && Number.isFinite(track.gain) ? track.gain : 1;
+    const nextG = Math.round(Math.max(0, Math.min(2, cur + delta)) * 100) / 100;
+    const updatedTracks = sess.tracks.map(t => (t.id === track.id ? { ...t, gain: nextG } : t));
+    const updated: Session = { ...sess, tracks: updatedTracks };
+    const next = sessionsRef.current.map(s => s.id === updated.id ? updated : s);
+    setSessions(next);
+    setActiveSession(updated);
+    await saveSessions(next);
+    const idx = allSoundTrackIds.current.indexOf(track.id);
+    if (idx >= 0 && allSounds.current[idx] && !mutedRef.current[track.id]) {
+      allSounds.current[idx].setStatusAsync({ volume: Math.min(1, nextG) }).catch(() => {});
+    }
+  }, [saveSessions]);
+
+  /* ── Загрузить минус (первая дорожка) из файла ── */
+  const loadMinusTrack = useCallback(async () => {
+    const sess = activeSessionRef.current;
+    if (!sess) {
+      Alert.alert('Studio', 'Сначала выберите или создайте сессию.');
+      return;
+    }
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+      if (res.canceled || !res.assets?.[0]) return;
+      const asset = res.assets[0];
+      await FileSystem.makeDirectoryAsync(STUDIO_DIR, { intermediates: true });
+      const m = asset.name?.match(/\.([a-zA-Z0-9]+)$/);
+      const ext = (m?.[1] ?? 'm4a').toLowerCase();
+      const dst = `${STUDIO_DIR}minus_${Date.now()}.${ext}`;
+      await FileSystem.copyAsync({ from: asset.uri, to: dst });
+      const ts = Date.now();
+      const newTrack: Track = {
+        id: `t_${ts}`,
+        uri: dst,
+        label: 'Минус',
+        color: TRACK_COLORS[0],
+        offsetMs: 0,
+        gain: 1,
+      };
+
+      const apply = async () => {
+        const latest = activeSessionRef.current;
+        if (!latest) return;
+        let nextTracks: Track[];
+        if (latest.tracks.length === 0) {
+          nextTracks = [newTrack];
+        } else {
+          const old0 = latest.tracks[0];
+          if (old0.uri.startsWith(STUDIO_DIR)) {
+            await FileSystem.deleteAsync(old0.uri, { idempotent: true }).catch(() => {});
+          }
+          nextTracks = [newTrack, ...latest.tracks.slice(1)];
+        }
+        const updated: Session = { ...latest, tracks: nextTracks };
+        const nextS = sessionsRef.current.map(s => s.id === updated.id ? updated : s);
+        setSessions(nextS);
+        setActiveSession(updated);
+        await saveSessions(nextS);
+      };
+
+      if (sess.tracks.length > 0) {
+        Alert.alert(
+          'Минус (дорожка 1)',
+          'Заменить первую дорожку выбранным файлом? Остальные дорожки и смещения сохранятся.',
+          [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Заменить', style: 'destructive', onPress: () => { void apply(); } },
+          ],
+        );
+      } else {
+        await apply();
+      }
+    } catch (e) {
+      Alert.alert('Импорт', String(e));
+    }
+  }, [saveSessions]);
 
   /* ── Reset all per-track offsets to defaults ── */
   const resetAllOffsets = useCallback(async () => {
@@ -794,6 +954,15 @@ export default function StudioScreen() {
 
       // Build self-contained HTML that mixes audio via Web Audio API
       const tracksJson = JSON.stringify(tracksB64);
+      const offsets = session.tracks.map(t => t.offsetMs ?? 0);
+      const gains = session.tracks.map(t => {
+        let g = (typeof t.gain === 'number' && Number.isFinite(t.gain)) ? t.gain : 1;
+        g = Math.max(0, Math.min(2, g));
+        if (mutedRef.current[t.id]) g = 0;
+        return g;
+      });
+      const offsetsJson = JSON.stringify(offsets);
+      const gainsJson = JSON.stringify(gains);
       const stereo   = qualityRef.current.channels === 2 ? 'true' : 'false';
       const bitDepth = mixBitDepth;
       const html = `<!DOCTYPE html><html><body><script>
@@ -845,6 +1014,8 @@ function normArr(arr){
 (async function(){
   try{
     var tracks=${tracksJson};
+    var offsets=${offsetsJson};
+    var gains=${gainsJson};
     post({type:'progress',msg:'Decoding '+tracks.length+' tracks…'});
     var actx=new (window.AudioContext||window.webkitAudioContext)();
     var buffers=[];
@@ -855,15 +1026,33 @@ function normArr(arr){
     }
     await actx.close();
     var sr=buffers[0].sampleRate;
-    var maxLen=Math.max.apply(null,buffers.map(function(b){return b.length;}));
-    post({type:'progress',msg:'Mixing…'});
-    var mixL=new Float32Array(maxLen);
-    var mixR=STEREO?new Float32Array(maxLen):null;
-    for(var b=0;b<buffers.length;b++){
-      var L0=buffers[b].getChannelData(0);
-      var R0=STEREO?(buffers[b].numberOfChannels>1?buffers[b].getChannelData(1):L0):null;
-      for(var s=0;s<L0.length;s++) mixL[s]+=L0[s];
-      if(STEREO&&R0) for(var s=0;s<R0.length;s++) mixR[s]+=R0[s];
+    var maxOut=0;
+    for(var i=0;i<buffers.length;i++){
+      var d=Math.round((offsets[i]||0)*sr/1000);
+      var len=buffers[i].length;
+      var ext=len-d;
+      if(ext>maxOut)maxOut=ext;
+    }
+    if(maxOut<1)maxOut=1;
+    post({type:'progress',msg:'Mixing '+maxOut+' samples (offsets + VOL)…'});
+    var mixL=new Float32Array(maxOut);
+    var mixR=STEREO?new Float32Array(maxOut):null;
+    for(var s=0;s<maxOut;s++){
+      var accL=0,accR=0;
+      for(var b=0;b<buffers.length;b++){
+        var d=Math.round((offsets[b]||0)*sr/1000);
+        var g=(gains[b]!=null)?gains[b]:1;
+        if(g===0)continue;
+        var len=buffers[b].length;
+        var fi=s+d;
+        if(fi<0||fi>=len)continue;
+        var L0=buffers[b].getChannelData(0);
+        var R0=STEREO?(buffers[b].numberOfChannels>1?buffers[b].getChannelData(1):L0):null;
+        accL+=g*L0[fi];
+        if(STEREO&&mixR&&R0) accR+=g*R0[fi];
+      }
+      mixL[s]=accL;
+      if(STEREO&&mixR) mixR[s]=accR;
     }
     normArr(mixL); if(STEREO&&mixR) normArr(mixR);
     post({type:'progress',msg:'Encoding WAV ('+(STEREO?'Stereo':'Mono')+')…'});
@@ -938,50 +1127,76 @@ function normArr(arr){
     </TouchableOpacity>
   );
 
+  const closeProject = useCallback(() => {
+    setActiveSession(null);
+    killSolo();
+    void killAllSounds();
+  }, [killSolo, killAllSounds]);
+
   /* ── Render ── */
   return (
     <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
       <Text style={styles.title}>Studio</Text>
 
-      {/* Sessions */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>SESSIONS</Text>
-          <TouchableOpacity onPress={() => setShowNewModal(true)} style={styles.addBtn}>
-            <Ionicons name="add" size={20} color="#00e676" />
-            <Text style={styles.addBtnText}>NEW</Text>
-          </TouchableOpacity>
-        </View>
-        <FlatList
-          data={sessions}
-          keyExtractor={i => i.id}
-          renderItem={renderSessionItem}
-          style={{ maxHeight: 180 }}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={<Text style={styles.emptyText}>No sessions — create one</Text>}
-        />
-      </View>
-
-      {/* Active session */}
-      {activeSession && (
-        <View style={[styles.section, { flex: 1 }]}>
+      <View style={styles.screenBody}>
+        {/* Список сессий: на весь экран, пока проект не открыт */}
+        <View style={[
+          styles.section,
+          styles.sessionsSection,
+          activeSession ? styles.sessionsSectionCompact : styles.sessionsSectionExpanded,
+        ]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{activeSession.name.toUpperCase()}</Text>
-            {soloTrackId && (
+            <Text style={styles.sectionTitle}>SESSIONS</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity onPress={() => setShowQuality(true)} style={styles.headerIconBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Ionicons name="settings-outline" size={18} color="#7c4dff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowNewModal(true)} style={styles.addBtn}>
+                <Ionicons name="add" size={20} color="#00e676" />
+                <Text style={styles.addBtnText}>NEW</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <FlatList
+            data={sessions}
+            keyExtractor={i => i.id}
+            renderItem={renderSessionItem}
+            style={[activeSession ? styles.sessionsListCompact : styles.sessionsListExpanded, { maxHeight: sessionsListMaxH }]}
+            showsVerticalScrollIndicator
+            nestedScrollEnabled
+            ListEmptyComponent={<Text style={styles.emptyText}>Нет сессий — нажми NEW</Text>}
+          />
+        </View>
+
+        {activeSession && (
+        <View style={[styles.section, styles.projectSection]}>
+          <View style={styles.sectionHeader}>
+            <TouchableOpacity onPress={closeProject} style={styles.projectBackBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="chevron-back" size={22} color="#888" />
+            </TouchableOpacity>
+            <View style={styles.projectTitleWrap}>
+              <Text style={[styles.sectionTitle, styles.projectTitle]} numberOfLines={1}>
+                {activeSession.name.toUpperCase()}
+              </Text>
+            </View>
+            {soloTrackId ? (
               <View style={styles.soloIndicator}>
                 <View style={styles.soloDot} />
                 <Text style={styles.soloLabel}>SOLO</Text>
               </View>
+            ) : (
+              <View style={styles.projectHeaderSpacer} />
             )}
           </View>
 
-          {/* Track list */}
           <FlatList
             data={activeSession.tracks}
             keyExtractor={t => t.id}
-            style={{ flex: 1 }}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={<Text style={styles.emptyText}>Record the first track below</Text>}
+            style={styles.trackList}
+            contentContainerStyle={activeSession.tracks.length === 0 ? styles.trackListEmpty : styles.trackListContent}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={<Text style={styles.emptyText}>Запиши первую дорожку ниже</Text>}
             renderItem={({ item, index }) => (
               <TrackRow
                 track={item}
@@ -999,97 +1214,97 @@ function normArr(arr){
                 onRename={(t) => { setRenameTarget({ type: 'track', id: t.id }); setRenameText(t.label); }}
                 onDelete={(t) => deleteTrack(t.id)}
                 onOffsetChange={updateTrackOffset}
+                gain={typeof item.gain === 'number' && Number.isFinite(item.gain) ? item.gain : 1}
+                onGainChange={updateTrackGain}
               />
             )}
+            ListFooterComponent={
+              <View style={styles.projectFooter}>
+                {isRecording ? (
+                  <View style={styles.recordingRow}>
+                    <Animated.View style={[styles.recDot, { opacity: dotOpacity }]} />
+                    <Text style={styles.recDuration}>{fmt(recDuration)}</Text>
+                    <TouchableOpacity onPress={stopRecording} style={styles.stopBtn}>
+                      <Ionicons name="stop" size={22} color="#fff" />
+                      <Text style={styles.stopBtnText}>STOP REC</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.controlRow}>
+                      <TouchableOpacity
+                        onPress={playingAll ? killAllSounds : () => playAll(activeSession)}
+                        style={[styles.controlBtn, playingAll && styles.controlBtnPlaying]}
+                        disabled={activeSession.tracks.length === 0}
+                      >
+                        <Ionicons name={playingAll ? 'stop' : 'play'} size={20} color={activeSession.tracks.length === 0 ? '#333' : '#00e676'} />
+                        <Text style={[styles.controlBtnText, activeSession.tracks.length === 0 && { color: '#333' }]}>
+                          {playingAll ? 'STOP' : 'PLAY ALL'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => recordTrack(activeSession)}
+                        style={[styles.controlBtn, styles.recCtrlBtn, activeSession.tracks.length >= MAX_TRACKS && styles.controlBtnDisabled]}
+                        disabled={activeSession.tracks.length >= MAX_TRACKS}
+                      >
+                        <Ionicons name="mic" size={20} color={activeSession.tracks.length >= MAX_TRACKS ? '#333' : '#fff'} />
+                        <Text style={[styles.recCtrlText, activeSession.tracks.length >= MAX_TRACKS && { color: '#333' }]}>
+                          {activeSession.tracks.length === 0
+                            ? 'REC TRACK 1'
+                            : activeSession.tracks.length >= MAX_TRACKS
+                            ? 'MAX REACHED'
+                            : `ADD TRACK ${activeSession.tracks.length + 1}`}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity onPress={loadMinusTrack} style={styles.minusLoadRow} activeOpacity={0.75}>
+                      <Ionicons name="musical-notes-outline" size={16} color="#ffeb3b" />
+                      <Text style={styles.minusLoadRowText}>Загрузить минус · дорожка 1</Text>
+                    </TouchableOpacity>
+                    <View style={styles.latencyBar}>
+                      <TouchableOpacity onPress={() => setShowQuality(true)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff22', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#7c4dff44' }}>
+                        <Ionicons name="settings-outline" size={12} color="#7c4dff" />
+                        <Text style={{ color: '#7c4dff', fontSize: 10, fontWeight: '700' }}>{presetLabel(quality)}</Text>
+                      </TouchableOpacity>
+                      <View style={{ width: 1, height: 16, backgroundColor: '#2a2a38' }} />
+                      <Ionicons name="timer-outline" size={13} color="#888" />
+                      <HoldButton onPress={() => savePreroll(Math.max(0, prerollMs - 10))} style={styles.latencyBtn}>
+                        <Text style={styles.latencyBtnText}>−</Text>
+                      </HoldButton>
+                      <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)} style={{ paddingHorizontal: 3 }}>
+                        <Text style={styles.latencyVal}>{prerollMs}</Text>
+                      </TouchableOpacity>
+                      <HoldButton onPress={() => savePreroll(Math.min(1200, prerollMs + 10))} style={styles.latencyBtn}>
+                        <Text style={styles.latencyBtnText}>+</Text>
+                      </HoldButton>
+                      <Text style={{ color: '#555', fontSize: 9 }}>мс</Text>
+                      <TouchableOpacity onPress={() => savePreroll(PREROLL_MS_WIRED)}
+                        style={{ backgroundColor: prerollMs === PREROLL_MS_WIRED ? '#00e67633' : '#1a1a28', borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: prerollMs === PREROLL_MS_WIRED ? '#00e676' : '#2a2a38' }}>
+                        <Text style={{ color: prerollMs === PREROLL_MS_WIRED ? '#00e676' : '#555', fontSize: 9, fontWeight: '700' }}>150</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => savePreroll(PREROLL_MS_BLUETOOTH)}
+                        style={{ backgroundColor: prerollMs === PREROLL_MS_BLUETOOTH ? '#00bcd433' : '#1a1a28', borderRadius: 5, paddingHorizontal: 6, paddingVertical: 2, borderWidth: 1, borderColor: prerollMs === PREROLL_MS_BLUETOOTH ? '#00bcd4' : '#2a2a38' }}>
+                        <Text style={{ color: prerollMs === PREROLL_MS_BLUETOOTH ? '#00bcd4' : '#555', fontSize: 9, fontWeight: '700' }}>BT</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {activeSession.tracks.length > 0 && (
+                      <View style={styles.bottomRow}>
+                        <TouchableOpacity onPress={() => setShowQuality(true)} style={styles.qualityChip}>
+                          <Ionicons name="settings-outline" size={13} color="#7c4dff" />
+                          <Text style={styles.qualityChipText}>{presetLabel(quality)}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={openExport} style={styles.exportBtn}>
+                          <Ionicons name="share-outline" size={15} color="#ffeb3b" />
+                          <Text style={styles.exportBtnText}>EXPORT ({activeSession.tracks.length})</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
+            }
           />
-
-          {/* Controls */}
-          {isRecording ? (
-            <View style={styles.recordingRow}>
-              <Animated.View style={[styles.recDot, { opacity: dotOpacity }]} />
-              <Text style={styles.recDuration}>{fmt(recDuration)}</Text>
-              <TouchableOpacity onPress={stopRecording} style={styles.stopBtn}>
-                <Ionicons name="stop" size={22} color="#fff" />
-                <Text style={styles.stopBtnText}>STOP REC</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              <View style={styles.controlRow}>
-                <TouchableOpacity
-                  onPress={playingAll ? killAllSounds : () => playAll(activeSession)}
-                  style={[styles.controlBtn, playingAll && styles.controlBtnPlaying]}
-                  disabled={activeSession.tracks.length === 0}
-                >
-                  <Ionicons name={playingAll ? 'stop' : 'play'} size={20} color={activeSession.tracks.length === 0 ? '#333' : '#00e676'} />
-                  <Text style={[styles.controlBtnText, activeSession.tracks.length === 0 && { color: '#333' }]}>
-                    {playingAll ? 'STOP' : 'PLAY ALL'}
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => recordTrack(activeSession)}
-                  style={[styles.controlBtn, styles.recCtrlBtn, activeSession.tracks.length >= MAX_TRACKS && styles.controlBtnDisabled]}
-                  disabled={activeSession.tracks.length >= MAX_TRACKS}
-                >
-                  <Ionicons name="mic" size={20} color={activeSession.tracks.length >= MAX_TRACKS ? '#333' : '#fff'} />
-                  <Text style={[styles.recCtrlText, activeSession.tracks.length >= MAX_TRACKS && { color: '#333' }]}>
-                    {activeSession.tracks.length === 0
-                      ? 'REC TRACK 1'
-                      : activeSession.tracks.length >= MAX_TRACKS
-                      ? 'MAX REACHED'
-                      : `ADD TRACK ${activeSession.tracks.length + 1}`}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Quality + offset row — always visible before first track */}
-              <View style={styles.latencyBar}>
-                {/* Quality presets quick-select */}
-                <TouchableOpacity onPress={() => setShowQuality(true)}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff22', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderColor: '#7c4dff44' }}>
-                  <Ionicons name="settings-outline" size={12} color="#7c4dff" />
-                  <Text style={{ color: '#7c4dff', fontSize: 10, fontWeight: '700' }}>{presetLabel(quality)}</Text>
-                </TouchableOpacity>
-
-                {/* Divider */}
-                <View style={{ width: 1, height: 16, backgroundColor: '#2a2a38' }} />
-
-                {/* Latency offset with BT/wired presets */}
-                <Ionicons name="timer-outline" size={13} color="#888" />
-                <HoldButton onPress={() => savePreroll(Math.max(0, prerollMs - 10))} style={styles.latencyBtn}>
-                  <Text style={styles.latencyBtnText}>−</Text>
-                </HoldButton>
-                <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)} style={{ paddingHorizontal: 3 }}>
-                  <Text style={styles.latencyVal}>{prerollMs}</Text>
-                </TouchableOpacity>
-                <HoldButton onPress={() => savePreroll(Math.min(1000, prerollMs + 10))} style={styles.latencyBtn}>
-                  <Text style={styles.latencyBtnText}>+</Text>
-                </HoldButton>
-                <Text style={{ color: '#555', fontSize: 9 }}>мс</Text>
-                {/* Quick presets */}
-                <TouchableOpacity onPress={() => savePreroll(100)}
-                  style={{ backgroundColor: prerollMs === 100 ? '#00e67633' : '#1a1a28', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: prerollMs === 100 ? '#00e676' : '#2a2a38' }}>
-                  <Text style={{ color: prerollMs === 100 ? '#00e676' : '#555', fontSize: 9, fontWeight: '700' }}>🎧</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => savePreroll(300)}
-                  style={{ backgroundColor: prerollMs === 300 ? '#00bcd433' : '#1a1a28', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: prerollMs === 300 ? '#00bcd4' : '#2a2a38' }}>
-                  <Text style={{ color: prerollMs === 300 ? '#00bcd4' : '#555', fontSize: 9, fontWeight: '700' }}>BT</Text>
-                </TouchableOpacity>
-                {/* Custom preset — tap to apply, long-press to save current value */}
-                <TouchableOpacity
-                  onPress={() => customPreset !== null && savePreroll(customPreset)}
-                  onLongPress={() => saveCustomPreset(prerollMs)}
-                  delayLongPress={600}
-                  style={{ backgroundColor: customPreset !== null && prerollMs === customPreset ? '#ffeb3b33' : '#1a1a28', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: customPreset !== null && prerollMs === customPreset ? '#ffeb3b' : '#2a2a38' }}>
-                  <Text style={{ color: customPreset !== null && prerollMs === customPreset ? '#ffeb3b' : customPreset !== null ? '#888' : '#444', fontSize: 9, fontWeight: '700' }}>
-                    {customPreset !== null ? `${customPreset}` : '★'}
-                  </Text>
-                </TouchableOpacity>
-
-              </View>
-            </>
-          )}
 
           {/* Master seek bar — shown during playAll */}
           {playingAll && allPlayDur > 0 && (
@@ -1110,20 +1325,9 @@ function normArr(arr){
             </View>
           )}
 
-          {activeSession.tracks.length > 0 && !isRecording && (
-            <View style={styles.bottomRow}>
-              <TouchableOpacity onPress={() => setShowQuality(true)} style={styles.qualityChip}>
-                <Ionicons name="settings-outline" size={13} color="#7c4dff" />
-                <Text style={styles.qualityChipText}>{presetLabel(quality)}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={openExport} style={styles.exportBtn}>
-                <Ionicons name="share-outline" size={15} color="#ffeb3b" />
-                <Text style={styles.exportBtnText}>EXPORT ({activeSession.tracks.length})</Text>
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
-      )}
+        )}
+      </View>
 
       {/* New session modal */}
       <Modal
@@ -1226,12 +1430,12 @@ function normArr(arr){
             }}
             accessibilityLabel="Закрыть"
           />
-          <View style={styles.studioModalCard}>
+          <View style={[styles.studioModalCard, { maxHeight: studioModalScrollMaxH }]}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator
               nestedScrollEnabled
-              style={{ maxHeight: studioModalScrollMaxH }}
+              style={{ maxHeight: studioModalBodyMaxH }}
               contentContainerStyle={styles.studioModalScrollContent}
             >
               <Text style={styles.modalTitle}>Export Tracks</Text>
@@ -1311,13 +1515,13 @@ function normArr(arr){
                   );
                 })
               )}
-              <TouchableOpacity
-                onPress={() => { setShowExport(false); setMixState('idle'); setMixHtml(null); }}
-                style={[styles.modalCancelBtn, { marginTop: 16, marginBottom: 4, flexGrow: 0, alignSelf: 'center', paddingHorizontal: 32 }]}
-              >
-                <Text style={styles.modalCancelText}>Done</Text>
-              </TouchableOpacity>
             </ScrollView>
+            <TouchableOpacity
+              onPress={() => { setShowExport(false); setMixState('idle'); setMixHtml(null); }}
+              style={styles.studioModalFooterBtn}
+            >
+              <Text style={styles.modalCancelText}>Done</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1336,12 +1540,12 @@ function normArr(arr){
             onPress={() => setShowQuality(false)}
             accessibilityLabel="Закрыть"
           />
-          <View style={styles.studioModalCard}>
+          <View style={[styles.studioModalCard, { maxHeight: studioModalScrollMaxH }]}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator
               nestedScrollEnabled
-              style={{ maxHeight: studioModalScrollMaxH }}
+              style={{ maxHeight: studioModalBodyMaxH }}
               contentContainerStyle={styles.studioModalScrollContent}
             >
               <Text style={styles.modalTitle}>Recording Quality</Text>
@@ -1369,26 +1573,20 @@ function normArr(arr){
               <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
                 <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация латентности (мс)</Text>
                 <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
-                  Встроенный микрофон: ~100 мс (стабильно){'\n'}
-                  Bluetooth наушники: ~300 мс (нестабильно){'\n'}{'\n'}
-                  Если 2-я дорожка запаздывает — увеличь.{'\n'}
-                  Если опережает — уменьши.
+                  Провод / динамик: пресет {PREROLL_MS_WIRED} мс (дорожки 2+).{'\n'}
+                  Bluetooth: пресет {PREROLL_MS_BLUETOOTH} мс.{'\n'}
+                  Если 2-я дорожка запаздывает — увеличь. Если опережает — уменьши.
                 </Text>
-                <View style={{ backgroundColor: '#00bcd410', borderRadius: 8, padding: 10, marginBottom: 10, borderWidth: 1, borderColor: '#00bcd430' }}>
-                  <Text style={{ color: '#00bcd4', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>💡 Лучший вариант: BT слушать + телефонный микрофон</Text>
-                  <Text style={{ color: '#aaa', fontSize: 10, lineHeight: 15 }}>
-                    В настройках телефона → Bluetooth → твои наушники → выключи{' '}
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>"Звонки" / "Phone calls"</Text>
-                    {'\n'}Тогда: слушаешь через BT (A2DP), пишет встроенный микрофон — задержка стабильная ~100 мс.
-                  </Text>
-                </View>
+                <Text style={{ color: '#666', fontSize: 10, lineHeight: 14, marginBottom: 8 }}>
+                  BT: слушать в наушниках, писать с телефона — отключи «Звонки» для гарнитуры в настройках Bluetooth.
+                </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
                   <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
                     style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>−</Text>
                   </TouchableOpacity>
                   <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', width: 60, textAlign: 'center' }}>{prerollMs}</Text>
-                  <TouchableOpacity onPress={() => savePreroll(Math.min(400, prerollMs + 20))}
+                  <TouchableOpacity onPress={() => savePreroll(Math.min(1200, prerollMs + 20))}
                     style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>+</Text>
                   </TouchableOpacity>
@@ -1400,60 +1598,174 @@ function normArr(arr){
               </View>
 
               <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
-                <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 8 }]}>Маршрутизация аудио</Text>
-
-                <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Воспроизведение:</Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                  {([
-                    { id: 'auto',     label: 'Авто',       icon: 'hardware-chip-outline' },
-                    { id: 'speaker',  label: 'Динамик',    icon: 'volume-high-outline' },
-                    { id: 'earpiece', label: 'Трубка',     icon: 'call-outline' },
-                  ] as const).map(opt => {
-                    const active = audioRouting.output === opt.id;
-                    return (
-                      <TouchableOpacity key={opt.id}
-                        onPress={() => saveAudioRouting({ ...audioRouting, output: opt.id })}
-                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
-                          backgroundColor: active ? '#7c4dff22' : '#1e1e28',
-                          borderColor: active ? '#7c4dff' : '#2a2a38' }}>
-                        <Ionicons name={opt.icon} size={13} color={active ? '#7c4dff' : '#555'} />
-                        <Text style={{ color: active ? '#7c4dff' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 0 }]}>Звук</Text>
+                  <TouchableOpacity onPress={() => void refreshAudioRoutes()} disabled={audioRouteLoading} style={{ padding: 6 }}>
+                    <Ionicons name="refresh" size={18} color={audioRouteLoading ? '#333' : '#7c4dff'} />
+                  </TouchableOpacity>
                 </View>
 
-                <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Микрофон:</Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                  {([
-                    { id: 'auto',    label: 'Авто (система)', icon: 'mic-outline' },
-                    { id: 'builtin', label: 'Встроенный',     icon: 'phone-portrait-outline' },
-                  ] as const).map(opt => {
-                    const active = audioRouting.mic === opt.id;
-                    return (
-                      <TouchableOpacity key={opt.id}
-                        onPress={() => saveAudioRouting({ ...audioRouting, mic: opt.id })}
-                        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 8, borderRadius: 10, borderWidth: 1,
-                          backgroundColor: active ? '#00e67622' : '#1e1e28',
-                          borderColor: active ? '#00e676' : '#2a2a38' }}>
-                        <Ionicons name={opt.icon} size={13} color={active ? '#00e676' : '#555'} />
-                        <Text style={{ color: active ? '#00e676' : '#555', fontSize: 11, fontWeight: '700' }}>{opt.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                <View style={styles.routeModeRow}>
+                  <TouchableOpacity
+                    style={[styles.routeModeBtn, audioRouting.mode === 'auto' && styles.routeModeBtnActive]}
+                    onPress={() => saveAudioRouting({ mode: 'auto', output: 'system', inputUid: null })}
+                  >
+                    <Text style={[styles.routeModeBtnText, audioRouting.mode === 'auto' && styles.routeModeBtnTextActive]}>
+                      АВТО
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.routeModeBtn, audioRouting.mode === 'manual' && styles.routeModeBtnActive]}
+                    onPress={() => {
+                      void (async () => {
+                        let snap = audioRouteSnap;
+                        if (!snap?.inputs.length) snap = await refreshAudioRoutes();
+                        let output: AudioOutputRoute = audioRouting.output;
+                        if (output === 'system') {
+                          if (snap.hasBluetooth) output = 'bluetooth';
+                          else if (snap.hasWired) output = 'wired';
+                          else output = 'speaker';
+                        }
+                        const suggested = suggestInputForOutput(output, snap.inputs);
+                        const keepUid =
+                          audioRouting.inputUid && snap.inputs.some(i => i.uid === audioRouting.inputUid)
+                            ? audioRouting.inputUid
+                            : suggested?.uid ?? snap.inputs[0]?.uid ?? null;
+                        const inp = snap.inputs.find(i => i.uid === keepUid);
+                        await saveAudioRouting({
+                          mode: 'manual',
+                          output,
+                          inputUid: keepUid,
+                        }, inp ? prerollForInput(inp) : prerollForOutput(output));
+                      })();
+                    }}
+                  >
+                    <Text style={[styles.routeModeBtnText, audioRouting.mode === 'manual' && styles.routeModeBtnTextActive]}>
+                      ВРУЧНУЮ
+                    </Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={{ color: '#444', fontSize: 10, lineHeight: 14 }}>
-                  Выбор микрофона зависит от системы. Для принудительного выбора встроенного — отключи «Звонки» в настройках Bluetooth.
-                </Text>
+
+                {audioRouting.mode === 'auto' ? (
+                  <View style={styles.routeStatusCard}>
+                    <Text style={styles.routeStatusLine}>
+                      <Text style={{ color: '#666' }}>Слушать: </Text>
+                      {audioRouteSnap?.listenHint ?? (audioRouteLoading ? '…' : 'обнови список')}
+                    </Text>
+                    <Text style={[styles.routeStatusLine, { marginTop: 6 }]}>
+                      <Text style={{ color: '#666' }}>Писать: </Text>
+                      {audioRouteSnap?.recordHint ?? '—'}
+                    </Text>
+                    <Text style={{ color: '#444', fontSize: 10, marginTop: 8, lineHeight: 14 }}>
+                      Телефон сам выбирает динамик и микрофон (BT, AUX, встроенный).
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={[styles.qualitySub, { marginBottom: 6 }]}>Воспроизведение (минус)</Text>
+                    <View style={styles.routeOutputGrid}>
+                      {OUTPUT_OPTIONS.map(opt => {
+                        const active = audioRouting.output === opt.id;
+                        const missing = outputDeviceMissing(opt.id, audioRouteSnap);
+                        return (
+                          <TouchableOpacity
+                            key={opt.id}
+                            onPress={() => pickOutput(opt.id)}
+                            style={[
+                              styles.routeOutputChip,
+                              active && styles.routeOutputChipActive,
+                              missing && styles.routeOutputChipWarn,
+                            ]}
+                          >
+                            <Ionicons name={opt.icon} size={16} color={active ? '#7c4dff' : missing ? '#ff9800' : '#555'} />
+                            <Text style={[styles.routeOutputChipLabel, active && { color: '#7c4dff' }]}>
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {outputDeviceMissing(audioRouting.output, audioRouteSnap) && (
+                      <Text style={styles.routeWarnText}>
+                        Устройство не в списке — подключи кабель или BT и нажми обновить ↑
+                      </Text>
+                    )}
+
+                    <Text style={[styles.qualitySub, { marginTop: 10, marginBottom: 6 }]}>Запись (микрофон)</Text>
+                    {audioRouteLoading && (audioRouteSnap?.inputs.length ?? 0) === 0 ? (
+                      <Text style={{ color: '#555', fontSize: 11, marginBottom: 8 }}>Загрузка…</Text>
+                    ) : (
+                      INPUT_GROUPS.map(grp => {
+                        const items = inputsOfKind(audioRouteSnap?.inputs ?? [], grp.kind);
+                        return (
+                          <View key={grp.kind} style={styles.routeInputGroup}>
+                            <Text style={styles.routeInputGroupTitle}>{grp.title}</Text>
+                            {items.length === 0 ? (
+                              <Text style={styles.routeInputGroupEmpty}>{grp.empty}</Text>
+                            ) : (
+                              items.map(inp => {
+                                const active = audioRouting.inputUid === inp.uid;
+                                return (
+                                  <TouchableOpacity
+                                    key={inp.uid}
+                                    onPress={() => pickInput(inp)}
+                                    style={[styles.routeInputRow, active && styles.routeInputRowActive]}
+                                  >
+                                    <Ionicons
+                                      name={
+                                        inp.kind === 'bluetooth' ? 'bluetooth' :
+                                        inp.kind === 'wired' || inp.kind === 'usb' ? 'headset' : 'mic-outline'
+                                      }
+                                      size={16}
+                                      color={active ? '#00e676' : '#555'}
+                                    />
+                                    <View style={{ flex: 1 }}>
+                                      <Text style={{ color: active ? '#00e676' : '#ccc', fontSize: 12, fontWeight: '700' }}>
+                                        {inp.name}
+                                      </Text>
+                                      <Text style={{ color: '#555', fontSize: 10 }}>{labelKind(inp.kind)}</Text>
+                                    </View>
+                                    {active && <Ionicons name="checkmark-circle" size={18} color="#00e676" />}
+                                  </TouchableOpacity>
+                                );
+                              })
+                            )}
+                          </View>
+                        );
+                      })
+                    )}
+                    {inputsOfKind(audioRouteSnap?.inputs ?? [], 'other').length > 0 && (
+                      <View style={styles.routeInputGroup}>
+                        <Text style={styles.routeInputGroupTitle}>Другие</Text>
+                        {inputsOfKind(audioRouteSnap?.inputs ?? [], 'other').map(inp => {
+                          const active = audioRouting.inputUid === inp.uid;
+                          return (
+                            <TouchableOpacity
+                              key={inp.uid}
+                              onPress={() => pickInput(inp)}
+                              style={[styles.routeInputRow, active && styles.routeInputRowActive]}
+                            >
+                              <Ionicons name="mic-outline" size={16} color={active ? '#00e676' : '#555'} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: active ? '#00e676' : '#ccc', fontSize: 12, fontWeight: '700' }}>{inp.name}</Text>
+                                <Text style={{ color: '#555', fontSize: 10 }}>{labelKind(inp.kind)}</Text>
+                              </View>
+                              {active && <Ionicons name="checkmark-circle" size={18} color="#00e676" />}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                    <Text style={{ color: '#444', fontSize: 10, lineHeight: 14, marginTop: 6 }}>
+                      Выход BT/AUX — системный маршрут. Микрофон — из списка устройств.
+                    </Text>
+                  </>
+                )}
               </View>
-
-              <TouchableOpacity
-                onPress={() => setShowQuality(false)}
-                style={[styles.modalCancelBtn, { marginTop: 18, marginBottom: 6, flexGrow: 0, alignSelf: 'center', paddingHorizontal: 32 }]}
-              >
-                <Text style={styles.modalCancelText}>Закрыть</Text>
-              </TouchableOpacity>
             </ScrollView>
+            <TouchableOpacity onPress={() => setShowQuality(false)} style={styles.studioModalFooterBtn}>
+              <Text style={styles.modalCancelText}>Закрыть</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1475,10 +1787,26 @@ function normArr(arr){
 
 /* ─── Styles ─── */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0f', paddingHorizontal: 16 },
-  title: { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600', textAlign: 'center', marginBottom: 14 },
+  container: { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f', paddingHorizontal: 16 },
+  title: { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600', textAlign: 'center', marginBottom: 10, flexShrink: 0 },
+  screenBody: { flex: 1, minHeight: 0 },
 
-  section: { backgroundColor: '#111118', borderRadius: 20, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#222' },
+  section: { backgroundColor: '#111118', borderRadius: 20, padding: 14, borderWidth: 1, borderColor: '#222' },
+  sessionsSection: { flexDirection: 'column', minHeight: 0 },
+  sessionsSectionExpanded: { flexShrink: 0, marginBottom: 8 },
+  sessionsSectionCompact: { flexShrink: 0, marginBottom: 6, paddingVertical: 8, paddingHorizontal: 12 },
+  sessionsListExpanded: {},
+  sessionsListCompact: {},
+  projectSection: { flex: 1, minHeight: 0, marginBottom: 0 },
+  projectFooter: { paddingTop: 4, paddingBottom: 8 },
+  trackListContent: { paddingBottom: 4 },
+  headerIconBtn: { padding: 6, backgroundColor: '#7c4dff18', borderRadius: 10, borderWidth: 1, borderColor: '#7c4dff33' },
+  projectBackBtn: { width: 28 },
+  projectHeaderSpacer: { width: 28 },
+  projectTitleWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  projectTitle: { textAlign: 'center', marginBottom: 0 },
+  trackList: { flex: 1, minHeight: 0 },
+  trackListEmpty: { flexGrow: 1, justifyContent: 'center' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   sectionTitle: { color: '#555', fontSize: 11, letterSpacing: 2, fontWeight: '700' },
   emptyText: { color: '#333', fontSize: 13, textAlign: 'center', paddingVertical: 12 },
@@ -1505,9 +1833,11 @@ const styles = StyleSheet.create({
   trackRowSolo: { backgroundColor: '#1e1e2e' },
   trackBadge: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   trackBadgeText: { fontSize: 12, fontWeight: '800' },
-  trackMid: { flex: 1 },
-  trackLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  trackLabel: { color: '#ccc', fontSize: 13, fontWeight: '600' },
+  trackMid: { flex: 1, minWidth: 0 },
+  trackLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  trackLabel: { color: '#ccc', fontSize: 13, fontWeight: '600', flex: 1, minWidth: 0 },
+  trackAdjustRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 5 },
+  trackChipTag: { color: '#444', fontSize: 8, fontWeight: '800', letterSpacing: 0.5, paddingLeft: 8, paddingRight: 2 },
   trackTime: { fontSize: 10, fontWeight: '600' },
   scrubTrack: { height: 3, backgroundColor: '#2a2a38', borderRadius: 2, marginTop: 6, overflow: 'visible', position: 'relative' },
   scrubFill: { height: 3, borderRadius: 2 },
@@ -1529,7 +1859,7 @@ const styles = StyleSheet.create({
   masterSeekThumb: { position: 'absolute', width: 16, height: 16, borderRadius: 8, top: -5, marginLeft: -8, backgroundColor: '#00e676', borderWidth: 2, borderColor: '#0a0a12' },
   masterSeekTime: { color: '#888', fontSize: 11, minWidth: 38, textAlign: 'center' },
 
-  trackOffsetRow:     { flexDirection: 'row', alignItems: 'center', gap: 0, marginLeft: 6, backgroundColor: '#1a1a28', borderRadius: 10, overflow: 'hidden' },
+  trackOffsetRow:     { flexDirection: 'row', alignItems: 'center', gap: 0, backgroundColor: '#1a1a28', borderRadius: 10, overflow: 'hidden' },
   trackOffsetBtnArea: { paddingHorizontal: 10, paddingVertical: 6, justifyContent: 'center', alignItems: 'center' },
   trackOffsetBtn:     { color: '#7c4dff', fontSize: 18, fontWeight: '700', lineHeight: 20 },
   trackOffsetValArea: { paddingHorizontal: 4, paddingVertical: 6, justifyContent: 'center', alignItems: 'center' },
@@ -1544,6 +1874,19 @@ const styles = StyleSheet.create({
 
   controlRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
   controlBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, backgroundColor: '#1e1e28', borderRadius: 14, borderWidth: 1, borderColor: '#2a2a38' },
+  minusLoadRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 6,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ffeb3b33',
+    backgroundColor: '#ffeb3b0c',
+  },
+  minusLoadRowText: { color: '#ffeb3b', fontSize: 11, fontWeight: '700', letterSpacing: 0.3 },
   controlBtnPlaying: { backgroundColor: '#00e67618', borderColor: '#00e67644' },
   controlBtnDisabled: { opacity: 0.4 },
   controlBtnText: { color: '#00e676', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
@@ -1570,6 +1913,66 @@ const styles = StyleSheet.create({
   bottomRow:  { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   qualityChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#7c4dff18', borderRadius: 12, borderWidth: 1, borderColor: '#7c4dff44' },
   qualityChipText: { color: '#7c4dff', fontSize: 11, fontWeight: '700' },
+
+  routeStatusCard: {
+    backgroundColor: '#0d0d14',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#1e1e28',
+  },
+  routeStatusLabel: { color: '#555', fontSize: 9, letterSpacing: 1.5, fontWeight: '700', marginBottom: 6 },
+  routeStatusLine: { color: '#bbb', fontSize: 12, lineHeight: 17 },
+  routeModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+    backgroundColor: '#0d0d14',
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#1e1e28',
+  },
+  routeModeBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  routeModeBtnActive: { backgroundColor: '#7c4dff' },
+  routeModeBtnText: { color: '#555', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  routeModeBtnTextActive: { color: '#fff' },
+  routeOutputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 4 },
+  routeOutputChip: {
+    width: '30%',
+    minWidth: 96,
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+    backgroundColor: '#1a1a24',
+  },
+  routeOutputChipActive: { borderColor: '#7c4dff', backgroundColor: '#7c4dff18' },
+  routeOutputChipWarn: { borderColor: '#ff980044' },
+  routeOutputChipLabel: { color: '#888', fontSize: 10, fontWeight: '700' },
+  routeWarnText: { color: '#ff9800', fontSize: 10, lineHeight: 14, marginBottom: 4 },
+  routeInputGroup: { marginBottom: 8 },
+  routeInputGroupTitle: { color: '#666', fontSize: 9, fontWeight: '800', letterSpacing: 1, marginBottom: 4 },
+  routeInputGroupEmpty: { color: '#444', fontSize: 10, lineHeight: 14, paddingVertical: 6, paddingHorizontal: 4 },
+  routeInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    marginBottom: 6,
+    borderRadius: 10,
+    backgroundColor: '#1a1a24',
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+  },
+  routeInputRowActive: { borderColor: '#00e67655', backgroundColor: '#00e67610' },
   qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#1a1a24', borderRadius: 12, padding: 13, marginTop: 8, borderWidth: 1, borderColor: '#2a2a38', width: '100%' },
   qualityRowActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff10' },
   qualityName: { color: '#ccc', fontSize: 14, fontWeight: '700' },
@@ -1589,10 +1992,16 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     width: '100%',
     maxWidth: 400,
-    maxHeight: '92%',
     borderWidth: 1,
     borderColor: '#2a2a38',
     overflow: 'hidden',
+  },
+  studioModalFooterBtn: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a38',
+    backgroundColor: '#15151c',
   },
   studioModalCardSm: {
     backgroundColor: '#1a1a24',

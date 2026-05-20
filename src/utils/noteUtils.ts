@@ -219,6 +219,61 @@ export function frequencyToNote(frequency: number): NoteInfo {
   return { name, octave, frequency: targetFreq, cents };
 }
 
+export interface NearestStringMatch {
+  stringDef: StringDef;
+  /** Отклонение от строя струны (с учётом октавы) */
+  cents: number;
+  distance: number;
+}
+
+export function centsFromTargetHz(frequency: number, targetHz: number): number {
+  return Math.round(1200 * Math.log2(frequency / targetHz));
+}
+
+/** Центы до ноты струны; октава подбирается ближайшая (G4 при цели G3 → около 0¢). */
+export function centsToStringTarget(frequency: number, targetHz: number): number {
+  const midiTarget = 12 * Math.log2(targetHz / A4_FREQ) + A4_MIDI;
+  const midiPlayed = 12 * Math.log2(frequency / A4_FREQ) + A4_MIDI;
+  const octShift = Math.round((midiPlayed - midiTarget) / 12);
+  const adjustedHz = targetHz * Math.pow(2, octShift);
+  return centsFromTargetHz(frequency, adjustedHz);
+}
+
+export function findNearestString(frequency: number, strings: StringDef[]): NearestStringMatch | null {
+  if (!Number.isFinite(frequency) || frequency <= 0 || strings.length === 0) return null;
+  let best: NearestStringMatch | null = null;
+  for (const s of strings) {
+    const cents = centsToStringTarget(frequency, s.frequency);
+    const distance = Math.abs(cents);
+    if (!best || distance < best.distance) {
+      best = { stringDef: s, cents, distance };
+    }
+  }
+  return best;
+}
+
+/** Не перескакивать на соседнюю струну, пока новая не ближе на margin ¢ */
+export function findNearestStringWithHysteresis(
+  frequency: number,
+  strings: StringDef[],
+  lockedString: number | null,
+  marginCents = 28,
+): NearestStringMatch | null {
+  const fresh = findNearestString(frequency, strings);
+  if (!fresh || lockedString == null) return fresh;
+  const prevDef = strings.find(s => s.string === lockedString);
+  if (!prevDef) return fresh;
+  const prevDist = Math.abs(centsToStringTarget(frequency, prevDef.frequency));
+  if (prevDist <= fresh.distance + marginCents) {
+    return {
+      stringDef: prevDef,
+      cents: centsToStringTarget(frequency, prevDef.frequency),
+      distance: prevDist,
+    };
+  }
+  return fresh;
+}
+
 export function centsToColor(cents: number): string {
   const abs = Math.abs(cents);
   if (abs <= 5)  return '#00e676';

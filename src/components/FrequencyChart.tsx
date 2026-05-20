@@ -12,22 +12,31 @@ const A4_MIDI = 69;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 export interface HistoryPoint {
-  cents:  number;   // cents deviation from nearest note (for tuner mode)
-  freq:   number;   // smoothed Hz (for pitch mode)
-  midi:   number;   // exact MIDI (with fractional cents)
+  cents:  number;   // chromatic cents (legacy / fallback)
+  /** Центы до строя ближайшей струны — для стрелки и графика */
+  stringCents?: number;
+  targetString?: number;
+  targetNote?: string;
+  freq:   number;
+  midi:   number;
   note:   string;
   octave: number;
   ts:     number;
 }
 
+export interface TuningChartTarget {
+  stringNumber: number;
+  note: string;
+  frequency: number;
+}
+
 interface Props {
   history: HistoryPoint[];
   active: boolean;
-  /** When set, chart plot uses this width (embedded column). Otherwise derived from window. */
+  /** Цель настройки (строка строя) — линия на графике, центы относительно неё */
+  tuningTarget?: TuningChartTarget | null;
   chartPlotWidth?: number;
-  /** Tight layout: narrower axis, pitch mode, less chrome (pinch & pan still work). */
   compact?: boolean;
-  /** Vertical plot height (default 220). Use ~100–140 in tight layouts. */
   chartHeight?: number;
 }
 
@@ -86,8 +95,12 @@ function maxHScroll(nPts: number, cellW: number, chartW: number) {
 }
 
 /* ─── Component ─── */
+function plotCents(p: HistoryPoint): number {
+  return p.stringCents ?? p.cents;
+}
+
 export default function FrequencyChart({
-  history, active, chartPlotWidth, compact = false, chartHeight,
+  history, active, tuningTarget = null, chartPlotWidth, compact = false, chartHeight,
 }: Props) {
   const plotH = Math.max(72, Math.min(300, chartHeight ?? DEFAULT_CHART_H));
   const { width }  = useWindowDimensions();
@@ -208,22 +221,30 @@ export default function FrequencyChart({
     if (mode !== 'cents' || pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
       const x1 = xOf(i), x2 = xOf(i + 1);
-      const y1 = centsToY(pts[i].cents, centRange, plotH);
-      const y2 = centsToY(p.cents,      centRange, plotH);
+      const c1 = plotCents(pts[i]);
+      const c2 = plotCents(p);
+      const y1 = centsToY(c1, centRange, plotH);
+      const y2 = centsToY(c2, centRange, plotH);
       const dx = x2-x1, dy = y2-y1;
       return { x: x1, y: y1, len: Math.sqrt(dx*dx+dy*dy),
-               angle: Math.atan2(dy,dx)*(180/Math.PI), color: colorForCents(p.cents) };
+               angle: Math.atan2(dy,dx)*(180/Math.PI), color: colorForCents(c2) };
     });
   }, [mode, pts, cellW, centRange, plotH]);
 
   /* ── PITCH mode geometry ── */
   const pitchRange  = PITCH_ZOOMS[pitchZoomI];
 
+  const targetMidi = useMemo(() => {
+    if (!tuningTarget) return null;
+    return 12 * Math.log2(tuningTarget.frequency / A4_FREQ) + A4_MIDI;
+  }, [tuningTarget]);
+
   const centerMidi = useMemo(() => {
+    if (targetMidi != null) return targetMidi;
     if (pts.length === 0) return 60;
     const tail = pts.slice(-12);
     return tail.reduce((s, p) => s + p.midi, 0) / tail.length;
-  }, [pts]);
+  }, [pts, targetMidi]);
 
   const minMidi = centerMidi - pitchRange;
   const maxMidi = centerMidi + pitchRange;
@@ -390,12 +411,43 @@ export default function FrequencyChart({
           ))}
 
           {/* ── Dots ── */}
+          {tuningTarget && mode === 'pitch' && targetMidi != null && (() => {
+            const y = midiToY(targetMidi, centerMidi, pitchRange, plotH);
+            if (y < 0 || y > plotH) return null;
+            return (
+              <>
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute', left: 0, right: 0, top: y - 1,
+                    height: 2, backgroundColor: '#00e67688',
+                  }}
+                />
+                <View pointerEvents="none" style={[styles.targetBadge, { top: Math.max(2, y - 20), left: 6 }]}>
+                  <Text style={styles.targetBadgeText}>⌖ {tuningTarget.note}</Text>
+                </View>
+              </>
+            );
+          })()}
+
+          {tuningTarget && mode === 'cents' && (
+            <View
+              pointerEvents="none"
+              style={[styles.targetBadge, { top: plotH - 22, left: 6 }]}
+            >
+              <Text style={styles.targetBadgeText}>
+                ⌖ стр. {tuningTarget.stringNumber} · {tuningTarget.note}
+              </Text>
+            </View>
+          )}
+
           {pts.map((p, i) => {
             const x = xOf(i);
+            const c = plotCents(p);
             const y = mode === 'cents'
-              ? centsToY(p.cents, centRange, plotH)
+              ? centsToY(c, centRange, plotH)
               : midiToY(p.midi,  centerMidi, pitchRange, plotH);
-            const color = mode === 'cents' ? colorForCents(p.cents) : octLine(p.octave);
+            const color = mode === 'cents' ? colorForCents(c) : octLine(p.octave);
             return (
               <View key={i} style={{
                 position: 'absolute',
@@ -409,22 +461,26 @@ export default function FrequencyChart({
 
           {/* ── Latest note bubble ── */}
           {latest && (() => {
+            const lc = plotCents(latest);
             const y = mode === 'cents'
-              ? centsToY(latest.cents, centRange, plotH)
+              ? centsToY(lc, centRange, plotH)
               : midiToY(latest.midi, centerMidi, pitchRange, plotH);
-            const color = mode === 'cents' ? colorForCents(latest.cents) : octLine(latest.octave);
+            const color = mode === 'cents' ? colorForCents(lc) : octLine(latest.octave);
             const lx = (pts.length - 1) * cellW;
             const bubbleX = Math.min(totalW - 58, Math.max(4, lx + 6));
+            const label = tuningTarget && mode === 'cents'
+              ? `стр.${latest.targetString ?? tuningTarget.stringNumber} ${lc >= 0 ? '+' : ''}${lc}¢`
+              : `${latest.note}${latest.octave}`;
             return (
               <View style={[styles.noteBubble, {
                 left: bubbleX,
                 top:  Math.max(2, y - 26),
               }]}>
                 <Text style={[styles.noteBubbleText, { color }]}>
-                  {latest.note}{latest.octave}
-                  {mode === 'cents' && (
+                  {label}
+                  {mode === 'cents' && !tuningTarget && (
                     <Text style={styles.centsHint}>
-                      {latest.cents >= 0 ? ` +${latest.cents}¢` : ` ${latest.cents}¢`}
+                      {lc >= 0 ? ` +${lc}¢` : ` ${lc}¢`}
                     </Text>
                   )}
                 </Text>
@@ -584,4 +640,14 @@ const styles = StyleSheet.create({
     color: '#2a2a3a', fontSize: 12, position: 'absolute',
     top: '42%', left: 0, right: 0, textAlign: 'center',
   },
+  targetBadge: {
+    position: 'absolute',
+    backgroundColor: '#00e67622',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#00e67655',
+  },
+  targetBadgeText: { color: '#00e676', fontSize: 10, fontWeight: '800' },
 });

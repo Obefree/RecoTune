@@ -39,13 +39,14 @@ interface StemItem {
 const CHORD_ANALYSIS_HTML = `<!DOCTYPE html><html><body style="margin:0;background:#000"><script>
 const NOTE=[' C','C#',' D','D#',' E',' F','F#',' G','G#',' A','A#',' B'];
 const TEMPLATES={'':  [0,4,7],'m':[0,3,7],'7':[0,4,7,10],'maj7':[0,4,7,11],'m7':[0,3,7,10],'dim':[0,3,6],'aug':[0,4,8]};
+const MIN_CONF=0.45,CHROMA_BIN_DB=-68,MIN_CHROMA_SUM=0.32;
 const MAJOR_P=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
 const MINOR_P=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 function post(obj){window.ReactNativeWebView.postMessage(JSON.stringify(obj));}
 function b64ToAB(b64){const bin=atob(b64);const ab=new ArrayBuffer(bin.length);const u8=new Uint8Array(ab);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return ab;}
 function chroma(fftData,sr,fftSz){
   const c=new Float32Array(12);const bHz=sr/fftSz;
-  for(let i=1;i<fftData.length;i++){const f=i*bHz;if(f<80||f>2200)continue;const db=fftData[i];if(db<-65)continue;const e=Math.pow(10,db/20);const m=Math.round(12*Math.log2(f/440)+69);c[((m%12)+12)%12]+=e;}
+  for(let i=1;i<fftData.length;i++){const f=i*bHz;if(f<80||f>2200)continue;const db=fftData[i];if(db<CHROMA_BIN_DB)continue;const e=Math.pow(10,db/20);const m=Math.round(12*Math.log2(f/440)+69);c[((m%12)+12)%12]+=e;}
   const mx=Math.max(...c);if(mx>0)for(let i=0;i<12;i++)c[i]/=mx;return c;
 }
 function detectChord(c){let best={name:'?',conf:-Infinity};for(let r=0;r<12;r++){for(const[t,ivs]of Object.entries(TEMPLATES)){let sc=0;for(let i=0;i<12;i++){const ct=ivs.some(iv=>(r+iv)%12===i);sc+=ct?c[i]:-0.4*c[i];}if(sc>best.conf)best={name:NOTE[r].trim()+t,conf:sc};}}return best;}
@@ -70,7 +71,10 @@ async function analyze(b64,segSec){
       src.connect(analyserNode);analyserNode.connect(segCtx.destination);src.start(0);await segCtx.startRendering();
       const fft=new Float32Array(analyserNode.frequencyBinCount);analyserNode.getFloatFrequencyData(fft);
       const c=chroma(fft,sr,fftSz);for(let i=0;i<12;i++)globalChroma[i]+=c[i];
-      const chord=detectChord(c);events.push({time:parseFloat((step*segSec).toFixed(2)),chord:chord.name,confidence:parseFloat(chord.conf.toFixed(2))});
+      const sum=c.reduce((s,v)=>s+v,0);
+      const chord=detectChord(c);
+      const ok=chord.conf>=MIN_CONF&&sum>=MIN_CHROMA_SUM;
+      events.push({time:parseFloat((step*segSec).toFixed(2)),chord:ok?chord.name:'?',confidence:parseFloat(chord.conf.toFixed(2))});
       if(step%5===0)post({type:'progress',msg:'Анализ '+Math.round((step/steps)*100)+'%...'});
     }
     const mx=Math.max(...globalChroma);if(mx>0)for(let i=0;i<12;i++)globalChroma[i]/=mx;

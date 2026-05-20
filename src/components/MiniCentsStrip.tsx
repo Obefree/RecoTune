@@ -3,13 +3,17 @@ import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { HistoryPoint } from './FrequencyChart';
 
 const STRIP_H = 68;
-const RANGE   = 300;
+const RANGE   = 50;
 const PAD_L   = 30;
 const MAX_PTS = 80;
 
 function centsToY(cents: number): number {
   const c = Math.max(-RANGE, Math.min(RANGE, cents));
   return STRIP_H / 2 - (c / RANGE) * (STRIP_H / 2 - 3);
+}
+
+function plotCents(p: HistoryPoint): number {
+  return p.stringCents ?? p.cents;
 }
 
 function colorForCents(c: number): string {
@@ -37,11 +41,11 @@ export default function MiniCentsStrip({ history }: Props) {
     if (pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
       const x1 = xOf(i), x2 = xOf(i + 1);
-      const y1 = centsToY(pts[i].cents), y2 = centsToY(p.cents);
+      const y1 = centsToY(plotCents(pts[i])), y2 = centsToY(plotCents(p));
       const dx = x2 - x1, dy = y2 - y1;
       const len   = Math.sqrt(dx * dx + dy * dy);
       const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-      return { x: x1, y: y1, len, angle, color: colorForCents(p.cents) };
+      return { x: x1, y: y1, len, angle, color: colorForCents(plotCents(p)) };
     });
   }, [pts, xOf]);
 
@@ -49,7 +53,7 @@ export default function MiniCentsStrip({ history }: Props) {
     <View style={styles.wrapper}>
       {/* Y labels */}
       <View style={styles.yAxis}>
-        {([-300, -100, 0, 100, 300] as const).map(c => (
+        {([-50, -25, 0, 25, 50] as const).map(c => (
           <Text key={c} style={[styles.yLabel, {
             top: centsToY(c) - 6,
             color: c === 0 ? '#00e676aa' : '#33333a',
@@ -67,7 +71,7 @@ export default function MiniCentsStrip({ history }: Props) {
         <View style={[styles.band, styles.bandYellow]} />
 
         {/* Grid lines ±50, ±100, ±200, ±300, 0 */}
-        {([-300,-200,-100,-50,0,50,100,200,300] as const).map(c => (
+        {([-50,-25,-10,0,10,25,50] as const).map(c => (
           <View key={c} style={[styles.gridLine, {
             top: centsToY(c) - 0.5,
             backgroundColor: c === 0 ? '#00e67640' : '#ffffff07',
@@ -90,7 +94,7 @@ export default function MiniCentsStrip({ history }: Props) {
         {pts.map((p, i) => (
           <View key={i} style={{
             position: 'absolute',
-            left: xOf(i) - 2.5, top: centsToY(p.cents) - 2.5,
+            left: xOf(i) - 2.5, top: centsToY(plotCents(p)) - 2.5,
             width: 5, height: 5, borderRadius: 2.5,
             backgroundColor: colorForCents(p.cents),
             opacity: i === pts.length - 1 ? 1 : 0.45,
@@ -100,23 +104,23 @@ export default function MiniCentsStrip({ history }: Props) {
         {/* Latest cents label */}
         {pts.length > 0 && (() => {
           const last  = pts[pts.length - 1];
-          const y     = centsToY(last.cents);
-          const color = colorForCents(last.cents);
+          const lc    = plotCents(last);
+          const y     = centsToY(lc);
+          const color = colorForCents(lc);
           return (
             <View style={[styles.latestBubble, {
               top:  Math.max(1, Math.min(STRIP_H - 16, y - 8)),
               left: Math.min(STRIP_W - 42, Math.max(4, ANCHOR_X + 6)),
             }]}>
               <Text style={[styles.latestText, { color }]}>
-                {last.cents >= 0 ? `+${last.cents}¢` : `${last.cents}¢`}
+                {lc >= 0 ? `+${lc}¢` : `${lc}¢`}
               </Text>
             </View>
           );
         })()}
 
-        {/* ±300¢ badge */}
         <View style={styles.rangeBadge}>
-          <Text style={styles.rangeText}>±300¢</Text>
+          <Text style={styles.rangeText}>±50¢</Text>
         </View>
       </View>
     </View>
@@ -141,8 +145,8 @@ const styles = StyleSheet.create({
   },
   bandYellow: {
     backgroundColor: '#ffeb3b07',
-    top:    centsToY(50),
-    height: Math.max(0, centsToY(-50) - centsToY(50)),
+    top:    centsToY(15),
+    height: Math.max(0, centsToY(-15) - centsToY(15)),
   },
   gridLine: { position: 'absolute', left: 0, right: 0 },
   latestBubble: {

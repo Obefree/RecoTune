@@ -19,6 +19,12 @@ import * as DocumentPicker from 'expo-document-picker';
 
 import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
 import { frequencyToNote } from '../utils/noteUtils';
+import { findBestSongMatch } from '../utils/songMatch';
+import {
+  auddRecognizeBase64,
+  fetchLyricsForTrack,
+  type AuddTrackResult,
+} from '../utils/auddApi';
 
 /* ─── Persistent storage paths ─── */
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
@@ -36,10 +42,7 @@ async function saveJson(path: string, data: unknown) {
 }
 
 /* ─── Types ─── */
-interface AuddResult {
-  artist: string; title: string; album?: string;
-  release_date?: string; song_link?: string;
-}
+type AuddResult = AuddTrackResult;
 
 /* ─── Chord colours ─── */
 function chordColor(conf: number): string {
@@ -98,14 +101,30 @@ const MINOR_P=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];
 let ctx,analyser,src,running=false;
 let practiceVoiceMode=false;
 
-/* ── rolling window for averaged chromagram ── */
-const WIN=18;         // ~0.9s window — responsive but not jittery
+/* ── настройки (см. docs/features/2026-05-19-chords-engine-*.md) ── */
+const ENGINE_CFG={
+  WIN:18,
+  STABLE_NEED:18,
+  MIN_CONF:0.46,
+  SILENCE_PEAK_DB:-68,
+  CHROMA_BIN_DB:-65,
+  MIN_CHROMA_SUM:0.34,
+  ONSET_RATIO:2.5,
+  DISPLAY_HOLD:5,
+};
+const ONSET_RATIO=ENGINE_CFG.ONSET_RATIO;
+const DISPLAY_HOLD=ENGINE_CFG.DISPLAY_HOLD;
+const WIN=ENGINE_CFG.WIN;
+const STABLE_NEED=ENGINE_CFG.STABLE_NEED;
+const MIN_CONF=ENGINE_CFG.MIN_CONF;
+const SILENCE_PEAK_DB=ENGINE_CFG.SILENCE_PEAK_DB;
+const CHROMA_BIN_DB=ENGINE_CFG.CHROMA_BIN_DB;
+const MIN_CHROMA_SUM=ENGINE_CFG.MIN_CHROMA_SUM;
+
 let   winBuf=[];
 
-/* ── chord stability gate ── */
-const STABLE_NEED=16; // must win 16 consecutive frames (~0.8s) before logging
-const MIN_CONF=0.42;  // minimum score to count as a real chord (not noise)
 let   candidate='?', stableCount=0, prevSegChord='?', segStart=0;
+let   lastDisplayChord='?', displayHoldLeft=0;
 
 /* ── onset / transient detection ── */
 let   energyHist=[], onsetCooldown=0;
@@ -116,7 +135,7 @@ function chroma(fft,sr,fftSz){
   const c=new Float32Array(12);const bHz=sr/fftSz;
   for(let i=1;i<fft.length;i++){
     const f=i*bHz;if(f<80||f>2200)continue;
-    const db=fft[i];if(db<-62)continue;
+    const db=fft[i];if(db<CHROMA_BIN_DB)continue;
     const e=Math.pow(10,db/20);
     const m=Math.round(12*Math.log2(f/440)+69);
     const pc=((m%12)+12)%12;c[pc]+=e;
@@ -145,8 +164,19 @@ function estimateKey(c){
   }
   return bk;
 }
-function topNotes(c,n){
-  return c.map((v,i)=>({n:NOTE[i].trim(),v})).sort((a,b)=>b.v-a.v).slice(0,n).filter(x=>x.v>0.3).map(x=>x.n);
+function chordTonesFromName(name){
+  if(!name||name==='?')return[];
+  const roots=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  let rootIdx=-1,rlen=1;
+  for(let len=2;len>=1;len--){
+    const c=name.slice(0,len);
+    const i=roots.indexOf(c);
+    if(i>=0){rootIdx=i;rlen=len;break;}
+  }
+  if(rootIdx<0)return[];
+  const suf=name.slice(rlen);
+  const ivs=TEMPLATES[suf]||TEMPLATES[''];
+  return ivs.map(iv=>roots[(rootIdx+iv)%12].trim());
 }
 function pitchHPS(fft,bHz,harmonics){
   const n=fft.length;
@@ -219,6 +249,7 @@ async function start(isVoicePractice){
   practiceVoiceMode=!!isVoicePractice;
   winBuf=[];energyHist=[];onsetCooldown=0;
   candidate='?';stableCount=0;prevSegChord='?';segStart=Date.now();
+  lastDisplayChord='?';displayHoldLeft=0;
   try{
     const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     ctx=new AudioContext();
@@ -232,7 +263,7 @@ async function start(isVoicePractice){
       analyser.getFloatFrequencyData(fft);
       // Skip silence
       const peak=Math.max(...fft.slice(0,400));
-      if(peak<-62){requestAnimationFrame(loop);return;}
+      if(peak<SILENCE_PEAK_DB){requestAnimationFrame(loop);return;}
 
       const c=chroma(fft,ctx.sampleRate,analyser.fftSize);
 
@@ -244,7 +275,7 @@ async function start(isVoicePractice){
       else if(energyHist.length>=4){
         const prevAvg=energyHist.slice(0,-2).reduce((s,v)=>s+v,0)/(energyHist.length-2);
         // Energy jumped >2.2× → guitarist just struck a new chord
-        if(totalE>prevAvg*2.2&&prevAvg>0.4){
+        if(totalE>prevAvg*ONSET_RATIO&&prevAvg>0.4){
           winBuf=winBuf.slice(-3); // flush most of old window, keep tiny tail
           stableCount=0;
           candidate='?';
@@ -256,16 +287,26 @@ async function start(isVoicePractice){
       winBuf.push(Array.from(c));
       if(winBuf.length>WIN)winBuf.shift();
       const avg=avgWindow();
+      const chromaSum=avg.reduce((s,v)=>s+v,0);
       const chord=detectChord(avg);
       const key=estimateKey(avg);
-      const notes=topNotes(avg,4);
+      const chordOk=chord.conf>=MIN_CONF&&chromaSum>=MIN_CHROMA_SUM;
+      let chordName=chordOk?chord.name:'?';
+      if(!chordOk&&lastDisplayChord!=='?'&&displayHoldLeft<DISPLAY_HOLD){
+        displayHoldLeft++;
+        chordName=lastDisplayChord;
+      }else{
+        displayHoldLeft=0;
+        if(chordOk)lastDisplayChord=chord.name;
+      }
+      const notes=chordName!=='?'?chordTonesFromName(chordName):[];
       const pitchHz=practiceVoiceMode?pitchHPSVoice(fft,bHz,4):pitchHPS(fft,bHz,4);
 
-      // Display update every frame
-      post({type:'update',chord:chord.conf>=MIN_CONF?chord.name:'?',confidence:chord.conf,key,notes,pitchHz});
+      post({type:'update',chord:chordName,confidence:chord.conf,key,notes,pitchHz});
 
+      const segOk=chordOk;
       // ── Stability gate ──
-      if(chord.conf>=MIN_CONF&&chord.name!=='?'&&chord.name===candidate){
+      if(segOk&&chord.name!=='?'&&chord.name===candidate){
         stableCount++;
         if(stableCount===STABLE_NEED&&candidate!==prevSegChord){
           const now=Date.now();
@@ -274,7 +315,7 @@ async function start(isVoicePractice){
           segStart=now;
         }
       } else {
-        if(chord.name!==candidate){candidate=chord.name;stableCount=0;}
+        if(!segOk||chord.name!==candidate){candidate=segOk?chord.name:'?';stableCount=0;}
       }
       requestAnimationFrame(loop);
     }
@@ -652,8 +693,11 @@ export default function ChordsScreen() {
   const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt' | 'manual'>('mic');
   const [lyrics, setLyrics]           = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricsSource, setLyricsSource] = useState<'audd' | 'ovh' | 'library' | null>(null);
+  const [libraryMatch, setLibraryMatch] = useState<SongEntry | null>(null);
   const [manualArtist, setManualArtist] = useState('');
   const [manualTitle, setManualTitle]   = useState('');
+  const allSongsRef = useRef<SongEntry[]>(SONGS);
 
   const wvRef    = useRef<WebView>(null);
   const recRef   = useRef<Audio.Recording | null>(null);
@@ -870,29 +914,20 @@ export default function ChordsScreen() {
       const uri = rec.getURI();
       if (!uri) throw new Error('No recording URI');
       const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-      const form = new FormData();
-      (form as any).append('api_token', 'test');
-      (form as any).append('audio', base64);
-      (form as any).append('return', 'timecode');
-      let data: any = null;
-      try {
-        const res = await fetch('https://api.audd.io/', { method: 'POST', body: form as any });
-        data = await res.json();
-      } catch (netErr) {
-        Alert.alert('Нет интернета', 'Проверьте подключение и попробуйте снова. Также можно найти песню вручную.');
-        return;
-      }
-      if (data.status === 'success' && data.result) {
-        setResultAndFetch(data.result as AuddResult);
-      } else if (data.status === 'error' && data.error?.error_code === 901) {
+      const outcome = await auddRecognizeBase64(base64);
+      if (outcome.status === 'success') {
+        await applyIdentifyResult(outcome.result);
+      } else if (outcome.status === 'limit') {
         Alert.alert(
           'Лимит API',
-          'Бесплатный токен AudD исчерпан (~3 запроса/день).\n\nИспользуйте вкладку "Вручную" — введите исполнителя и название.'
+          'Токен AudD исчерпан.\n\nДобавьте EXPO_PUBLIC_AUDD_TOKEN в .env или найдите песню вручную.',
         );
+      } else if (outcome.status === 'network') {
+        Alert.alert('Нет интернета', 'Проверьте подключение или введите название вручную.');
       } else {
         Alert.alert(
           'Не распознано',
-          'Песня не найдена в базе AudD.\n\nСовет: поднесите телефон ближе к колонке, уберите шум. Или найдите вручную.'
+          'Песня не найдена в AudD.\n\nПоднесите телефон ближе к колонке или найдите вручную.',
         );
       }
     } catch (e) { Alert.alert('Ошибка распознавания', String(e)); }
@@ -901,25 +936,69 @@ export default function ChordsScreen() {
   }
 
   async function fetchLyrics(artist: string, title: string) {
-    setLyrics(null); setLyricsLoading(true);
-    try {
-      const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
-      const data = await res.json();
-      if (!data.error && data.lyrics) {
-        // Normalize (Am) → [Am] so chords always render above text
-        const lyr = data.lyrics.trim()
-          .replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
-        setLyrics(lyr);
-        setPracticeLyrics(lyr);
-      }
-    } catch {}
+    setLyricsLoading(true);
+    const { text, source } = await fetchLyricsForTrack({ artist, title });
+    if (text) {
+      setLyrics(text);
+      setPracticeLyrics(text);
+      setLyricsSource(source);
+    }
     setLyricsLoading(false);
   }
 
-  function setResultAndFetch(r: AuddResult) {
+  async function applyIdentifyResult(r: AuddResult) {
     setSongResult(r);
-    fetchLyrics(r.artist, r.title);
+    setLyrics(null);
+    setLyricsSource(null);
+
+    const match = findBestSongMatch(r.artist, r.title, allSongsRef.current);
+    setLibraryMatch(match);
+
+    if (match) {
+      setPracticeInput(match.chords);
+      parsePracticeInput(match.chords);
+      const libLyrics = match.lyrics ?? LYRICS_DB[match.id];
+      if (libLyrics) {
+        setLyrics(libLyrics);
+        setPracticeLyrics(libLyrics);
+        setLyricsSource('library');
+      }
+    }
+
+    setLyricsLoading(true);
+    const { text, source } = await fetchLyricsForTrack(r);
+    if (text && !match?.lyrics && !LYRICS_DB[match?.id ?? '']) {
+      setLyrics(text);
+      setPracticeLyrics(text);
+      setLyricsSource(source);
+    } else if (text && match && !(match.lyrics ?? LYRICS_DB[match.id]) && source) {
+      setLyrics(text);
+      setPracticeLyrics(text);
+      setLyricsSource(source);
+    }
+    setLyricsLoading(false);
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 200);
+  }
+
+  function setResultAndFetch(r: AuddResult) {
+    void applyIdentifyResult(r);
+  }
+
+  function openIdentifyInPractice() {
+    if (libraryMatch) {
+      pickSong(libraryMatch);
+      switchMode('practice');
+      return;
+    }
+    switchMode('practice');
+    if (lyrics) setPracticeLyrics(lyrics);
+  }
+
+  function clearIdentifyResult() {
+    setSongResult(null);
+    setLyrics(null);
+    setLibraryMatch(null);
+    setLyricsSource(null);
   }
 
   async function pickFileAndIdentify() {
@@ -928,13 +1007,11 @@ export default function ChordsScreen() {
       if (result.canceled) return;
       setFileLoading(true); setSongResult(null);
       const base64 = await FileSystem.readAsStringAsync(result.assets[0].uri, { encoding: FileSystem.EncodingType.Base64 });
-      const form = new FormData();
-      (form as any).append('api_token', 'test');
-      (form as any).append('audio', base64);
-      const res  = await fetch('https://api.audd.io/', { method: 'POST', body: form as any });
-      const data = await res.json();
-      if (data.status === 'success' && data.result) {
-        setResultAndFetch(data.result as AuddResult);
+      const outcome = await auddRecognizeBase64(base64);
+      if (outcome.status === 'success') {
+        await applyIdentifyResult(outcome.result);
+      } else if (outcome.status === 'limit') {
+        Alert.alert('Лимит API', 'Токен AudD исчерпан. Введите песню вручную или задайте EXPO_PUBLIC_AUDD_TOKEN.');
       } else {
         Alert.alert('Не распознано', 'Попробуйте другой файл или введите название вручную.');
       }
@@ -997,6 +1074,7 @@ export default function ChordsScreen() {
 
   // Merge LYRICS_DB into built-in songs (external lyrics file wins over inline)
   const allSongs = [...SONGS.map(s => LYRICS_DB[s.id] ? { ...s, lyrics: LYRICS_DB[s.id] } : s), ...customSongs];
+  useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   const libResults = (() => {
@@ -1748,7 +1826,7 @@ export default function ChordsScreen() {
                   <Ionicons name="checkmark-circle" size={18} color="#00e676" />
                   <Text style={styles.resultFound}>НАЙДЕНО</Text>
                 </View>
-                <TouchableOpacity onPress={() => { setSongResult(null); setLyrics(null); }}
+                <TouchableOpacity onPress={clearIdentifyResult}
                   style={styles.resultNewSearchBtn}>
                   <Ionicons name="search" size={14} color="#7c4dff" />
                   <Text style={styles.resultNewSearchText}>Новый поиск</Text>
@@ -1762,29 +1840,52 @@ export default function ChordsScreen() {
                 <Text style={styles.resultMeta}>{songResult.album}{songResult.release_date ? ` · ${songResult.release_date.slice(0,4)}` : ''}</Text>
               )}
 
-              {/* Action buttons */}
+              {libraryMatch ? (
+                <View style={styles.resultLibraryBadge}>
+                  <Ionicons name="library-outline" size={14} color="#00e676" />
+                  <Text style={styles.resultLibraryBadgeText}>Есть в библиотеке RecoTune</Text>
+                </View>
+              ) : (
+                <Text style={styles.resultNoLibrary}>Аккорды в каталоге не найдены — только текст (если есть)</Text>
+              )}
+
+              <View style={styles.resultChordsBlock}>
+                <Text style={styles.resultChordsLabel}>АККОРДЫ</Text>
+                <Text style={styles.resultChordsValue}>
+                  {libraryMatch?.chords ?? '—'}
+                </Text>
+                {libraryMatch?.key && (
+                  <Text style={styles.resultChordsMeta}>Тональность: {libraryMatch.key}{libraryMatch.bpm ? ` · ${libraryMatch.bpm} BPM` : ''}</Text>
+                )}
+              </View>
+
               <View style={styles.resultActions}>
                 <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#ff980022', borderColor: '#ff980066' }]}
-                  onPress={() => switchMode('practice')}>
+                  onPress={openIdentifyInPractice}>
                   <Ionicons name="person" size={16} color="#ff9800" />
-                  <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>В Практику</Text>
+                  <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>
+                    {libraryMatch ? 'В практику с аккордами' : 'В практику'}
+                  </Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Divider */}
               <View style={styles.resultDivider} />
 
-              {/* Lyrics — full, no truncation */}
               <View style={styles.resultLyricsHeader}>
                 <Ionicons name="document-text-outline" size={14} color="#555" />
                 <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
+                {lyricsSource && !lyricsLoading && (
+                  <Text style={styles.lyricsSourceTag}>
+                    {lyricsSource === 'library' ? 'каталог' : lyricsSource === 'audd' ? 'AudD' : 'lyrics.ovh'}
+                  </Text>
+                )}
               </View>
               {lyricsLoading ? (
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
               ) : lyrics ? (
                 <Text style={styles.resultLyricsText}>{lyrics}</Text>
               ) : (
-                <Text style={styles.identifyLyricsEmpty}>Текст не найден (lyrics.ovh)</Text>
+                <Text style={styles.identifyLyricsEmpty}>Текст не найден (AudD / lyrics.ovh)</Text>
               )}
 
               <View style={{ height: 40 }} />
@@ -2819,7 +2920,22 @@ const styles = StyleSheet.create({
   chordsBtn:        { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#7c4dff22', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#7c4dff44' },
   chordsBtnText:    { color: '#ccc', fontSize: 12, fontWeight: '700' },
   resultDivider:    { height: 1, backgroundColor: '#1e1e28', marginVertical: 14 },
-  resultLyricsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  resultLibraryBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10,
+    backgroundColor: '#00e67614', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+    borderWidth: 1, borderColor: '#00e67644', alignSelf: 'flex-start',
+  },
+  resultLibraryBadgeText: { color: '#00e676', fontSize: 11, fontWeight: '700' },
+  resultNoLibrary: { color: '#555', fontSize: 11, marginTop: 10, lineHeight: 16 },
+  resultChordsBlock: {
+    marginTop: 12, backgroundColor: '#15151e', borderRadius: 12, padding: 12,
+    borderWidth: 1, borderColor: '#2a2a38',
+  },
+  resultChordsLabel: { color: '#555', fontSize: 10, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
+  resultChordsValue: { color: '#e0e0e0', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
+  resultChordsMeta: { color: '#666', fontSize: 11, marginTop: 6 },
+  resultLyricsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' },
+  lyricsSourceTag: { color: '#444', fontSize: 9, fontWeight: '700', marginLeft: 'auto' as const },
   resultLyricsText: { color: '#aaa', fontSize: 14, lineHeight: 24 },
   lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   identifyLyricsEmpty: { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
