@@ -13,7 +13,7 @@ function centsToY(cents: number): number {
 }
 
 function plotCents(p: HistoryPoint): number {
-  return p.stringCents ?? p.cents;
+  return p.cents;
 }
 
 function colorForCents(c: number): string {
@@ -96,7 +96,7 @@ export default function MiniCentsStrip({ history }: Props) {
             position: 'absolute',
             left: xOf(i) - 2.5, top: centsToY(plotCents(p)) - 2.5,
             width: 5, height: 5, borderRadius: 2.5,
-            backgroundColor: colorForCents(p.cents),
+            backgroundColor: colorForCents(plotCents(p)),
             opacity: i === pts.length - 1 ? 1 : 0.45,
           }} />
         ))}

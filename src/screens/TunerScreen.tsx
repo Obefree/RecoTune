@@ -13,43 +13,56 @@ import WebView from 'react-native-webview';
 import TunerEngine, { PitchMessage } from '../components/TunerEngine';
 import {
   centsToColor, frequencyToNote, INSTRUMENTS, TUNINGS, getTuningsForInstrument,
-  findNearestStringWithHysteresis, type Tuning, type StringDef,
+  type Tuning,
 } from '../utils/noteUtils';
-import type { TuningChartTarget } from '../components/FrequencyChart';
 import TunerNeedle from '../components/TunerNeedle';
-import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
+import FrequencyChart, { HistoryPoint, TUNER_CHART_BLOCK_MIN_H } from '../components/FrequencyChart';
 import MiniCentsStrip from '../components/MiniCentsStrip';
+import { useLocale } from '../context/LocaleContext';
+import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
+import { SungNoteDetector } from '../utils/sungNoteDetector';
 
-/** Частота: ниже α — меньше дёрганье стрелки (было 0.28 — слишком «нервно»). */
-const EMA_ALPHA_FREQ = 0.14;
-/** Центы отдельно сглаживаем — стрелка не дёргается на шуме ±2–5 ¢ */
-const EMA_ALPHA_CENTS = 0.22;
+const EMA_ALPHA_FREQ_LOW = 0.14;
+const EMA_ALPHA_CENTS_LOW = 0.22;
+const EMA_ALPHA_FREQ_HIGH = 0.09;
+const EMA_ALPHA_CENTS_HIGH = 0.15;
+const HIGH_NOTE_HZ = 280;
+
+function emaAlphaFreq(hz: number) {
+  return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_FREQ_HIGH : EMA_ALPHA_FREQ_LOW;
+}
+function emaAlphaCents(hz: number) {
+  return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_CENTS_HIGH : EMA_ALPHA_CENTS_LOW;
+}
 const A4_FREQ    = 440;
 const A4_MIDI    = 69;
 
 const MAX_HISTORY = 80;
+const MAX_REGISTERED = 64;
 const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', 'Guitar 7': '🎸', Ukulele: '🪗', Bass: '🎸', Mandolin: '🪕' };
 
 interface NoteState { name: string; octave: number; cents: number; frequency: number }
 
-interface StringTuneState {
-  stringDef: StringDef;
-  stringCents: number;
-}
+const MINI_STRIP_H = 68 + 6;
+const NEEDLE_PAD = 24;
 
 export default function TunerScreen() {
   const insets = useSafeAreaInsets();
-  const { height: windowH } = useWindowDimensions();
+  const { locale, setLocale, t } = useLocale();
+  const { width: windowW, height: windowH } = useWindowDimensions();
   const tunerPickerScrollMaxH = Math.max(200, Math.round(windowH * 0.58) - insets.bottom - 32);
+  const needleBlockH = Math.round((windowW - 32) * 0.58) + MINI_STRIP_H + NEEDLE_PAD;
+  const mainCardMinH = Math.max(needleBlockH, TUNER_CHART_BLOCK_MIN_H);
 
   const [isActive, setIsActive]       = useState(false);
   const [note, setNote]               = useState<NoteState | null>(null);
-  const [stringTune, setStringTune]   = useState<StringTuneState | null>(null);
   const [frequency, setFrequency]     = useState<number | null>(null);
   const [signalLevel, setSignalLevel] = useState(0);
   const [error, setError]             = useState<string | null>(null);
   const [showGraph, setShowGraph]     = useState(false);
   const [history, setHistory]         = useState<HistoryPoint[]>([]);
+  const [registeredEvents, setRegisteredEvents] = useState<RegisteredNoteEvent[]>([]);
+  const sungDetectorRef = useRef(new SungNoteDetector());
   const [instrument, setInstrument]   = useState('Guitar');
   const [tuning, setTuning]           = useState<Tuning>(TUNINGS[0]);
   const [showPicker, setShowPicker]   = useState(false);
@@ -60,12 +73,6 @@ export default function TunerScreen() {
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const smoothedFreqRef = useRef<number | null>(null);
   const smoothedCentsRef = useRef<number | null>(null);
-  const smoothedStringCentsRef = useRef<number | null>(null);
-  const lockedStringRef = useRef<number | null>(null);
-  const tuningRef = useRef(tuning);
-  useEffect(() => { tuningRef.current = tuning; }, [tuning]);
-  useEffect(() => { lockedStringRef.current = null; }, [tuning.id]);
-
   useEffect(() => {
     if (isActive) {
       pulseLoop.current = Animated.loop(Animated.sequence([
@@ -89,7 +96,8 @@ export default function TunerScreen() {
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
       const raw  = msg.frequency;
       const prevF = smoothedFreqRef.current;
-      const freq = prevF == null ? raw : EMA_ALPHA_FREQ * raw + (1 - EMA_ALPHA_FREQ) * prevF;
+      const alphaF = emaAlphaFreq(prevF ?? raw);
+      const freq = prevF == null ? raw : alphaF * raw + (1 - alphaF) * prevF;
       smoothedFreqRef.current = freq;
 
       const info = frequencyToNote(freq);
@@ -98,30 +106,11 @@ export default function TunerScreen() {
       const prevC = smoothedCentsRef.current;
       let dispCents = rawCents;
       if (prevC != null) {
-        const next = prevC + EMA_ALPHA_CENTS * (rawCents - prevC);
+        const next = prevC + emaAlphaCents(freq) * (rawCents - prevC);
         smoothedCentsRef.current = next;
         dispCents = Math.round(next);
       } else {
         smoothedCentsRef.current = rawCents;
-      }
-
-      const match = findNearestStringWithHysteresis(
-        freq,
-        tuningRef.current.strings,
-        lockedStringRef.current,
-      );
-      if (match) lockedStringRef.current = match.stringDef.string;
-
-      let dispStringCents = match?.cents ?? dispCents;
-      const prevSc = smoothedStringCentsRef.current;
-      if (match) {
-        if (prevSc != null) {
-          const nextSc = prevSc + EMA_ALPHA_CENTS * (match.cents - prevSc);
-          smoothedStringCentsRef.current = nextSc;
-          dispStringCents = Math.round(nextSc);
-        } else {
-          smoothedStringCentsRef.current = match.cents;
-        }
       }
 
       const n: NoteState = {
@@ -133,77 +122,75 @@ export default function TunerScreen() {
 
       setFrequency(freq);
       setNote(n);
-      setStringTune(match ? { stringDef: match.stringDef, stringCents: dispStringCents } : null);
       setSignalLevel(msg.signal ?? 0);
+      const ts = Date.now();
       setHistory(prev => {
         const pt: HistoryPoint = {
           cents: dispCents,
-          stringCents: match ? dispStringCents : undefined,
-          targetString: match?.stringDef.string,
-          targetNote: match?.stringDef.note,
           freq, midi,
-          note: info.name, octave: info.octave, ts: Date.now(),
+          note: info.name, octave: info.octave, ts,
         };
         const next = [...prev, pt];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
+      const detected = sungDetectorRef.current.process({
+        frequency: freq,
+        signal: msg.signal ?? 0,
+        cents: dispCents,
+        ts,
+      });
+      if (detected) {
+        setRegisteredEvents(prev => {
+          const ev: RegisteredNoteEvent = {
+            name: detected.name,
+            octave: detected.octave,
+            midi: detected.midi,
+            ts: detected.ts,
+            freq: detected.freq,
+          };
+          const next = [...prev, ev];
+          return next.length > MAX_REGISTERED ? next.slice(-MAX_REGISTERED) : next;
+        });
+      }
     } else if (msg.type === 'signal') {
+      sungDetectorRef.current.process({ frequency: null, signal: msg.signal ?? 0 });
       smoothedFreqRef.current = null;
       smoothedCentsRef.current = null;
-      smoothedStringCentsRef.current = null;
-      lockedStringRef.current = null;
-      setNote(null); setStringTune(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
+      setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
+      sungDetectorRef.current.process({ frequency: null, signal: 0 });
       smoothedFreqRef.current = null;
       smoothedCentsRef.current = null;
-      smoothedStringCentsRef.current = null;
-      lockedStringRef.current = null;
-      setNote(null); setStringTune(null); setFrequency(null); setSignalLevel(0);
+      setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
-      setError(msg.message ?? 'Microphone error'); setIsActive(false);
+      setError(msg.message ?? t('micError')); setIsActive(false);
     }
-  }, []);
+  }, [t]);
 
   const start = useCallback(async () => {
     const { status } = await Audio.requestPermissionsAsync();
-    if (status !== 'granted') { setError('Microphone permission denied'); return; }
-    setError(null); setHistory([]);
+    if (status !== 'granted') { setError(t('micDenied')); return; }
+    setError(null); setHistory([]); setRegisteredEvents([]);
+    sungDetectorRef.current.reset();
     smoothedFreqRef.current = null;
     smoothedCentsRef.current = null;
-    smoothedStringCentsRef.current = null;
-    lockedStringRef.current = null;
     setIsActive(true);
-  }, []);
+  }, [t]);
 
   const stop = useCallback(() => {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
+    sungDetectorRef.current.reset();
     smoothedFreqRef.current = null;
     smoothedCentsRef.current = null;
-    smoothedStringCentsRef.current = null;
-    lockedStringRef.current = null;
-    setIsActive(false); setNote(null); setStringTune(null); setFrequency(null); setSignalLevel(0);
+    setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
 
   useFocusEffect(useCallback(() => () => stop(), [stop]));
 
   const signalWidth = signalAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const displayCents = stringTune?.stringCents ?? note?.cents ?? 0;
+  const displayCents = note?.cents ?? 0;
   const tuneColor   = note && isActive ? centsToColor(displayCents) : '#3a3a4a';
-  const inTune      = stringTune && isActive && Math.abs(stringTune.stringCents) <= 5;
-
-  const activeStringId = stringTune?.stringDef.string ?? null;
-
-  const chartTarget: TuningChartTarget | null = stringTune
-    ? {
-        stringNumber: stringTune.stringDef.string,
-        note: stringTune.stringDef.note,
-        frequency: stringTune.stringDef.frequency,
-      }
-    : null;
-
-  const showHeardNote =
-    note && isActive && stringTune &&
-    `${note.name}${note.octave}` !== stringTune.stringDef.note;
+  const inTune      = note && isActive && Math.abs(displayCents) <= 5;
 
   return (
     <View style={[styles.wrapper, { paddingTop: insets.top }]}>
@@ -222,71 +209,88 @@ export default function TunerScreen() {
             <Ionicons name="chevron-down" size={13} color="#555" />
           </TouchableOpacity>
 
-          {/* Toggle: needle ↔ graph */}
+          <View style={styles.langToggle}>
+            <TouchableOpacity
+              onPress={() => setLocale('ru')}
+              style={[styles.langBtn, locale === 'ru' && styles.langBtnActive]}
+              accessibilityLabel={t('langRu')}
+            >
+              <Text style={[styles.langBtnText, locale === 'ru' && styles.langBtnTextActive]}>{t('langRu')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setLocale('en')}
+              style={[styles.langBtn, locale === 'en' && styles.langBtnActive]}
+              accessibilityLabel={t('langEn')}
+            >
+              <Text style={[styles.langBtnText, locale === 'en' && styles.langBtnTextActive]}>{t('langEn')}</Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.viewToggle}>
             <TouchableOpacity
               onPress={() => setShowGraph(false)}
               style={[styles.viewBtn, !showGraph && styles.viewBtnActive]}
             >
               <Ionicons name="radio-button-on-outline" size={20} color={!showGraph ? '#00e676' : '#555'} />
-              <Text style={[styles.viewBtnText, !showGraph && { color: '#00e676' }]}>СТРЕЛКА</Text>
+              <Text style={[styles.viewBtnText, !showGraph && { color: '#00e676' }]}>{t('viewNeedle')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowGraph(true)}
               style={[styles.viewBtn, showGraph && styles.viewBtnActive]}
             >
               <Ionicons name="analytics-outline" size={20} color={showGraph ? '#7c4dff' : '#555'} />
-              <Text style={[styles.viewBtnText, showGraph && { color: '#7c4dff' }]}>ГРАФИК</Text>
+              <Text style={[styles.viewBtnText, showGraph && { color: '#7c4dff' }]}>{t('viewGraph')}</Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* ── Main display area (needle OR graph) ── */}
-        <View style={styles.mainCard}>
+        <View style={[styles.mainCard, { minHeight: mainCardMinH }]}>
           {showGraph ? (
-            <FrequencyChart history={history} active={isActive} tuningTarget={chartTarget} />
+            <FrequencyChart
+              history={history}
+              active={isActive}
+              registeredMarkers={registeredEvents.map(e => ({
+                ts: e.ts,
+                midi: e.midi,
+                note: e.name,
+                octave: e.octave,
+              }))}
+            />
           ) : (
             <>
-              <TunerNeedle cents={isActive && stringTune ? stringTune.stringCents : null} color={tuneColor} />
+              <TunerNeedle cents={isActive && note ? note.cents : null} color={tuneColor} />
               <MiniCentsStrip history={history} />
             </>
           )}
         </View>
 
-        {/* ── String-first info strip ── */}
+        {/* ── Chromatic info strip ── */}
         <View style={styles.infoStrip}>
-          <View style={styles.stringBlock}>
-            <Text style={styles.stringLabel}>СТРУНА</Text>
-            <Text style={[styles.stringNum, { color: stringTune && isActive ? tuneColor : '#2a2a3a' }]}>
-              {stringTune && isActive ? stringTune.stringDef.string : '–'}
-            </Text>
-            <Text style={[styles.stringTarget, { color: stringTune && isActive ? '#aaa' : '#2a2a3a' }]}>
-              {stringTune && isActive ? stringTune.stringDef.note : '—'}
+          <View style={styles.noteBlock}>
+            <Text style={styles.noteLabel}>{t('noteLabel')}</Text>
+            <Text style={[styles.noteName, { color: note && isActive ? tuneColor : '#2a2a3a' }]}>
+              {note && isActive ? `${note.name}${note.octave}` : '–'}
             </Text>
           </View>
 
           <View style={styles.centsBlock}>
-            <Text style={[styles.centsVal, { color: stringTune && isActive ? tuneColor : '#2a2a3a' }]}>
-              {stringTune && isActive
-                ? `${stringTune.stringCents > 0 ? '+' : ''}${stringTune.stringCents}`
+            <Text style={[styles.centsVal, { color: note && isActive ? tuneColor : '#2a2a3a' }]}>
+              {note && isActive
+                ? `${displayCents > 0 ? '+' : ''}${displayCents}`
                 : '0'}
               <Text style={styles.centsSuffix}> ¢</Text>
             </Text>
             <View style={styles.statusRow}>
-              {stringTune && isActive
+              {note && isActive
                 ? inTune
-                  ? <Text style={styles.inTuneText}>✓ В СТРОЮ</Text>
+                  ? <Text style={styles.inTuneText}>{t('inTune')}</Text>
                   : <Text style={styles.offTuneText}>
-                      {stringTune.stringCents > 0 ? '▶ выше' : '◀ ниже'}
+                      {displayCents > 0 ? t('above') : t('below')}
                     </Text>
-                : <Text style={styles.waitText}>{isActive ? '· · ·' : '–'}</Text>
+                : <Text style={styles.waitText}>{isActive ? t('waiting') : '–'}</Text>
               }
             </View>
-            {showHeardNote && (
-              <Text style={styles.heardNote} numberOfLines={1}>
-                слышится {note!.name}{note!.octave}
-              </Text>
-            )}
           </View>
 
           <View style={styles.freqBlock}>
@@ -299,7 +303,6 @@ export default function TunerScreen() {
 
         {/* ── Signal + Start/Stop ── */}
         <View style={styles.controlRow}>
-          {/* Signal bar + dB */}
           <View style={styles.signalWrap}>
             <Text style={styles.signalLabel}>SIG</Text>
             <View style={styles.signalTrack}>
@@ -312,7 +315,6 @@ export default function TunerScreen() {
             </Text>
           </View>
 
-          {/* Button */}
           <TouchableOpacity
             onPress={isActive ? stop : start}
             style={[styles.btn, isActive && styles.btnActive]}
@@ -329,29 +331,9 @@ export default function TunerScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {/* ── Strings ── */}
-        <View style={styles.stringsCard}>
-          <View style={styles.stringsGrid}>
-            {tuning.strings.map(gs => {
-              const active = activeStringId === gs.string;
-              return (
-                <TouchableOpacity
-                  key={`${gs.string}${gs.note}`}
-                  onPress={() => { lockedStringRef.current = gs.string; }}
-                  activeOpacity={0.75}
-                  style={[styles.pill, active && styles.pillActive]}
-                >
-                  <Text style={[styles.pillNum, active && styles.pillNumActive]}>{gs.string}</Text>
-                  <Text style={[styles.pillNote, active && styles.pillNoteActive]}>{gs.note}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
       </ScrollView>
 
-      {/* ── Tuning picker ── */}
+      {/* ── Tuning picker (instrument mode — future string targeting) ── */}
       <Modal
         visible={showPicker}
         transparent
@@ -360,7 +342,7 @@ export default function TunerScreen() {
         onRequestClose={() => setShowPicker(false)}
       >
         <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowPicker(false)} accessibilityLabel="Закрыть" />
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowPicker(false)} accessibilityLabel={t('closePicker')} />
           <View style={[styles.modalSheet, { paddingBottom: insets.bottom + 16, maxHeight: Math.round(windowH * 0.92) }]}>
             <ScrollView
               keyboardShouldPersistTaps="handled"
@@ -413,27 +395,28 @@ const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: '#0a0a0f' },
   scroll:  { paddingHorizontal: 16, paddingBottom: 24 },
 
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 12, gap: 10 },
+  topBar: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginTop: 10, marginBottom: 12, gap: 8 },
+  langToggle: { flexDirection: 'row', backgroundColor: '#111118', borderRadius: 12, borderWidth: 1, borderColor: '#222', overflow: 'hidden' },
+  langBtn: { paddingHorizontal: 10, paddingVertical: 10, minWidth: 40, alignItems: 'center' },
+  langBtnActive: { backgroundColor: '#1e1e2a' },
+  langBtnText: { color: '#555', fontSize: 11, fontWeight: '800' },
+  langBtnTextActive: { color: '#00e676' },
   instrumentBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#111118', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, borderWidth: 1, borderColor: '#222', flexShrink: 1 },
   instEmoji: { fontSize: 18 },
   instName:  { color: '#ccc', fontSize: 13, fontWeight: '700' },
   instTuning:{ color: '#555', fontSize: 10 },
 
-  viewToggle: { flexDirection: 'row', flex: 1, minWidth: 168, backgroundColor: '#111118', borderRadius: 14, borderWidth: 2, borderColor: '#2a2a38', overflow: 'hidden' },
+  viewToggle: { flexDirection: 'row', flex: 1, minWidth: 140, backgroundColor: '#111118', borderRadius: 14, borderWidth: 2, borderColor: '#2a2a38', overflow: 'hidden' },
   viewBtn:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, flex: 1, paddingHorizontal: 12, paddingVertical: 14, minHeight: 50 },
   viewBtnActive:{ backgroundColor: '#1e1e2a' },
   viewBtnText: { color: '#555', fontSize: 12, fontWeight: '800', letterSpacing: 0.3 },
 
-  // Main card - just padding, no fixed height
   mainCard: { backgroundColor: '#111118', borderRadius: 20, paddingVertical: 12, paddingHorizontal: 8, marginBottom: 12, borderWidth: 1, borderColor: '#1e1e28' },
 
-  // Note info strip
   infoStrip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111118', borderRadius: 16, paddingVertical: 12, paddingHorizontal: 16, marginBottom: 12, borderWidth: 1, borderColor: '#1e1e28' },
-  stringBlock: { width: 80, alignItems: 'flex-start' },
-  stringLabel: { color: '#444', fontSize: 9, fontWeight: '800', letterSpacing: 1.5 },
-  stringNum:   { fontSize: 40, fontWeight: '800', lineHeight: 42, marginTop: 0 },
-  stringTarget: { fontSize: 13, fontWeight: '700', marginTop: 2 },
-  heardNote:   { color: '#444', fontSize: 10, marginTop: 4, maxWidth: 140 },
+  noteBlock: { width: 80, alignItems: 'flex-start' },
+  noteLabel: { color: '#444', fontSize: 9, fontWeight: '800', letterSpacing: 1.5 },
+  noteName:  { fontSize: 36, fontWeight: '800', lineHeight: 40, marginTop: 2 },
   centsBlock: { flex: 1, alignItems: 'center' },
   centsVal:   { fontSize: 32, fontWeight: '700', letterSpacing: -1 },
   centsSuffix:{ fontSize: 16, fontWeight: '400' },
@@ -445,7 +428,6 @@ const styles = StyleSheet.create({
   freqVal:    { fontSize: 20, fontWeight: '600' },
   freqUnit:   { color: '#555', fontSize: 11 },
 
-  // Controls row
   controlRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12 },
   signalWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   signalLabel:{ color: '#444', fontSize: 9, letterSpacing: 1.5, fontWeight: '700', width: 24 },
@@ -458,17 +440,6 @@ const styles = StyleSheet.create({
   btnTextActive: { color: '#0a0a0f' },
   errorText:  { color: '#ff5252', fontSize: 12, marginBottom: 8, textAlign: 'center' },
 
-  // Strings
-  stringsCard: { backgroundColor: '#111118', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#1e1e28' },
-  stringsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
-  pill:        { alignItems: 'center', backgroundColor: '#1a1a24', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 9, borderWidth: 1, borderColor: '#2a2a38', minWidth: 40 },
-  pillActive:  { backgroundColor: '#00e67618', borderColor: '#00e676' },
-  pillNum:     { color: '#555', fontSize: 9, fontWeight: '700' },
-  pillNumActive:{ color: '#00e676' },
-  pillNote:    { color: '#888', fontSize: 12, fontWeight: '600', marginTop: 1 },
-  pillNoteActive:{ color: '#00e676', fontWeight: '800' },
-
-  // Modal
   modalOverlay: { flex: 1, backgroundColor: '#000000bb', justifyContent: 'flex-end' },
   modalSheet:   { backgroundColor: '#111118', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1, borderColor: '#222' },
   handle:       { width: 40, height: 4, backgroundColor: '#333', borderRadius: 2, alignSelf: 'center', marginBottom: 16 },

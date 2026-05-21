@@ -74,16 +74,32 @@ const HTML = `<!DOCTYPE html>
     return a[Math.floor(a.length / 2)];
   }
 
-  /** Медиана по кадрам + подавление скачка > ~4 тона (часто смена гармоники), как делают «мягкие» тюнеры */
+  /** Свести октавные/гармонические ошибки к фундаменталу относительно последней стабильной */
+  function foldHarmonics(f, ref) {
+    if (!ref || !f) return f;
+    for (var k = 2; k <= 4; k++) {
+      var r = f / ref;
+      if (Math.abs(r - k) < 0.07) return f / k;
+      if (Math.abs(r - 1 / k) < 0.07) return f * k;
+    }
+    return f;
+  }
+
+  /** Медиана по кадрам + подавление скачка (на высоких нотах — жёстче) */
   function stabilizeFreq(f) {
-    freqRing.push(f);
+    var folded = lastStableF != null ? foldHarmonics(f, lastStableF) : f;
+    freqRing.push(folded);
     if (freqRing.length > RING) freqRing.shift();
-    if (freqRing.length < 3) return f;
+    if (freqRing.length < 3) return folded;
     var m = medianRing(freqRing);
     if (lastStableF != null) {
-      var lo = lastStableF / 1.26;
-      var hi = lastStableF * 1.26;
-      if (m < lo || m > hi) m = 0.55 * m + 0.45 * lastStableF;
+      var ratio = lastStableF >= 320 ? 1.14 : 1.26;
+      var lo = lastStableF / ratio;
+      var hi = lastStableF * ratio;
+      if (m < lo || m > hi) {
+        var blend = lastStableF >= 320 ? 0.38 : 0.45;
+        m = (1 - blend) * m + blend * lastStableF;
+      }
     }
     lastStableF = m;
     return m;

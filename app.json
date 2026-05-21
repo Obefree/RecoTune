@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "RecoTune needs microphone access for the tuner and recorder.",
-        "NSPhotoLibraryUsageDescription": "RecoTune needs access to your media library to browse and play audio and video files."
+        "NSPhotoLibraryUsageDescription": "RecoTune needs access to your media library to browse and play audio and video files.",
+        "UIBackgroundModes": ["audio"]
       }
     },
     "android": {
@@ -25,6 +26,8 @@
         "backgroundColor": "#0a0a0f"
       },
       "permissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.READ_MEDIA_AUDIO",

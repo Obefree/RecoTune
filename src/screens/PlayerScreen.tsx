@@ -1,9 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  Alert, PanResponder,
+  Alert,
 } from 'react-native';
+import SeekBar from '../components/SeekBar';
 import { Audio, AVPlaybackStatus } from 'expo-av';
+import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
+import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
+import { assertPlaybackFileExists } from '../utils/playbackUri';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
@@ -62,30 +66,22 @@ export default function PlayerScreen() {
   const idxRef       = useRef(queueIdx);
   const repeatRef    = useRef(repeat);
   const durRef       = useRef(dur);
-  const seekBarWidth = useRef(1);
+  const playerSeekingRef = useRef(false);
+  const wasPlayingBeforeScrubRef = useRef(false);
 
   useEffect(() => { queueRef.current = queue;    }, [queue]);
   useEffect(() => { idxRef.current   = queueIdx; }, [queueIdx]);
   useEffect(() => { repeatRef.current = repeat;  }, [repeat]);
   useEffect(() => { durRef.current    = dur;     }, [dur]);
 
-  // PanResponder for seek bar drag
-  const seekPan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder:  () => true,
-      onPanResponderGrant: (e) => {
-        const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekBarWidth.current));
-        const s = soundRef.current;
-        if (s && durRef.current > 0) s.setPositionAsync(pct * durRef.current * 1000).catch(() => {});
-      },
-      onPanResponderMove: (e) => {
-        const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekBarWidth.current));
-        const s = soundRef.current;
-        if (s && durRef.current > 0) s.setPositionAsync(pct * durRef.current * 1000).catch(() => {});
-      },
-    })
-  ).current;
+  const handlePlayerSeek = useCallback(async (seconds: number) => {
+    const s = soundRef.current;
+    if (!s || durRef.current <= 0) return;
+    try {
+      await s.setPositionAsync(Math.round(seconds * 1000));
+      setPos(Math.floor(seconds));
+    } catch {}
+  }, []);
 
   /* ─── Pick audio files via DocumentPicker ─── */
   const pickAudioFiles = useCallback(async () => {
@@ -155,17 +151,16 @@ export default function PlayerScreen() {
     setQueueIdx(idx); idxRef.current = idx;
 
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-      });
+      await applyPlaybackAudioMode();
+      const playbackUri = await assertPlaybackFileExists(q[idx].uri);
       const { sound } = await Audio.Sound.createAsync(
-        { uri: q[idx].uri },
+        { uri: playbackUri },
         { shouldPlay: true },
         (status: AVPlaybackStatus) => {
           if (!status.isLoaded) return;
-          setPos(Math.floor((status.positionMillis ?? 0) / 1000));
+          if (!playerSeekingRef.current) {
+            setPos(Math.floor((status.positionMillis ?? 0) / 1000));
+          }
           setDur(Math.floor((status.durationMillis ?? 0) / 1000));
           setIsPlaying(status.isPlaying);
           if (status.didJustFinish) {
@@ -214,6 +209,49 @@ export default function PlayerScreen() {
     if (idx > 0) playAt(idx - 1);
   }, [playAt]);
 
+  const skipForward = useCallback(async () => {
+    const s = soundRef.current;
+    if (!s) return;
+    const st = await s.getStatusAsync() as AVPlaybackStatus;
+    if (!st.isLoaded || !st.durationMillis) return;
+    const nextMs = Math.min(st.durationMillis, (st.positionMillis ?? 0) + 10_000);
+    await s.setPositionAsync(nextMs);
+    setPos(Math.floor(nextMs / 1000));
+  }, []);
+
+  const skipBackward = useCallback(async () => {
+    const s = soundRef.current;
+    if (!s) return;
+    const st = await s.getStatusAsync() as AVPlaybackStatus;
+    if (!st.isLoaded) return;
+    const nextMs = Math.max(0, (st.positionMillis ?? 0) - 10_000);
+    await s.setPositionAsync(nextMs);
+    setPos(Math.floor(nextMs / 1000));
+  }, []);
+
+  const currentTrack = queueIdx >= 0 && queueIdx < queue.length ? queue[queueIdx] : null;
+
+  useMediaRemoteControls(
+    queueIdx >= 0 && !!currentTrack,
+    'queue',
+    {
+      onTogglePlay: togglePlay,
+      onNext: playNext,
+      onPrevious: playPrev,
+      onSkipForward: skipForward,
+      onSkipBackward: skipBackward,
+      onSeek: handlePlayerSeek,
+    },
+    currentTrack
+      ? {
+          title: currentTrack.title,
+          artist: currentTrack.artist,
+          durationSec: dur,
+          elapsedSec: pos,
+          isPlaying,
+        }
+      : null,
+  );
 
   /* ─── Build queue from track list ─── */
   const enqueueAll = useCallback((tracks: Track[], startIdx: number) => {
@@ -282,7 +320,6 @@ export default function PlayerScreen() {
   }, []);
 
   /* ─── Render ─── */
-  const currentTrack = queueIdx >= 0 && queueIdx < queue.length ? queue[queueIdx] : null;
   const rawTracks    = libTab === 'device' ? deviceTracks : recTracks;
   const activeTracks = applySort(rawTracks, sortMode, favorites);
 
@@ -360,14 +397,28 @@ export default function PlayerScreen() {
         {/* Seek bar — drag to scrub */}
         <View style={styles.seekRow}>
           <Text style={styles.seekTime}>{fmtSec(pos)}</Text>
-          <View
-            style={styles.seekTrack}
-            onLayout={e => { seekBarWidth.current = e.nativeEvent.layout.width; }}
-            {...seekPan.panHandlers}
-          >
-            <View style={styles.seekBg} />
-            <View style={[styles.seekFill, { width: dur > 0 ? `${(pos / dur) * 100}%` : '0%' }]} />
-            <View style={[styles.seekThumb, { left: dur > 0 ? `${(pos / dur) * 100}%` : '0%' }]} />
+          <View style={styles.seekTrackWrap}>
+            <SeekBar
+              position={pos}
+              duration={dur}
+              color="#7c4dff"
+              onScrubStart={() => {
+                playerSeekingRef.current = true;
+                const s = soundRef.current;
+                if (!s) return;
+                void s.getStatusAsync().then(st => {
+                  if (st.isLoaded) wasPlayingBeforeScrubRef.current = st.isPlaying;
+                  if (st.isLoaded && st.isPlaying) s.pauseAsync().catch(() => {});
+                });
+              }}
+              onScrubEnd={() => {
+                playerSeekingRef.current = false;
+                if (wasPlayingBeforeScrubRef.current) {
+                  soundRef.current?.playAsync().catch(() => {});
+                }
+              }}
+              onSeek={handlePlayerSeek}
+            />
           </View>
           <Text style={styles.seekTime}>{fmtSec(dur)}</Text>
         </View>
@@ -515,10 +566,7 @@ const styles = StyleSheet.create({
 
   seekRow: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', marginBottom: 16 },
   seekTime: { color: '#666', fontSize: 11, width: 36, textAlign: 'center' },
-  seekTrack: { flex: 1, height: 28, justifyContent: 'center' },
-  seekBg:    { position: 'absolute', left: 0, right: 0, height: 4, backgroundColor: '#2a2a3a', borderRadius: 2 },
-  seekFill:  { position: 'absolute', left: 0, height: 4, backgroundColor: '#7c4dff', borderRadius: 2 },
-  seekThumb: { position: 'absolute', width: 16, height: 16, borderRadius: 8, backgroundColor: '#7c4dff', top: -6, marginLeft: -8 },
+  seekTrackWrap: { flex: 1 },
 
   controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-evenly', width: '100%', marginBottom: 8 },
   ctrl:   { padding: 12 },

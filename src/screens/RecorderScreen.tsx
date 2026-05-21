@@ -4,6 +4,9 @@ import {
   Alert, Animated, Modal, TextInput, ScrollView, Pressable, Platform, useWindowDimensions,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
+import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
+import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
+import { assertPlaybackFileExists } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,6 +17,18 @@ import {
   RecQuality, QUALITY_PRESETS, DEFAULT_QUALITY,
   loadQualitySettings, saveQualitySettings, buildRecordingOptions, presetLabel,
 } from '../utils/qualitySettings';
+import {
+  DEFAULT_AUDIO_ROUTING,
+  probeRecordingInputs,
+  applyStudioAudioMode,
+  applyRecordingInput,
+  loadStudioAudioRouting,
+  saveStudioAudioRouting,
+  type StudioAudioRouting,
+  type AudioRouteSnapshot,
+  type RecordingInputInfo,
+} from '../utils/studioAudioRouting';
+import RecordingInputPicker from '../components/RecordingInputPicker';
 
 interface Recording {
   id: string;
@@ -33,7 +48,7 @@ function fmtDate(ts: number) {
     ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function RecorderScreen() {
+export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}) {
   const insets = useSafeAreaInsets();
   const { height: windowH } = useWindowDimensions();
   const { setTabBarHidden } = useTabBarVisibility();
@@ -46,8 +61,13 @@ export default function RecorderScreen() {
   const [renameText, setRenameText]   = useState('');
   const [quality, setQuality]         = useState<RecQuality>(DEFAULT_QUALITY);
   const [showQuality, setShowQuality] = useState(false);
+  const [audioRouting, setAudioRouting] = useState<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
+  const [audioRouteSnap, setAudioRouteSnap] = useState<AudioRouteSnapshot | null>(null);
+  const [audioRouteLoading, setAudioRouteLoading] = useState(false);
+  const audioRoutingRef = useRef<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
   const qualityRef = useRef<RecQuality>(DEFAULT_QUALITY);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
+  useEffect(() => { audioRoutingRef.current = audioRouting; }, [audioRouting]);
 
   const anyRecModalOpen = showQuality || renameRec !== null;
   useEffect(() => {
@@ -56,11 +76,13 @@ export default function RecorderScreen() {
 
   // Single-source-of-truth for playback
   const [playingId, setPlayingId]       = useState<string | null>(null);
+  const [isPlaying, setIsPlaying]       = useState(false);
   const [playPos, setPlayPos]           = useState(0);
   const [playDur, setPlayDur]           = useState(0);
 
   const recRef     = useRef<Audio.Recording | null>(null);
   const soundRef   = useRef<Audio.Sound | null>(null);
+  const recordingsRef = useRef<Recording[]>([]);
   const busyRef    = useRef(false);   // prevents concurrent stop/start
   const startRef   = useRef(0);
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -102,20 +124,54 @@ export default function RecorderScreen() {
       }
       recs.sort((a, b) => b.createdAt - a.createdAt);
       setRecordings(recs);
+      recordingsRef.current = recs;
     } catch {}
     setLoading(false);
+  }, []);
+
+  useEffect(() => { recordingsRef.current = recordings; }, [recordings]);
+
+  const refreshAudioRoutes = useCallback(async () => {
+    setAudioRouteLoading(true);
+    try {
+      const snap = await probeRecordingInputs();
+      setAudioRouteSnap(snap);
+      return snap;
+    } finally {
+      setAudioRouteLoading(false);
+    }
+  }, []);
+
+  const pickInput = useCallback((inp: RecordingInputInfo) => {
+    const next: StudioAudioRouting = {
+      mode: 'manual',
+      output: audioRoutingRef.current.output,
+      inputUid: inp.uid,
+    };
+    setAudioRouting(next);
+    audioRoutingRef.current = next;
+    void saveStudioAudioRouting(next);
   }, []);
 
   useEffect(() => {
     load();
     loadQualitySettings().then(q => { setQuality(q); qualityRef.current = q; });
+    loadStudioAudioRouting().then(r => {
+      setAudioRouting(r);
+      audioRoutingRef.current = r;
+    });
   }, []);
+
+  useEffect(() => {
+    if (showQuality) void refreshAudioRoutes();
+  }, [showQuality, refreshAudioRoutes]);
 
   /* ─── Sound teardown (sync-safe) ─── */
   const killSound = useCallback(() => {
     const s = soundRef.current;
     soundRef.current = null;
     setPlayingId(null);
+    setIsPlaying(false);
     setPlayPos(0);
     setPlayDur(0);
     if (s) {
@@ -151,18 +207,23 @@ export default function RecorderScreen() {
       // Stop whatever is playing
       killSound();
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
+      await applyPlaybackAudioMode();
 
+      const playbackUri = await assertPlaybackFileExists(rec.uri);
       const { sound } = await Audio.Sound.createAsync(
-        { uri: rec.uri },
+        { uri: playbackUri },
         { shouldPlay: true, progressUpdateIntervalMillis: 100 },
         (st: AVPlaybackStatus) => {
           if (!st.isLoaded) return;
-          setPlayPos(st.positionMillis / 1000);
+          setIsPlaying(st.isPlaying);
+          if (!playbackSeekingRef.current) {
+            setPlayPos(st.positionMillis / 1000);
+          }
           if (st.durationMillis) setPlayDur(st.durationMillis / 1000);
           if (st.didJustFinish) {
             soundRef.current = null;
             setPlayingId(null);
+            setIsPlaying(false);
             setPlayPos(0);
           }
         }
@@ -185,21 +246,74 @@ export default function RecorderScreen() {
   }, [playingId, killSound]);
 
   /* ─── Seeking ─── */
+  const playbackSeekingRef = useRef(false);
+  const wasPlayingBeforeScrubRef = useRef(false);
+
   const handleSeek = useCallback(async (seconds: number) => {
     if (!soundRef.current) return;
     try {
       await soundRef.current.setStatusAsync({ positionMillis: Math.round(seconds * 1000) });
+      setPlayPos(seconds);
     } catch {}
   }, []);
+
+  const togglePlayRemote = useCallback(async () => {
+    const id = playingId;
+    if (!id) return;
+    const rec = recordingsRef.current.find(r => r.id === id);
+    if (rec) await togglePlay(rec);
+  }, [playingId, togglePlay]);
+
+  const skipPlaySec = useCallback(async (delta: number) => {
+    if (!soundRef.current || playDur <= 0) return;
+    const next = Math.max(0, Math.min(playDur, playPos + delta));
+    await handleSeek(next);
+  }, [playPos, playDur, handleSeek]);
+
+  const playAdjacentRecording = useCallback(async (dir: 1 | -1) => {
+    const id = playingId;
+    if (!id) return;
+    const list = recordingsRef.current;
+    const idx = list.findIndex(r => r.id === id);
+    if (idx < 0) return;
+    const nextIdx = idx + dir;
+    if (nextIdx < 0 || nextIdx >= list.length) return;
+    await togglePlay(list[nextIdx]);
+  }, [playingId, togglePlay]);
+
+  const playingRec = playingId ? recordings.find(r => r.id === playingId) : null;
+
+  useMediaRemoteControls(
+    !!playingId && !!playingRec,
+    'list',
+    {
+      onTogglePlay: togglePlayRemote,
+      onNext: () => playAdjacentRecording(1),
+      onPrevious: () => playAdjacentRecording(-1),
+      onSkipForward: () => skipPlaySec(10),
+      onSkipBackward: () => skipPlaySec(-10),
+      onSeek: handleSeek,
+    },
+    playingRec
+      ? {
+          title: playingRec.name,
+          artist: 'Recording',
+          durationSec: playDur,
+          elapsedSec: playPos,
+          isPlaying,
+        }
+      : null,
+  );
 
   /* ─── Recording ─── */
   const startRecording = async () => {
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission denied'); return; }
     killSound();
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+    await applyStudioAudioMode(audioRoutingRef.current, { recording: true });
     const rec = new Audio.Recording();
     await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
+    await applyRecordingInput(rec, audioRoutingRef.current);
     await rec.startAsync();
     recRef.current = rec;
     startRef.current = Date.now();
@@ -294,6 +408,21 @@ export default function RecorderScreen() {
                   position={playPos}
                   duration={playDur}
                   onSeek={handleSeek}
+                  onScrubStart={() => {
+                    playbackSeekingRef.current = true;
+                    const s = soundRef.current;
+                    if (!s) return;
+                    void s.getStatusAsync().then(st => {
+                      if (st.isLoaded) wasPlayingBeforeScrubRef.current = st.isPlaying;
+                      if (st.isLoaded && st.isPlaying) s.pauseAsync().catch(() => {});
+                    });
+                  }}
+                  onScrubEnd={() => {
+                    playbackSeekingRef.current = false;
+                    if (wasPlayingBeforeScrubRef.current) {
+                      soundRef.current?.playAsync().catch(() => {});
+                    }
+                  }}
                   color="#7c4dff"
                 />
               </View>
@@ -326,7 +455,7 @@ export default function RecorderScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+    <View style={[styles.container, { paddingTop: embedded ? 8 : insets.top + 8 }]}>
       <View style={styles.titleRow}>
         <Text style={styles.title}>Recorder</Text>
         {!isRecording && (
@@ -414,6 +543,13 @@ export default function RecorderScreen() {
                   </TouchableOpacity>
                 );
               })}
+              <RecordingInputPicker
+                routing={audioRouting}
+                snap={audioRouteSnap}
+                loading={audioRouteLoading}
+                onRefresh={() => void refreshAudioRoutes()}
+                onPickInput={pickInput}
+              />
               <TouchableOpacity onPress={() => setShowQuality(false)}
                 style={[styles.modalCancel, { marginTop: 14, flexGrow: 0, alignSelf: 'center', paddingHorizontal: 32 }]}>
                 <Text style={styles.modalCancelText}>Close</Text>

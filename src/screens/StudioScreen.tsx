@@ -3,9 +3,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, ScrollView,
   Alert, Animated, TextInput, Modal, PanResponder, Pressable, Platform,
   useWindowDimensions,
-  GestureResponderEvent,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
+import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
+import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
+import { assertPlaybackFileExists } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
@@ -15,6 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WebView from 'react-native-webview';
 
 import { useTabBarVisibility } from '../context/TabBarVisibility';
+import SeekBar from '../components/SeekBar';
+import RecordingInputPicker from '../components/RecordingInputPicker';
 
 /* ─── Types ─── */
 interface Track {
@@ -37,21 +41,19 @@ import {
   PREROLL_MS_BLUETOOTH,
   DEFAULT_AUDIO_ROUTING,
   OUTPUT_OPTIONS,
-  INPUT_GROUPS,
   type StudioAudioRouting,
   type AudioRouteSnapshot,
   type AudioOutputRoute,
   type RecordingInputInfo,
   probeRecordingInputs,
-  migrateStudioAudioRouting,
   applyStudioAudioMode,
   applyRecordingInput,
-  labelKind,
   prerollForInput,
   prerollForOutput,
-  inputsOfKind,
   suggestInputForOutput,
   outputDeviceMissing,
+  loadStudioAudioRouting,
+  saveStudioAudioRouting,
 } from '../utils/studioAudioRouting';
 
 /* ─── Constants ─── */
@@ -59,7 +61,6 @@ const MAX_TRACKS    = 10;
 const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.json';
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
 const LATENCY_FILE        = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
-const AUDIO_ROUTING_FILE  = (FileSystem.documentDirectory ?? '') + 'studio_audio_routing.json';
 
 // Android mic hardware latency is typically 80–200 ms.
 // prerollMs = how long to wait (after rec starts) before starting playback.
@@ -148,6 +149,8 @@ interface TrackRowProps {
   onSoloToggle: (track: Track) => void;
   onMuteToggle: (track: Track) => void;
   onSeek: (seconds: number) => void;
+  onScrubStart?: () => void;
+  onScrubEnd?: () => void;
   onRename: (track: Track) => void;
   onDelete: (track: Track) => void;
   onOffsetChange: (track: Track, delta: number) => void;
@@ -157,41 +160,14 @@ interface TrackRowProps {
 
 function TrackRow({
   track, index, isSolo, isMuted, soloPos, soloDur, allPlayPos, allPlayDur, isPlayingAll,
-  onSoloToggle, onMuteToggle, onSeek, onRename, onDelete, onOffsetChange, gain, onGainChange,
+  onSoloToggle, onMuteToggle, onSeek, onScrubStart, onScrubEnd, onRename, onDelete, onOffsetChange, gain, onGainChange,
 }: TrackRowProps) {
-  const rowWidthRef = useRef(0);
-  const isSoloRef  = useRef(isSolo);
-  const soloDurRef = useRef(soloDur);
-  const onSeekRef  = useRef(onSeek);
-  useEffect(() => { isSoloRef.current  = isSolo;  }, [isSolo]);
-  useEffect(() => { soloDurRef.current = soloDur; }, [soloDur]);
-  useEffect(() => { onSeekRef.current  = onSeek;  }, [onSeek]);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => isSoloRef.current,
-      onMoveShouldSetPanResponder:  () => isSoloRef.current,
-      onPanResponderGrant: (e: GestureResponderEvent) => {
-        if (!isSoloRef.current || rowWidthRef.current <= 0 || soloDurRef.current <= 0) return;
-        const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / rowWidthRef.current));
-        onSeekRef.current(pct * soloDurRef.current);
-      },
-      onPanResponderMove: (e: GestureResponderEvent) => {
-        if (!isSoloRef.current || rowWidthRef.current <= 0 || soloDurRef.current <= 0) return;
-        const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / rowWidthRef.current));
-        onSeekRef.current(pct * soloDurRef.current);
-      },
-    })
-  ).current;
-
   const soloProgress = isSolo && soloDur > 0 ? soloPos / soloDur : 0;
   const allProgress  = isPlayingAll && allPlayDur > 0 ? allPlayPos / allPlayDur : 0;
 
   return (
     <View
       style={[styles.trackRow, { borderLeftColor: isMuted ? '#333' : track.color }, isSolo && styles.trackRowSolo, isMuted && { opacity: 0.45 }]}
-      onLayout={e => { rowWidthRef.current = e.nativeEvent.layout.width; }}
-      {...(isSolo ? panResponder.panHandlers : {})}
     >
       {/* Index badge */}
       <View style={[styles.trackBadge, { backgroundColor: (isMuted ? '#333' : track.color) + '33' }]}>
@@ -247,12 +223,15 @@ function TrackRow({
           </View>
         </View>
 
-        {/* Solo scrub bar */}
-        {isSolo && (
-          <View style={styles.scrubTrack}>
-            <View style={[styles.scrubFill, { width: `${soloProgress * 100}%` as any, backgroundColor: track.color }]} />
-            <View style={[styles.scrubThumb, { left: `${soloProgress * 100}%` as any, backgroundColor: track.color }]} />
-          </View>
+        {isSolo && soloDur > 0 && (
+          <SeekBar
+            position={soloPos}
+            duration={soloDur}
+            onSeek={onSeek}
+            onScrubStart={onScrubStart}
+            onScrubEnd={onScrubEnd}
+            color={track.color}
+          />
         )}
 
         {/* Playall progress bar (passive, no scrub here) */}
@@ -294,10 +273,8 @@ export default function StudioScreen() {
   const studioModalBodyMaxH = studioModalScrollMaxH - 56;
   const [sessions, setSessions]           = useState<Session[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
-  /** Список сессий: компактно с проектом, ~⅓ экрана без проекта */
-  const sessionsListMaxH = activeSession
-    ? 72
-    : Math.min(280, Math.round(windowHeight * 0.34));
+  /** Без проекта — список на весь экран; с проектом — полоса сессий, ниже дорожки */
+  const sessionsListCompactH = Math.min(220, Math.max(120, Math.round(windowHeight * 0.24)));
   const [isRecording, setIsRecording]     = useState(false);
   const [recDuration, setRecDuration]     = useState(0);
   const [playingAll, setPlayingAll]       = useState(false);
@@ -334,7 +311,9 @@ export default function StudioScreen() {
   // Master playback position
   const [allPlayPos, setAllPlayPos]       = useState(0);
   const [allPlayDur, setAllPlayDur]       = useState(0);
-  const masterSeekWidthRef               = useRef(0);
+  const masterSeekingRef                  = useRef(false);
+  const playAllPausedForScrubRef          = useRef(false);
+  const soloSeekingRef                    = useRef(false);
 
   // Per-track mute
   const [mutedTracks, setMutedTracks]     = useState<Record<string, boolean>>({});
@@ -398,15 +377,9 @@ export default function StudioScreen() {
         setPrerollMs(effective); prerollRef.current = effective;
       }
     } catch {}
-    try {
-      const info = await FileSystem.getInfoAsync(AUDIO_ROUTING_FILE);
-      if (info.exists) {
-        const val = JSON.parse(await FileSystem.readAsStringAsync(AUDIO_ROUTING_FILE));
-        const merged = migrateStudioAudioRouting(val);
-        setAudioRouting(merged);
-        audioRoutingRef.current = merged;
-      }
-    } catch {}
+    const merged = await loadStudioAudioRouting();
+    setAudioRouting(merged);
+    audioRoutingRef.current = merged;
   }, []);
 
   const savePreroll = useCallback(async (ms: number) => {
@@ -428,7 +401,7 @@ export default function StudioScreen() {
   const saveAudioRouting = useCallback(async (r: StudioAudioRouting, suggestPreroll?: number) => {
     setAudioRouting(r);
     audioRoutingRef.current = r;
-    await FileSystem.writeAsStringAsync(AUDIO_ROUTING_FILE, JSON.stringify(r));
+    await saveStudioAudioRouting(r);
     try {
       await applyStudioAudioMode(r);
     } catch {}
@@ -519,13 +492,16 @@ export default function StudioScreen() {
       }
       killSolo();
 
-      await applyStudioAudioMode(audioRoutingRef.current);
+      await applyPlaybackAudioMode();
+      const playbackUri = await assertPlaybackFileExists(track.uri);
       const { sound } = await Audio.Sound.createAsync(
-        { uri: track.uri },
+        { uri: playbackUri },
         { shouldPlay: true, progressUpdateIntervalMillis: 80, volume: playbackVolume(track, false) },
         (st: AVPlaybackStatus) => {
           if (!st.isLoaded) return;
-          setSoloPos(st.positionMillis / 1000);
+          if (!soloSeekingRef.current) {
+            setSoloPos(st.positionMillis / 1000);
+          }
           if (st.durationMillis) setSoloDur(st.durationMillis / 1000);
           if (st.didJustFinish) { soloSound.current = null; setSoloTrackId(null); setSoloPos(0); }
         }
@@ -546,6 +522,63 @@ export default function StudioScreen() {
     try { await soloSound.current.setStatusAsync({ positionMillis: Math.round(seconds * 1000) }); } catch {}
   }, []);
 
+  const toggleSoloRemote = useCallback(async () => {
+    const s = soloSound.current;
+    if (!s) return;
+    const st = await s.getStatusAsync() as AVPlaybackStatus;
+    if (!st.isLoaded) return;
+    if (st.isPlaying) await s.pauseAsync();
+    else await s.playAsync();
+  }, []);
+
+  const skipSoloSec = useCallback(async (delta: number) => {
+    if (soloDur <= 0) return;
+    await handleSoloSeek(Math.max(0, Math.min(soloDur, soloPos + delta)));
+  }, [soloPos, soloDur, handleSoloSeek]);
+
+  const playAdjacentSolo = useCallback(async (dir: 1 | -1) => {
+    const sess = activeSessionRef.current;
+    const id = soloTrackId;
+    if (!sess || !id) return;
+    const idx = sess.tracks.findIndex(t => t.id === id);
+    if (idx < 0) return;
+    const next = sess.tracks[idx + dir];
+    if (next) await toggleSolo(next);
+  }, [soloTrackId, toggleSolo]);
+
+  const togglePlayAllRemote = useCallback(async () => {
+    if (!playingAll || allSounds.current.length === 0) return;
+    const st = await allSounds.current[0].getStatusAsync() as AVPlaybackStatus;
+    if (!st.isLoaded) return;
+    if (st.isPlaying) {
+      await Promise.all(allSounds.current.map(s => s.pauseAsync().catch(() => {})));
+    } else {
+      await Promise.all(allSounds.current.map(s => s.playAsync().catch(() => {})));
+    }
+  }, [playingAll]);
+
+  const pauseAllForScrub = useCallback(async () => {
+    if (!playingAll || allSounds.current.length === 0) return;
+    playAllPausedForScrubRef.current = true;
+    await Promise.all(allSounds.current.map(s => s.pauseAsync().catch(() => {})));
+  }, [playingAll]);
+
+  const resumeAllAfterScrub = useCallback(() => {
+    if (!playAllPausedForScrubRef.current) return;
+    playAllPausedForScrubRef.current = false;
+    allSounds.current.forEach(s => { s.playAsync().catch(() => {}); });
+  }, []);
+
+  const beginSoloScrub = useCallback(() => {
+    soloSeekingRef.current = true;
+    soloSound.current?.pauseAsync().catch(() => {});
+  }, []);
+
+  const endSoloScrub = useCallback(() => {
+    soloSeekingRef.current = false;
+    if (soloTrackId) soloSound.current?.playAsync().catch(() => {});
+  }, [soloTrackId]);
+
   /* ── Master seek (all sounds) ── */
   const handleMasterSeek = useCallback((posMs: number) => {
     const sess = activeSessionRef.current;
@@ -556,6 +589,52 @@ export default function StudioScreen() {
     });
     setAllPlayPos(Math.max(0, posMs) / 1000);
   }, []);
+
+  const skipPlayAllSec = useCallback((delta: number) => {
+    const next = Math.max(0, Math.min(allPlayDur, allPlayPos + delta));
+    handleMasterSeek(next * 1000);
+  }, [allPlayPos, allPlayDur, handleMasterSeek]);
+
+  const soloTrack = soloTrackId
+    ? activeSession?.tracks.find(t => t.id === soloTrackId) ?? null
+    : null;
+
+  useMediaRemoteControls(
+    playingAll || !!soloTrackId,
+    playingAll ? 'single' : 'list',
+    playingAll
+      ? {
+          onTogglePlay: togglePlayAllRemote,
+          onSkipForward: () => skipPlayAllSec(10),
+          onSkipBackward: () => skipPlayAllSec(-10),
+          onSeek: (sec) => handleMasterSeek(sec * 1000),
+        }
+      : {
+          onTogglePlay: toggleSoloRemote,
+          onNext: () => playAdjacentSolo(1),
+          onPrevious: () => playAdjacentSolo(-1),
+          onSkipForward: () => skipSoloSec(10),
+          onSkipBackward: () => skipSoloSec(-10),
+          onSeek: handleSoloSeek,
+        },
+    playingAll
+      ? {
+          title: activeSession?.name ?? 'Studio',
+          artist: 'Play all',
+          durationSec: allPlayDur,
+          elapsedSec: allPlayPos,
+          isPlaying: playingAll,
+        }
+      : soloTrack
+        ? {
+            title: soloTrack.label,
+            artist: activeSession?.name ?? 'Studio',
+            durationSec: soloDur,
+            elapsedSec: soloPos,
+            isPlaying: !!soloTrackId,
+          }
+        : null,
+  );
 
   /** Во время Play all — сразу пересчитать позиции файлов под новые offsetMs (та же логика, что у master seek). */
   const liveResyncTrackOffsets = useCallback((sess: Session) => {
@@ -598,18 +677,22 @@ export default function StudioScreen() {
     setAllPlayPos(0);
     setAllPlayDur(0);
     try {
-      await applyStudioAudioMode(audioRoutingRef.current);
+      await applyPlaybackAudioMode();
+
+      const uris = await Promise.all(
+        session.tracks.map((t) => assertPlaybackFileExists(t.uri)),
+      );
 
       // Load every sound pre-positioned at its offset so playAsync() fires
       // immediately without a second round-trip to the bridge.
       // Positive offset → skip N ms of silence at start (content moves earlier).
       // Negative offset → track starts at 0 but fires N ms after the others.
       const loaded = await Promise.all(
-        session.tracks.map((t) => {
+        session.tracks.map((t, i) => {
           const off = Math.max(0, t.offsetMs ?? 0); // negative handled via setTimeout below
           const vol = playbackVolume(t, !!mutedRef.current[t.id]);
           return Audio.Sound.createAsync(
-            { uri: t.uri },
+            { uri: uris[i] },
             { shouldPlay: false, positionMillis: off, volume: vol }
           ).then(({ sound }) => sound);
         })
@@ -623,7 +706,9 @@ export default function StudioScreen() {
       loaded[0].setOnPlaybackStatusUpdate((st: AVPlaybackStatus) => {
         if (!st.isLoaded) return;
         if (st.durationMillis) setAllPlayDur((st.durationMillis - ref0off) / 1000);
-        setAllPlayPos(Math.max(0, (st.positionMillis - ref0off) / 1000));
+        if (!masterSeekingRef.current) {
+          setAllPlayPos(Math.max(0, (st.positionMillis - ref0off) / 1000));
+        }
         if (st.didJustFinish) killAllSounds();
       });
 
@@ -655,11 +740,12 @@ export default function StudioScreen() {
       // Load all existing tracks with the SAME offsets and mute state as playAll,
       // so the musician hears exactly what will be heard during playback.
       const playbackSounds = await Promise.all(
-        session.tracks.map((t) => {
+        session.tracks.map(async (t) => {
           const off = Math.max(0, t.offsetMs ?? 0);
           const vol = playbackVolume(t, !!mutedRef.current[t.id]);
+          const playbackUri = await assertPlaybackFileExists(t.uri);
           return Audio.Sound.createAsync(
-            { uri: t.uri },
+            { uri: playbackUri },
             { shouldPlay: false, positionMillis: off, volume: vol }
           ).then(({ sound }) => sound);
         })
@@ -1161,7 +1247,11 @@ function normArr(arr){
             data={sessions}
             keyExtractor={i => i.id}
             renderItem={renderSessionItem}
-            style={[activeSession ? styles.sessionsListCompact : styles.sessionsListExpanded, { maxHeight: sessionsListMaxH }]}
+            style={
+              activeSession
+                ? [styles.sessionsListCompact, { maxHeight: sessionsListCompactH }]
+                : styles.sessionsListExpanded
+            }
             showsVerticalScrollIndicator
             nestedScrollEnabled
             ListEmptyComponent={<Text style={styles.emptyText}>Нет сессий — нажми NEW</Text>}
@@ -1211,6 +1301,8 @@ function normArr(arr){
                 onSoloToggle={toggleSolo}
                 onMuteToggle={toggleMute}
                 onSeek={handleSoloSeek}
+                onScrubStart={beginSoloScrub}
+                onScrubEnd={endSoloScrub}
                 onRename={(t) => { setRenameTarget({ type: 'track', id: t.id }); setRenameText(t.label); }}
                 onDelete={(t) => deleteTrack(t.id)}
                 onOffsetChange={updateTrackOffset}
@@ -1310,16 +1402,21 @@ function normArr(arr){
           {playingAll && allPlayDur > 0 && (
             <View style={styles.masterSeekContainer}>
               <Text style={styles.masterSeekTime}>{fmt(allPlayPos)}</Text>
-              <View
-                style={styles.masterSeekTrack}
-                onLayout={e => { masterSeekWidthRef.current = e.nativeEvent.layout.width; }}
-                onStartShouldSetResponder={() => true}
-                onMoveShouldSetResponder={() => true}
-                onResponderGrant={e => handleMasterSeek(Math.max(0, Math.min(1, e.nativeEvent.locationX / masterSeekWidthRef.current)) * allPlayDur * 1000)}
-                onResponderMove={e => handleMasterSeek(Math.max(0, Math.min(1, e.nativeEvent.locationX / masterSeekWidthRef.current)) * allPlayDur * 1000)}
-              >
-                <View style={[styles.masterSeekFill, { width: `${(allPlayPos / allPlayDur) * 100}%` as any }]} />
-                <View style={[styles.masterSeekThumb, { left: `${(allPlayPos / allPlayDur) * 100}%` as any }]} />
+              <View style={styles.masterSeekBarWrap}>
+                <SeekBar
+                  position={allPlayPos}
+                  duration={allPlayDur}
+                  color="#00e676"
+                  onScrubStart={() => {
+                    masterSeekingRef.current = true;
+                    void pauseAllForScrub();
+                  }}
+                  onScrubEnd={() => {
+                    masterSeekingRef.current = false;
+                    resumeAllAfterScrub();
+                  }}
+                  onSeek={sec => handleMasterSeek(sec * 1000)}
+                />
               </View>
               <Text style={styles.masterSeekTime}>{fmt(allPlayDur)}</Text>
             </View>
@@ -1646,18 +1743,23 @@ function normArr(arr){
                   </TouchableOpacity>
                 </View>
 
+                <RecordingInputPicker
+                  routing={audioRouting}
+                  snap={audioRouteSnap}
+                  loading={audioRouteLoading}
+                  onRefresh={() => void refreshAudioRoutes()}
+                  onPickInput={pickInput}
+                  compact
+                />
+
                 {audioRouting.mode === 'auto' ? (
-                  <View style={styles.routeStatusCard}>
+                  <View style={[styles.routeStatusCard, { marginTop: 10 }]}>
                     <Text style={styles.routeStatusLine}>
                       <Text style={{ color: '#666' }}>Слушать: </Text>
                       {audioRouteSnap?.listenHint ?? (audioRouteLoading ? '…' : 'обнови список')}
                     </Text>
-                    <Text style={[styles.routeStatusLine, { marginTop: 6 }]}>
-                      <Text style={{ color: '#666' }}>Писать: </Text>
-                      {audioRouteSnap?.recordHint ?? '—'}
-                    </Text>
                     <Text style={{ color: '#444', fontSize: 10, marginTop: 8, lineHeight: 14 }}>
-                      Телефон сам выбирает динамик и микрофон (BT, AUX, встроенный).
+                      Воспроизведение — как назначил телефон. Микрофон — из списка выше.
                     </Text>
                   </View>
                 ) : (
@@ -1691,73 +1793,8 @@ function normArr(arr){
                       </Text>
                     )}
 
-                    <Text style={[styles.qualitySub, { marginTop: 10, marginBottom: 6 }]}>Запись (микрофон)</Text>
-                    {audioRouteLoading && (audioRouteSnap?.inputs.length ?? 0) === 0 ? (
-                      <Text style={{ color: '#555', fontSize: 11, marginBottom: 8 }}>Загрузка…</Text>
-                    ) : (
-                      INPUT_GROUPS.map(grp => {
-                        const items = inputsOfKind(audioRouteSnap?.inputs ?? [], grp.kind);
-                        return (
-                          <View key={grp.kind} style={styles.routeInputGroup}>
-                            <Text style={styles.routeInputGroupTitle}>{grp.title}</Text>
-                            {items.length === 0 ? (
-                              <Text style={styles.routeInputGroupEmpty}>{grp.empty}</Text>
-                            ) : (
-                              items.map(inp => {
-                                const active = audioRouting.inputUid === inp.uid;
-                                return (
-                                  <TouchableOpacity
-                                    key={inp.uid}
-                                    onPress={() => pickInput(inp)}
-                                    style={[styles.routeInputRow, active && styles.routeInputRowActive]}
-                                  >
-                                    <Ionicons
-                                      name={
-                                        inp.kind === 'bluetooth' ? 'bluetooth' :
-                                        inp.kind === 'wired' || inp.kind === 'usb' ? 'headset' : 'mic-outline'
-                                      }
-                                      size={16}
-                                      color={active ? '#00e676' : '#555'}
-                                    />
-                                    <View style={{ flex: 1 }}>
-                                      <Text style={{ color: active ? '#00e676' : '#ccc', fontSize: 12, fontWeight: '700' }}>
-                                        {inp.name}
-                                      </Text>
-                                      <Text style={{ color: '#555', fontSize: 10 }}>{labelKind(inp.kind)}</Text>
-                                    </View>
-                                    {active && <Ionicons name="checkmark-circle" size={18} color="#00e676" />}
-                                  </TouchableOpacity>
-                                );
-                              })
-                            )}
-                          </View>
-                        );
-                      })
-                    )}
-                    {inputsOfKind(audioRouteSnap?.inputs ?? [], 'other').length > 0 && (
-                      <View style={styles.routeInputGroup}>
-                        <Text style={styles.routeInputGroupTitle}>Другие</Text>
-                        {inputsOfKind(audioRouteSnap?.inputs ?? [], 'other').map(inp => {
-                          const active = audioRouting.inputUid === inp.uid;
-                          return (
-                            <TouchableOpacity
-                              key={inp.uid}
-                              onPress={() => pickInput(inp)}
-                              style={[styles.routeInputRow, active && styles.routeInputRowActive]}
-                            >
-                              <Ionicons name="mic-outline" size={16} color={active ? '#00e676' : '#555'} />
-                              <View style={{ flex: 1 }}>
-                                <Text style={{ color: active ? '#00e676' : '#ccc', fontSize: 12, fontWeight: '700' }}>{inp.name}</Text>
-                                <Text style={{ color: '#555', fontSize: 10 }}>{labelKind(inp.kind)}</Text>
-                              </View>
-                              {active && <Ionicons name="checkmark-circle" size={18} color="#00e676" />}
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    )}
                     <Text style={{ color: '#444', fontSize: 10, lineHeight: 14, marginTop: 6 }}>
-                      Выход BT/AUX — системный маршрут. Микрофон — из списка устройств.
+                      Выход BT/AUX — системный маршрут. Микрофон — в списке выше.
                     </Text>
                   </>
                 )}
@@ -1793,10 +1830,10 @@ const styles = StyleSheet.create({
 
   section: { backgroundColor: '#111118', borderRadius: 20, padding: 14, borderWidth: 1, borderColor: '#222' },
   sessionsSection: { flexDirection: 'column', minHeight: 0 },
-  sessionsSectionExpanded: { flexShrink: 0, marginBottom: 8 },
+  sessionsSectionExpanded: { flex: 1, minHeight: 0, marginBottom: 0 },
   sessionsSectionCompact: { flexShrink: 0, marginBottom: 6, paddingVertical: 8, paddingHorizontal: 12 },
-  sessionsListExpanded: {},
-  sessionsListCompact: {},
+  sessionsListExpanded: { flex: 1, minHeight: 0 },
+  sessionsListCompact: { minHeight: 0 },
   projectSection: { flex: 1, minHeight: 0, marginBottom: 0 },
   projectFooter: { paddingTop: 4, paddingBottom: 8 },
   trackListContent: { paddingBottom: 4 },
@@ -1854,9 +1891,7 @@ const styles = StyleSheet.create({
 
   // Master seek bar
   masterSeekContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 2, paddingVertical: 8 },
-  masterSeekTrack: { flex: 1, height: 6, backgroundColor: '#2a2a38', borderRadius: 3, overflow: 'visible', position: 'relative' },
-  masterSeekFill: { height: 6, borderRadius: 3, backgroundColor: '#00e676' },
-  masterSeekThumb: { position: 'absolute', width: 16, height: 16, borderRadius: 8, top: -5, marginLeft: -8, backgroundColor: '#00e676', borderWidth: 2, borderColor: '#0a0a12' },
+  masterSeekBarWrap: { flex: 1 },
   masterSeekTime: { color: '#888', fontSize: 11, minWidth: 38, textAlign: 'center' },
 
   trackOffsetRow:     { flexDirection: 'row', alignItems: 'center', gap: 0, backgroundColor: '#1a1a28', borderRadius: 10, overflow: 'hidden' },

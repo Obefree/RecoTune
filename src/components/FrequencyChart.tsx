@@ -2,18 +2,29 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, StyleSheet, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
+import { useLocale } from '../context/LocaleContext';
 
 const PADDING_LEFT = 44;
 const DEFAULT_CHART_H = 220;
-const MAX_POINTS   = 80;
+const DEFAULT_MAX_POINTS = 80;
+/** Minimum px between history points / marker columns when timestamps cluster */
+const MIN_CELL_W = 14;
+/** Avg gap below this → treat history as time-clustered and spread by index */
+const CLUSTER_AVG_GAP_MS = 55;
+const MARKER_STAGGER_PX = 16;
+
+/** Стабильная высота блока графика в тюнере (режим ¢/ноты + зум) */
+export const TUNER_CHART_BLOCK_MIN_H =
+  6 + 48 + 8 + 13 + DEFAULT_CHART_H + 10 + 8 + 44 + 12;
 
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 export interface HistoryPoint {
-  cents:  number;   // chromatic cents (legacy / fallback)
-  /** Центы до строя ближайшей струны — для стрелки и графика */
+  /** Chromatic cents to nearest semitone (±50¢) */
+  cents:  number;
+  /** Optional — only when instrument/string mode is enabled */
   stringCents?: number;
   targetString?: number;
   targetNote?: string;
@@ -30,14 +41,160 @@ export interface TuningChartTarget {
   frequency: number;
 }
 
+/** Stable sung-note onset — vertical marker on pitch chart (Melody tab). */
+export interface RegisteredMarker {
+  ts: number;
+  midi: number;
+  note: string;
+  octave: number;
+}
+
 interface Props {
   history: HistoryPoint[];
   active: boolean;
   /** Цель настройки (строка строя) — линия на графике, центы относительно неё */
   tuningTarget?: TuningChartTarget | null;
+  /** Committed notes from sungNoteDetector — dots + vertical ticks on pitch trace */
+  registeredMarkers?: RegisteredMarker[];
   chartPlotWidth?: number;
   compact?: boolean;
   chartHeight?: number;
+  /** Max points shown on the time axis (Melody uses 120+). */
+  maxHistoryPoints?: number;
+  /** Initial horizontal zoom (Melody chart uses 2× so history is not squashed). */
+  defaultHZoom?: number;
+}
+
+function nearestHistoryIndex(pts: HistoryPoint[], ts: number): number | null {
+  if (pts.length === 0) return null;
+  let best = 0;
+  let bestD = Math.abs(pts[0].ts - ts);
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.abs(pts[i].ts - ts);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+function medianMidi(pts: HistoryPoint[]): number {
+  if (pts.length === 0) return 60;
+  const sorted = pts.map(p => p.midi).sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function historyClustered(pts: HistoryPoint[]): boolean {
+  if (pts.length < 2) return true;
+  const span = pts[pts.length - 1].ts - pts[0].ts;
+  const avgGap = span / (pts.length - 1);
+  return avgGap < CLUSTER_AVG_GAP_MS || span < 400;
+}
+
+interface ChartTimeLayout {
+  clustered: boolean;
+  effectiveCell: number;
+  totalW: number;
+  maxScroll: number;
+  xOfIndex: (i: number) => number;
+  markerX: (markerIndex: number, ts: number) => number;
+}
+
+function buildTimeLayout(
+  pts: HistoryPoint[],
+  markers: RegisteredMarker[],
+  chartW: number,
+  cellW: number,
+): ChartTimeLayout {
+  const effectiveCell = Math.max(cellW, MIN_CELL_W);
+  const n = pts.length;
+  const mCount = markers.length;
+
+  if (n === 0) {
+    const emptyW = Math.max(chartW, mCount > 0 ? (mCount - 1) * effectiveCell + 8 : chartW);
+    return {
+      clustered: true,
+      effectiveCell,
+      totalW: emptyW,
+      maxScroll: Math.max(0, emptyW - chartW),
+      xOfIndex: () => 0,
+      markerX: mi => mi * effectiveCell,
+    };
+  }
+
+  const clustered = historyClustered(pts);
+
+  if (clustered) {
+    const idxGroups = new Map<number, number[]>();
+    markers.forEach((mk, mi) => {
+      const idx = nearestHistoryIndex(pts, mk.ts) ?? 0;
+      if (!idxGroups.has(idx)) idxGroups.set(idx, []);
+      idxGroups.get(idx)!.push(mi);
+    });
+    const maxStagger = Math.max(
+      0,
+      ...Array.from(idxGroups.values()).map(g => (g.length - 1) * MARKER_STAGGER_PX),
+    );
+    const slotCount = Math.max(n, mCount, 2);
+    const totalW = Math.max(
+      chartW,
+      (slotCount - 1) * effectiveCell + maxStagger + 8,
+    );
+    const xOfIndex = (i: number) => i * effectiveCell;
+
+    const markerX = (mi: number, ts: number) => {
+      const idx = nearestHistoryIndex(pts, ts) ?? 0;
+      const group = idxGroups.get(idx) ?? [mi];
+      const rank = group.indexOf(mi);
+      return xOfIndex(idx) + rank * MARKER_STAGGER_PX;
+    };
+
+    return {
+      clustered: true,
+      effectiveCell,
+      totalW,
+      maxScroll: Math.max(0, totalW - chartW),
+      xOfIndex,
+      markerX,
+    };
+  }
+
+  const t0 = pts[0].ts;
+  const span = Math.max(1, pts[n - 1].ts - t0);
+  const idxGroups = new Map<number, number[]>();
+  markers.forEach((mk, mi) => {
+    const idx = nearestHistoryIndex(pts, mk.ts) ?? 0;
+    if (!idxGroups.has(idx)) idxGroups.set(idx, []);
+    idxGroups.get(idx)!.push(mi);
+  });
+  const maxStagger = Math.max(
+    0,
+    ...Array.from(idxGroups.values()).map(g => (g.length - 1) * MARKER_STAGGER_PX),
+  );
+  const totalW = Math.max(chartW, (n - 1) * effectiveCell + maxStagger + 8);
+  const contentW = totalW - 8 - maxStagger;
+  const xOfIndex = (i: number) => (n <= 1 ? 0 : ((pts[i].ts - t0) / span) * contentW);
+
+  const markerX = (mi: number, ts: number) => {
+    const idx = nearestHistoryIndex(pts, ts) ?? 0;
+    const base = xOfIndex(idx);
+    const group = idxGroups.get(idx) ?? [mi];
+    const rank = group.indexOf(mi);
+    return base + rank * MARKER_STAGGER_PX;
+  };
+
+  return {
+    clustered: false,
+    effectiveCell,
+    totalW,
+    maxScroll: Math.max(0, totalW - chartW),
+    xOfIndex,
+    markerX,
+  };
 }
 
 /* ─── CENTS MODE ─── */
@@ -88,26 +245,34 @@ function clamp3(n: number, lo: number, hi: number) {
 }
 
 /** Max horizontal scroll (time axis) in px */
-function maxHScroll(nPts: number, cellW: number, chartW: number) {
-  if (nPts <= 1) return 0;
-  const tw = Math.max(chartW, (nPts - 1) * cellW + 8);
-  return Math.max(0, tw - chartW);
+function maxHScrollFromTotal(totalW: number, chartW: number) {
+  return Math.max(0, totalW - chartW);
 }
 
 /* ─── Component ─── */
-function plotCents(p: HistoryPoint): number {
-  return p.stringCents ?? p.cents;
+function plotCents(p: HistoryPoint, useStringCents: boolean): number {
+  return useStringCents && p.stringCents != null ? p.stringCents : p.cents;
 }
 
 export default function FrequencyChart({
-  history, active, tuningTarget = null, chartPlotWidth, compact = false, chartHeight,
+  history,
+  active,
+  tuningTarget = null,
+  registeredMarkers = [],
+  chartPlotWidth,
+  compact = false,
+  chartHeight,
+  maxHistoryPoints,
+  defaultHZoom = 1,
 }: Props) {
+  const { t } = useLocale();
   const plotH = Math.max(72, Math.min(300, chartHeight ?? DEFAULT_CHART_H));
   const { width }  = useWindowDimensions();
   const padLeft    = compact ? 30 : PADDING_LEFT;
   const CHART_W    = chartPlotWidth ?? (width - 32 - 16 - PADDING_LEFT - 6);
   const ANCHOR_X   = CHART_W * 0.60;
-  const BASE_CELL  = useMemo(() => CHART_W / Math.max(1, MAX_POINTS - 1), [CHART_W]);
+  const maxPts = Math.max(20, maxHistoryPoints ?? DEFAULT_MAX_POINTS);
+  const BASE_CELL  = useMemo(() => CHART_W / Math.max(1, maxPts - 1), [CHART_W, maxPts]);
 
   const [mode,       setMode]      = useState<'cents' | 'pitch'>(compact ? 'pitch' : 'cents');
   const [centZoomI,  setCentZoomI] = useState(0);
@@ -119,58 +284,63 @@ export default function FrequencyChart({
   }, [compact]);
 
   /** Horizontal time zoom (pinch) — vertical range still via chips */
-  const [hZoom, setHZoom] = useState(1);
+  const [hZoom, setHZoom] = useState(defaultHZoom);
   const [hScroll, setHScroll] = useState(0);
 
   const hsRef = useRef(0);
-  const hzRef = useRef(1);
+  const hzRef = useRef(defaultHZoom);
   const panOriginScroll = useRef(0);
-  const pinchOriginZoom = useRef(1);
+  const pinchOriginZoom = useRef(defaultHZoom);
+  const followEndRef = useRef(true);
 
   useEffect(() => { hsRef.current = hScroll; }, [hScroll]);
   useEffect(() => { hzRef.current = hZoom; }, [hZoom]);
 
-  const pts  = history.slice(-MAX_POINTS);
+  const pts  = history.slice(-maxPts);
   const cellW = BASE_CELL * hZoom;
-  const totalW = Math.max(CHART_W, Math.max(0, pts.length - 1) * cellW + 8);
-  const xOf = (i: number) => i * cellW;
+
+  const timeLayout = useMemo(
+    () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW),
+    [pts, registeredMarkers, CHART_W, cellW],
+  );
+  const { totalW, maxScroll, xOfIndex, markerX } = timeLayout;
+  const xOf = xOfIndex;
+  const useStringCents = tuningTarget != null;
 
   useEffect(() => {
     if (history.length === 0) {
       setHScroll(0);
-      setHZoom(1);
+      setHZoom(defaultHZoom);
+      followEndRef.current = true;
     }
-  }, [history.length]);
+  }, [history.length, defaultHZoom]);
 
   useEffect(() => {
-    const max = maxHScroll(pts.length, cellW, CHART_W);
-    setHScroll(s => clamp3(s, 0, max));
-  }, [hZoom, pts.length, cellW, CHART_W]);
+    setHScroll(s => clamp3(s, 0, maxScroll));
+  }, [maxScroll]);
 
   const lastTs = pts[pts.length - 1]?.ts ?? 0;
+  const lastEndX = pts.length > 0 ? xOfIndex(pts.length - 1) : 0;
 
   useEffect(() => {
     if (pts.length === 0) return;
-    const max = maxHScroll(pts.length, cellW, CHART_W);
     setHScroll(prev => {
-      const nearEnd = prev >= max - 24;
-      if (nearEnd) {
-        return clamp3((pts.length - 1) * cellW - ANCHOR_X, 0, max);
+      if (followEndRef.current) {
+        return clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
       }
-      return clamp3(prev, 0, max);
+      return clamp3(prev, 0, maxScroll);
     });
-  }, [lastTs, pts.length]);
+  }, [lastTs, pts.length, lastEndX, maxScroll]);
 
   const beginPan = useCallback(() => {
     panOriginScroll.current = hsRef.current;
   }, []);
 
   const onPanUpdate = useCallback((translationX: number) => {
-    const cw = BASE_CELL * hzRef.current;
-    const max = maxHScroll(pts.length, cw, CHART_W);
-    const next = clamp3(panOriginScroll.current - translationX, 0, max);
+    const next = clamp3(panOriginScroll.current - translationX, 0, maxScroll);
+    followEndRef.current = next >= maxScroll - 24;
     setHScroll(next);
-  }, [pts.length, BASE_CELL, CHART_W]);
+  }, [maxScroll]);
 
   const beginPinch = useCallback(() => {
     pinchOriginZoom.current = hzRef.current;
@@ -180,16 +350,23 @@ export default function FrequencyChart({
     const z = clamp3(pinchOriginZoom.current * scale, 0.35, 4);
     hzRef.current = z;
     setHZoom(z);
-    const cw = BASE_CELL * z;
-    const max = maxHScroll(pts.length, cw, CHART_W);
-    setHScroll(s => clamp3(s, 0, max));
-  }, [pts.length, BASE_CELL, CHART_W]);
+    setHScroll(s => clamp3(s, 0, maxHScrollFromTotal(
+      buildTimeLayout(pts, registeredMarkers, CHART_W, BASE_CELL * z).totalW,
+      CHART_W,
+    )));
+  }, [pts, registeredMarkers, BASE_CELL, CHART_W]);
+
+  const scrollToStart = useCallback(() => {
+    followEndRef.current = false;
+    setHScroll(0);
+  }, []);
 
   const composedGesture = useMemo(
     () =>
       Gesture.Simultaneous(
         Gesture.Pan()
-          .activeOffsetX([-10, 10])
+          .activeOffsetX([-12, 12])
+          .failOffsetY([-14, 14])
           .onBegin(() => {
             runOnJS(beginPan)();
           })
@@ -221,15 +398,15 @@ export default function FrequencyChart({
     if (mode !== 'cents' || pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
       const x1 = xOf(i), x2 = xOf(i + 1);
-      const c1 = plotCents(pts[i]);
-      const c2 = plotCents(p);
+      const c1 = plotCents(pts[i], useStringCents);
+      const c2 = plotCents(p, useStringCents);
       const y1 = centsToY(c1, centRange, plotH);
       const y2 = centsToY(c2, centRange, plotH);
       const dx = x2-x1, dy = y2-y1;
       return { x: x1, y: y1, len: Math.sqrt(dx*dx+dy*dy),
                angle: Math.atan2(dy,dx)*(180/Math.PI), color: colorForCents(c2) };
     });
-  }, [mode, pts, cellW, centRange, plotH]);
+  }, [mode, pts, cellW, centRange, plotH, useStringCents]);
 
   /* ── PITCH mode geometry ── */
   const pitchRange  = PITCH_ZOOMS[pitchZoomI];
@@ -239,12 +416,25 @@ export default function FrequencyChart({
     return 12 * Math.log2(tuningTarget.frequency / A4_FREQ) + A4_MIDI;
   }, [tuningTarget]);
 
-  const centerMidi = useMemo(() => {
+  const centerMidiRaw = useMemo(() => {
     if (targetMidi != null) return targetMidi;
     if (pts.length === 0) return 60;
-    const tail = pts.slice(-12);
-    return tail.reduce((s, p) => s + p.midi, 0) / tail.length;
+    const sample = pts.length >= 20 ? pts.slice(-20) : pts;
+    return medianMidi(sample);
   }, [pts, targetMidi]);
+
+  const [centerMidiSmooth, setCenterMidiSmooth] = useState(60);
+  useEffect(() => {
+    if (targetMidi != null) {
+      setCenterMidiSmooth(targetMidi);
+      return;
+    }
+    setCenterMidiSmooth(centerMidiRaw);
+  }, [centerMidiRaw, targetMidi]);
+
+  const centerMidi = targetMidi != null ? targetMidi : centerMidiSmooth;
+  /** Stable Y for markers — median of recent history, no drift between frames */
+  const markerCenterMidi = centerMidiRaw;
 
   const minMidi = centerMidi - pitchRange;
   const maxMidi = centerMidi + pitchRange;
@@ -299,7 +489,11 @@ export default function FrequencyChart({
   const blockW = padLeft + CHART_W;
 
   return (
-    <View style={[styles.outer, compact && styles.outerCompact, { width: blockW }]}>
+    <View style={[
+      styles.outer,
+      compact && styles.outerCompact,
+      { width: blockW, minHeight: compact ? undefined : TUNER_CHART_BLOCK_MIN_H },
+    ]}>
       {!compact && (
         <>
       <View style={styles.modeRow}>
@@ -308,20 +502,21 @@ export default function FrequencyChart({
           style={[styles.modeChoice, mode === 'cents' && styles.modeChoiceActive]}
           activeOpacity={0.85}>
           <Text style={[styles.modeChoiceIcon, mode === 'cents' && styles.modeChoiceTextActive]}>¢</Text>
-          <Text style={[styles.modeChoiceLabel, mode === 'cents' && styles.modeChoiceTextActive]}>ЦЕНТЫ</Text>
+          <Text style={[styles.modeChoiceLabel, mode === 'cents' && styles.modeChoiceTextActive]}>{t('chartCents')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => setMode('pitch')}
           style={[styles.modeChoice, mode === 'pitch' && styles.modeChoiceActivePitch]}
           activeOpacity={0.85}>
           <Text style={[styles.modeChoiceIcon, mode === 'pitch' && styles.modeChoiceTextActivePitch]}>♩</Text>
-          <Text style={[styles.modeChoiceLabel, mode === 'pitch' && styles.modeChoiceTextActivePitch]}>НОТЫ</Text>
+          <Text style={[styles.modeChoiceLabel, mode === 'pitch' && styles.modeChoiceTextActivePitch]}>{t('chartNotes')}</Text>
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.gestureHint}>
-        Свайп влево/вправо — листать · Щипок двумя пальцами — масштаб по времени
-      </Text>
+      <Text style={styles.gestureHint}>{t('chartGestureHint')}</Text>
+      {registeredMarkers.length > 0 ? (
+        <Text style={styles.gestureHintSub}>{t('chartStableMarkersHint')}</Text>
+      ) : null}
         </>
       )}
 
@@ -436,14 +631,60 @@ export default function FrequencyChart({
               style={[styles.targetBadge, { top: plotH - 22, left: 6 }]}
             >
               <Text style={styles.targetBadgeText}>
-                ⌖ стр. {tuningTarget.stringNumber} · {tuningTarget.note}
+                ⌖ {t('chartTargetString')} {tuningTarget.stringNumber} · {tuningTarget.note}
               </Text>
             </View>
           )}
 
+          {mode === 'pitch' && registeredMarkers.map((m, mi) => {
+            const x = markerX(mi, m.ts);
+            const y = midiToY(m.midi, markerCenterMidi, pitchRange, plotH);
+            if (y < -20 || y > plotH + 20) return null;
+            const label = `${m.note}${m.octave}`;
+            const chipTop = mi % 2 === 0
+              ? Math.max(2, y - 28)
+              : Math.min(plotH - 22, y + 10);
+            const chipLeft = Math.min(totalW - 40, Math.max(2, x - 14));
+            return (
+              <React.Fragment key={`reg-${m.ts}-${mi}`}>
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: x - 0.5,
+                    top: 0,
+                    width: 1.5,
+                    height: plotH,
+                    backgroundColor: '#7c4dff55',
+                  }}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[styles.markerChip, { left: chipLeft, top: chipTop }]}
+                >
+                  <Text style={styles.markerChipText}>{label}</Text>
+                </View>
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: x - 5,
+                    top: y - 5,
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor: '#7c4dff',
+                    borderWidth: 1.5,
+                    borderColor: '#e8e0ff',
+                  }}
+                />
+              </React.Fragment>
+            );
+          })}
+
           {pts.map((p, i) => {
             const x = xOf(i);
-            const c = plotCents(p);
+            const c = plotCents(p, useStringCents);
             const y = mode === 'cents'
               ? centsToY(c, centRange, plotH)
               : midiToY(p.midi,  centerMidi, pitchRange, plotH);
@@ -461,15 +702,15 @@ export default function FrequencyChart({
 
           {/* ── Latest note bubble ── */}
           {latest && (() => {
-            const lc = plotCents(latest);
+            const lc = plotCents(latest, useStringCents);
             const y = mode === 'cents'
               ? centsToY(lc, centRange, plotH)
               : midiToY(latest.midi, centerMidi, pitchRange, plotH);
             const color = mode === 'cents' ? colorForCents(lc) : octLine(latest.octave);
-            const lx = (pts.length - 1) * cellW;
+            const lx = xOfIndex(pts.length - 1);
             const bubbleX = Math.min(totalW - 58, Math.max(4, lx + 6));
             const label = tuningTarget && mode === 'cents'
-              ? `стр.${latest.targetString ?? tuningTarget.stringNumber} ${lc >= 0 ? '+' : ''}${lc}¢`
+              ? `${t('chartTargetString')}${latest.targetString ?? tuningTarget.stringNumber} ${lc >= 0 ? '+' : ''}${lc}¢`
               : `${latest.note}${latest.octave}`;
             return (
               <View style={[styles.noteBubble, {
@@ -491,8 +732,19 @@ export default function FrequencyChart({
             </View>
 
             {history.length === 0 && (
-              <Text style={styles.emptyText}>{active ? 'play a note…' : 'start tuner'}</Text>
+              <Text style={styles.emptyText}>{active ? t('chartPlayNote') : t('chartStartTuner')}</Text>
             )}
+
+            {history.length > 0 && hScroll > 20 && maxScroll > 0 ? (
+              <TouchableOpacity
+                style={styles.scrollStartChip}
+                onPress={scrollToStart}
+                activeOpacity={0.85}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.scrollStartChipText}>{t('chartScrollToStart')}</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </GestureDetector>
       </View>
@@ -500,7 +752,7 @@ export default function FrequencyChart({
       {/* Zoom presets — one tap each, large rows */}
       {!compact && (
       <View style={[styles.zoomPanel, { width: blockW }]}>
-        <Text style={styles.zoomPanelTitle}>{mode === 'cents' ? 'Диапазон (центы)' : 'Диапазон (октавы)'}</Text>
+        <Text style={styles.zoomPanelTitle}>{mode === 'cents' ? t('chartRangeCents') : t('chartRangeOctaves')}</Text>
         <View style={styles.zoomChipsRow}>
           {mode === 'cents'
             ? CENT_ZOOMS.map((z, i) => (
@@ -543,6 +795,14 @@ const styles = StyleSheet.create({
   },
   gestureHint: {
     color: '#3a3a55',
+    fontSize: 9,
+    fontWeight: '600',
+    lineHeight: 13,
+    marginBottom: 4,
+    paddingHorizontal: 2,
+  },
+  gestureHintSub: {
+    color: '#4a3a6a',
     fontSize: 9,
     fontWeight: '600',
     lineHeight: 13,
@@ -650,4 +910,28 @@ const styles = StyleSheet.create({
     borderColor: '#00e67655',
   },
   targetBadgeText: { color: '#00e676', fontSize: 10, fontWeight: '800' },
+  markerChip: {
+    position: 'absolute',
+    backgroundColor: '#1a1528ee',
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: '#7c4dff88',
+    zIndex: 4,
+  },
+  markerChipText: { color: '#d4c4ff', fontSize: 9, fontWeight: '800' },
+  scrollStartChip: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    zIndex: 6,
+    backgroundColor: '#1a1528ee',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#7c4dff66',
+  },
+  scrollStartChipText: { color: '#bb99ff', fontSize: 9, fontWeight: '800' },
 });

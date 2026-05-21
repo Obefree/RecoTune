@@ -1,6 +1,9 @@
 import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { buildRecordingOptions, DEFAULT_QUALITY } from './qualitySettings';
+
+export const AUDIO_ROUTING_FILE = (FileSystem.documentDirectory ?? '') + 'studio_audio_routing.json';
 
 /** Задержка для проводных / встроенных (дорожки 2+) */
 export const PREROLL_MS_WIRED = 150;
@@ -63,9 +66,27 @@ export const INPUT_GROUPS: { kind: RecordingInputInfo['kind']; title: string; em
   { kind: 'usb', title: 'USB-аудио', empty: 'USB-микрофон не найден' },
 ];
 
+export async function loadStudioAudioRouting(): Promise<StudioAudioRouting> {
+  try {
+    const info = await FileSystem.getInfoAsync(AUDIO_ROUTING_FILE);
+    if (info.exists) {
+      return migrateStudioAudioRouting(JSON.parse(await FileSystem.readAsStringAsync(AUDIO_ROUTING_FILE)));
+    }
+  } catch {}
+  return { ...DEFAULT_AUDIO_ROUTING };
+}
+
+export async function saveStudioAudioRouting(r: StudioAudioRouting): Promise<void> {
+  await FileSystem.writeAsStringAsync(AUDIO_ROUTING_FILE, JSON.stringify(r));
+}
+
 export function classifyInput(type: string, name: string): RecordingInputInfo['kind'] {
   const s = `${type} ${name}`.toLowerCase();
-  if (s.includes('bluetooth') || s.includes('bt ') || s.includes('ble') || s.includes('a2dp') || s.includes('sco')) {
+  if (
+    s.includes('bluetooth') || s.includes('bt ') || s.includes('ble') ||
+    s.includes('a2dp') || s.includes('sco') || s.includes('hands-free') ||
+    s.includes('handsfree') || s.includes('гарнитур')
+  ) {
     return 'bluetooth';
   }
   if (

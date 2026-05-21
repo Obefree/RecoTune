@@ -1,0 +1,29 @@
+---
+description: Синхронизация с personal knowledge base
+globs: **/*
+alwaysApply: true
+---
+
+# Синхронизация с Knowledge Base
+
+**KB:** `C:\Users\lev\Documents\GitHub\Knowledge-base`  
+**Slug:** `music-app`  
+**Контекст-пак:** `C:\Users\lev\Documents\GitHub\Knowledge-base\40-context-packs\cursor\music-app.cursor-context.md`
+
+## Перед кодом
+
+1. Маршрут: `C:\Users\lev\Documents\GitHub\Knowledge-base\CONTEXT_ROUTER.md` (route music-app / RecoTune)
+2. Память: `20-projects/music-app/ACTIVE_CONTEXT.md`, `TASK.md`, `PROJECT_CONTEXT.md`
+3. Не грузи всю базу — только routed-файлы
+
+## После значимых изменений
+
+Обнови KB (решения, backlog, ACTIVE_CONTEXT) или предложи mini-ingestion по `80-automation/auto-sync-policy.md` и skill `.cursor/skills/kb-ingestion` в KB repo.
+
+## Конец сессии
+
+Если менялось состояние продукта — SHORT заметка (≤15 строк):
+
+`C:\Users\lev\Documents\GitHub\Knowledge-base\00-inbox\agent-sessions\RecoTune-YYYY-MM-DD.md`
+
+Не жди команды «разложи в базу» — сделай сам. Без длинных diff в KB. Факты отдельно от предположений.

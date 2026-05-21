@@ -18,6 +18,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 
 import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
+import { useLocale } from '../context/LocaleContext';
 import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch } from '../utils/songMatch';
 import {
@@ -536,7 +537,7 @@ type Mode = 'live' | 'practice' | 'identify';
 export default function ChordsScreen() {
   const insets = useSafeAreaInsets();
   const { height: windowH, width: windowW } = useWindowDimensions();
-
+  const { t } = useLocale();
   const { tabBarHidden, setTabBarHidden } = useTabBarVisibility();
 
   const [showPracticePanel, setShowPracticePanel] = useState(true);

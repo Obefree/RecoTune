@@ -230,13 +230,28 @@ export function centsFromTargetHz(frequency: number, targetHz: number): number {
   return Math.round(1200 * Math.log2(frequency / targetHz));
 }
 
-/** Центы до ноты струны; октава подбирается ближайшая (G4 при цели G3 → около 0¢). */
+/**
+ * Центы до строя струны. Октава только ±1 от открытой — иначе E2 «ловит» G3/B3/E4
+ * через сдвиг на 1–2 октавы (типичная жалоба: горит 6-я вместо 3–1).
+ * Используется только в режиме instrument/string (не в chromatic-first UI по умолчанию).
+ */
 export function centsToStringTarget(frequency: number, targetHz: number): number {
   const midiTarget = 12 * Math.log2(targetHz / A4_FREQ) + A4_MIDI;
   const midiPlayed = 12 * Math.log2(frequency / A4_FREQ) + A4_MIDI;
-  const octShift = Math.round((midiPlayed - midiTarget) / 12);
-  const adjustedHz = targetHz * Math.pow(2, octShift);
-  return centsFromTargetHz(frequency, adjustedHz);
+  let bestCents = centsFromTargetHz(frequency, targetHz);
+  let bestAbs = Math.abs(bestCents);
+  for (let shift = -1; shift <= 1; shift++) {
+    const midiAdj = midiTarget + shift * 12;
+    if (Math.abs(midiPlayed - midiAdj) > 9) continue;
+    const adjustedHz = targetHz * Math.pow(2, shift);
+    const c = centsFromTargetHz(frequency, adjustedHz);
+    const a = Math.abs(c);
+    if (a < bestAbs) {
+      bestAbs = a;
+      bestCents = c;
+    }
+  }
+  return bestCents;
 }
 
 export function findNearestString(frequency: number, strings: StringDef[]): NearestStringMatch | null {
@@ -245,31 +260,48 @@ export function findNearestString(frequency: number, strings: StringDef[]): Near
   for (const s of strings) {
     const cents = centsToStringTarget(frequency, s.frequency);
     const distance = Math.abs(cents);
-    if (!best || distance < best.distance) {
+    if (distance > 95) continue;
+    if (
+      !best ||
+      distance < best.distance - 3 ||
+      (distance <= best.distance + 3 && s.string < best.stringDef.string)
+    ) {
       best = { stringDef: s, cents, distance };
     }
   }
   return best;
 }
 
-/** Не перескакивать на соседнюю струну, пока новая не ближе на margin ¢ */
+/** Шире зона удержания на высоких струнах — меньше прыжков между соседними целями */
+export function hysteresisMarginCents(frequency: number): number {
+  if (frequency >= 350) return 42;
+  if (frequency >= 220) return 36;
+  return 28;
+}
+
+/**
+ * Гистерезис только после ручного выбора струны (тап по пилюле).
+ * Не держим E2, если к текущей высоте она уже не подходит.
+ */
 export function findNearestStringWithHysteresis(
   frequency: number,
   strings: StringDef[],
   lockedString: number | null,
-  marginCents = 28,
+  marginCents?: number,
 ): NearestStringMatch | null {
   const fresh = findNearestString(frequency, strings);
   if (!fresh || lockedString == null) return fresh;
+  const margin = marginCents ?? Math.min(32, hysteresisMarginCents(frequency));
   const prevDef = strings.find(s => s.string === lockedString);
   if (!prevDef) return fresh;
-  const prevDist = Math.abs(centsToStringTarget(frequency, prevDef.frequency));
-  if (prevDist <= fresh.distance + marginCents) {
-    return {
-      stringDef: prevDef,
-      cents: centsToStringTarget(frequency, prevDef.frequency),
-      distance: prevDist,
-    };
+  const prevCents = centsToStringTarget(frequency, prevDef.frequency);
+  const prevDist = Math.abs(prevCents);
+  if (prevDist > 85) return fresh;
+  if (fresh.stringDef.string === lockedString) {
+    return { stringDef: prevDef, cents: prevCents, distance: prevDist };
+  }
+  if (prevDist <= fresh.distance + margin && prevDist < 50) {
+    return { stringDef: prevDef, cents: prevCents, distance: prevDist };
   }
   return fresh;
 }

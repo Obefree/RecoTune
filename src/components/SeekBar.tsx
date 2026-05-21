@@ -5,10 +5,16 @@ interface Props {
   position: number;   // seconds
   duration: number;   // seconds
   onSeek: (seconds: number) => void;
+  /** Вызывается при начале перетаскивания (можно поставить на паузу) */
+  onScrubStart?: () => void;
+  /** После отпускания, до onSeek */
+  onScrubEnd?: () => void;
   color?: string;
 }
 
-export default function SeekBar({ position, duration, onSeek, color = '#7c4dff' }: Props) {
+export default function SeekBar({
+  position, duration, onSeek, onScrubStart, onScrubEnd, color = '#7c4dff',
+}: Props) {
   const widthRef    = useRef(0);
   const seekingRef  = useRef(false);
   const [localPos, setLocalPos] = useState<number | null>(null);
@@ -24,6 +30,7 @@ export default function SeekBar({ position, duration, onSeek, color = '#7c4dff' 
       onMoveShouldSetPanResponder:  () => true,
       onPanResponderGrant: (e: GestureResponderEvent) => {
         seekingRef.current = true;
+        onScrubStart?.();
         const secs = calcSeconds(e.nativeEvent.locationX);
         setLocalPos(secs);
       },
@@ -35,11 +42,13 @@ export default function SeekBar({ position, duration, onSeek, color = '#7c4dff' 
         const secs = calcSeconds(e.nativeEvent.locationX);
         setLocalPos(null);
         seekingRef.current = false;
+        onScrubEnd?.();
         onSeek(secs);
       },
       onPanResponderTerminate: () => {
         setLocalPos(null);
         seekingRef.current = false;
+        onScrubEnd?.();
       },
     })
   ).current;

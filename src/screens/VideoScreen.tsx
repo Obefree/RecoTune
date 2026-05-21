@@ -86,7 +86,7 @@ function VideoTapZones({
   );
 }
 
-export default function VideoScreen() {
+export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { setTabBarHidden } = useTabBarVisibility();
@@ -344,7 +344,7 @@ export default function VideoScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: embedded ? 8 : insets.top }]}>
 
       {/* ── Inline player (always rendered — never unmounts Video) ── */}
       <View style={[styles.player, { height: VIDEO_H + 90 }]}>
