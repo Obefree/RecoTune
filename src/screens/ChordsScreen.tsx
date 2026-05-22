@@ -56,6 +56,7 @@ import {
   type ProviderId,
 } from '../providers/types';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
+import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 import {
   shareLibraryBackup,
   importLibraryBackupJson,
@@ -643,6 +644,11 @@ export default function ChordsScreen() {
 
   /* ── Lyrics in practice ── */
   const [practiceLyrics, setPracticeLyrics] = useState('');
+  /** Always normalized for display/scroll (edit mode keeps raw practiceLyrics). */
+  const practiceLyricsDisplay = useMemo(() => {
+    const t = practiceLyrics.trim();
+    return t ? normalizeLyricsChords(practiceLyrics) : '';
+  }, [practiceLyrics]);
   const [practiceContentHint, setPracticeContentHint] = useState<string | null>(null);
   const [practiceFetchHint, setPracticeFetchHint] = useState<string | null>(null);
   const [autoChordFetchDone, setAutoChordFetchDone] = useState(false);
@@ -685,14 +691,14 @@ export default function ChordsScreen() {
   /* ── Lyric chord-following (mic-driven scroll) ── */
   // Flat list of every chord in lyrics with line index and position within line
   const lyricChordList = useMemo(() => {
-    if (!practiceLyrics) return [];
-    return practiceLyrics.split('\n').flatMap((rawLine, li) => {
+    if (!practiceLyricsDisplay) return [];
+    return practiceLyricsDisplay.split('\n').flatMap((rawLine, li) => {
       const normalized = normalizeLine(rawLine);
       return [...normalized.matchAll(/\[([A-G][^\]]*)\]/g)].map((m, ci) => ({
         lineIdx: li, posInLine: ci, chord: m[1].trim(),
       }));
     });
-  }, [practiceLyrics]);
+  }, [practiceLyricsDisplay]);
 
   const [activeLyricIdx, setActiveLyricIdx] = useState(-1);
   const activeLyricIdxRef = useRef(-1);
@@ -2262,7 +2268,7 @@ export default function ChordsScreen() {
               scrollEventThrottle={16}
               onScroll={e => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
               onContentSizeChange={(_, h) => { scrollContentHRef.current = h; }}>
-              {practiceLyrics.split('\n').map((line, li) => {
+              {practiceLyricsDisplay.split('\n').map((line, li) => {
                 const activeLyricEntry = activeLyricIdx >= 0 ? lyricChordList[activeLyricIdx] : null;
                 const activeChordPos = activeLyricEntry?.lineIdx === li
                   ? { lineIdx: li, posInLine: activeLyricEntry.posInLine }

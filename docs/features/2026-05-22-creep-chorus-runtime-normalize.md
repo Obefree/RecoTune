@@ -16,7 +16,7 @@
 | `src/utils/chordLyricsNormalize.ts` | апострофы, merge без двойного `[G]`, `lastWordHasInlineChord` |
 | `src/utils/songContent.ts` | `normalizeLyricsChords` в `resolveLyricsText` (все пути показа) |
 | `src/db/songLibrary.ts` | `repairBuiltinLyricsInDb` на старте, `BUILTIN_SEED_VERSION` bump |
-| `src/screens/ChordsScreen.tsx` | `ChordLyricsLine` — аккорды в середине строки (`But I'm a [G]creep`) |
+| `src/screens/ChordsScreen.tsx` | `practiceLyricsDisplay` + `ChordLyricsLine` — нормализация и аккорды не только в начале строки |
 | `tools/verify-chord-normalize.mjs` | curly apostrophe, merge+inline, C#/Bb |
 
 ## Проверка
