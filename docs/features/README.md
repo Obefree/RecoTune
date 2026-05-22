@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-22 | Практика: скролл текста и автопрокрутка | [2026-05-22-practice-lyrics-scroll-ux.md](./2026-05-22-practice-lyrics-scroll-ux.md) |
 | 2026-05-22 | Creep: runtime normalize (апостроф, SQLite) | [2026-05-22-creep-chorus-runtime-normalize.md](./2026-05-22-creep-chorus-runtime-normalize.md) |
 | 2026-05-22 | Creep: аккорд на creep, не перед I'm | [2026-05-22-creep-chorus-chord-placement.md](./2026-05-22-creep-chorus-chord-placement.md) |
 | 2026-05-22 | Chords: ложные [a] в тексте, база при входе | [2026-05-22-chord-brackets-library-tab.md](./2026-05-22-chord-brackets-library-tab.md) |

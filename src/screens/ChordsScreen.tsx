@@ -667,26 +667,56 @@ export default function ChordsScreen() {
 
   const startAutoScroll = useCallback((bpm: number, viewH: number) => {
     if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
-    // scroll speed: 1 line per beat ≈ contentHeight / totalBeats
-    // We use a simpler approach: scroll whole content in estimated song duration
-    // Approx 1 line per 2 beats, content scrolls ~2px per beat interval
+    setAutoScroll(true);
     const msPerBeat = 60000 / bpm;
     autoScrollIntervalRef.current = setInterval(() => {
       scrollYRef.current += 1.2;
-      if (scrollYRef.current < scrollContentHRef.current - viewH) {
+      const maxY = Math.max(0, scrollContentHRef.current - viewH);
+      if (scrollYRef.current < maxY) {
         lyricsScrollRef.current?.scrollTo({ y: scrollYRef.current, animated: false });
       } else {
-        // reached bottom — stop
         if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
+        autoScrollIntervalRef.current = null;
         setAutoScroll(false);
       }
-    }, msPerBeat / 8); // scroll 8 small steps per beat
+    }, msPerBeat / 8);
   }, []);
 
   const stopAutoScroll = useCallback(() => {
-    if (autoScrollIntervalRef.current) { clearInterval(autoScrollIntervalRef.current); autoScrollIntervalRef.current = null; }
+    if (autoScrollIntervalRef.current) {
+      clearInterval(autoScrollIntervalRef.current);
+      autoScrollIntervalRef.current = null;
+    }
     setAutoScroll(false);
   }, []);
+
+  const toggleAutoScroll = useCallback(() => {
+    if (autoScroll) {
+      stopAutoScroll();
+      return;
+    }
+    scrollYRef.current = 0;
+    lyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+    startAutoScroll(practiceBpm, Math.max(80, practiceLyricsViewportH));
+  }, [autoScroll, practiceBpm, practiceLyricsViewportH, startAutoScroll, stopAutoScroll]);
+
+  const bumpPracticeBpm = useCallback((delta: number) => {
+    const next = Math.min(240, Math.max(30, practiceBpm + delta));
+    setPracticeBpm(next);
+    if (autoScrollIntervalRef.current) {
+      startAutoScroll(next, Math.max(80, practiceLyricsViewportH));
+    }
+  }, [practiceBpm, practiceLyricsViewportH, startAutoScroll]);
+
+  const handleLyricsScrollBeginDrag = useCallback(() => {
+    if (autoScroll) stopAutoScroll();
+  }, [autoScroll, stopAutoScroll]);
+
+  useEffect(() => () => { stopAutoScroll(); }, [stopAutoScroll]);
+
+  useEffect(() => {
+    if (mode !== 'practice' || lyricsEditMode) stopAutoScroll();
+  }, [mode, lyricsEditMode, stopAutoScroll]);
 
   /* ── Lyric chord-following (mic-driven scroll) ── */
   // Flat list of every chord in lyrics with line index and position within line
@@ -2011,9 +2041,9 @@ export default function ChordsScreen() {
                   { flexShrink: 0 },
                   practiceTopMaxH != null && { maxHeight: practiceTopMaxH },
                 ]}
-                scrollEnabled={hasLyricsBody}
-                nestedScrollEnabled={hasLyricsBody}
-                showsVerticalScrollIndicator={hasLyricsBody}
+                scrollEnabled={!hasLyricsBody}
+                nestedScrollEnabled={!hasLyricsBody}
+                showsVerticalScrollIndicator={!hasLyricsBody}
                 keyboardShouldPersistTaps="handled"
                 bounces={false}
               >
@@ -2194,32 +2224,6 @@ export default function ChordsScreen() {
                   <Text style={{ color: '#00e676', fontSize: 9, fontWeight: '700' }}>MIC</Text>
                 </View>
               )}
-              {/* Auto-scroll toggle (BPM timer) */}
-              {practiceLyrics && !lyricsEditMode && (
-                <TouchableOpacity
-                  onPress={() => {
-                    if (autoScroll) { stopAutoScroll(); }
-                    else { scrollYRef.current = 0; setAutoScroll(true); startAutoScroll(practiceBpm, Math.max(80, practiceLyricsViewportH)); }
-                  }}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 4,
-                    backgroundColor: autoScroll ? '#00e67622' : '#1a1a28', borderRadius: 8, marginRight: 4,
-                    borderWidth: 1, borderColor: autoScroll ? '#00e676' : '#2a2a38' }}>
-                  <Ionicons name={autoScroll ? 'pause' : 'play'} size={11} color={autoScroll ? '#00e676' : '#555'} />
-                  <Text style={{ color: autoScroll ? '#00e676' : '#555', fontSize: 9, fontWeight: '700' }}>
-                    {practiceBpm}
-                  </Text>
-                  <TouchableOpacity onPress={() => { const next = Math.min(240, practiceBpm + 10); setPracticeBpm(next); if (autoScroll) { stopAutoScroll(); startAutoScroll(next, Math.max(80, practiceLyricsViewportH)); } }}
-                    style={{ paddingHorizontal: 6, paddingVertical: 4 }}
-                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
-                    <Text style={{ color: '#aaa', fontSize: 15, fontWeight: '700', lineHeight: 16 }}>+</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => { const next = Math.max(30, practiceBpm - 10); setPracticeBpm(next); if (autoScroll) { stopAutoScroll(); startAutoScroll(next, Math.max(80, practiceLyricsViewportH)); } }}
-                    style={{ paddingHorizontal: 6, paddingVertical: 4 }}
-                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}>
-                    <Text style={{ color: '#aaa', fontSize: 15, fontWeight: '700', lineHeight: 16 }}>−</Text>
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              )}
               <TouchableOpacity onPress={() => setLyricsEditMode(v => !v)}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4 }}>
                 <Ionicons name={lyricsEditMode ? 'eye-outline' : 'create-outline'} size={16} color="#666" />
@@ -2236,6 +2240,44 @@ export default function ChordsScreen() {
                 </TouchableOpacity>
               )}
             </View>
+
+            {practiceLyrics && !lyricsEditMode && (
+              <View style={styles.practiceAutoScrollRow}>
+                <TouchableOpacity
+                  onPress={toggleAutoScroll}
+                  style={[
+                    styles.practiceAutoScrollPlayBtn,
+                    autoScroll && styles.practiceAutoScrollPlayBtnOn,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={autoScroll ? 'Остановить автопрокрутку' : 'Запустить автопрокрутку'}
+                >
+                  <Ionicons
+                    name={autoScroll ? 'pause' : 'play'}
+                    size={22}
+                    color={autoScroll ? '#00e676' : '#aaa'}
+                  />
+                </TouchableOpacity>
+                <Text style={styles.practiceAutoScrollBpmLabel}>BPM</Text>
+                <TouchableOpacity
+                  onPress={() => bumpPracticeBpm(-10)}
+                  style={styles.practiceAutoScrollBpmBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Уменьшить темп на 10"
+                >
+                  <Text style={styles.practiceAutoScrollBpmBtnText}>−</Text>
+                </TouchableOpacity>
+                <Text style={styles.practiceAutoScrollBpmValue}>{practiceBpm}</Text>
+                <TouchableOpacity
+                  onPress={() => bumpPracticeBpm(10)}
+                  style={styles.practiceAutoScrollBpmBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Увеличить темп на 10"
+                >
+                  <Text style={styles.practiceAutoScrollBpmBtnText}>+</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             <View
               style={{ flex: 1, minHeight: 0, flexBasis: 0, flexGrow: 1 }}
@@ -2263,10 +2305,13 @@ export default function ChordsScreen() {
               ref={lyricsScrollRef}
               style={[styles.lyricsScroll, { flex: 1 }]}
               contentContainerStyle={{ padding: 10, paddingBottom: 12 }}
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
               keyboardShouldPersistTaps="handled"
               scrollEventThrottle={16}
               onScroll={e => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
+              onScrollBeginDrag={handleLyricsScrollBeginDrag}
+              onMomentumScrollBegin={handleLyricsScrollBeginDrag}
               onContentSizeChange={(_, h) => { scrollContentHRef.current = h; }}>
               {practiceLyricsDisplay.split('\n').map((line, li) => {
                 const activeLyricEntry = activeLyricIdx >= 0 ? lyricChordList[activeLyricIdx] : null;
@@ -3661,6 +3706,44 @@ const styles = StyleSheet.create({
 
   lyricsPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 0, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
   lyricsPanelHeader: { flexShrink: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 6, paddingBottom: 4, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
+  practiceAutoScrollRow: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderColor: '#1a1a24',
+    backgroundColor: '#0d0d14',
+  },
+  practiceAutoScrollPlayBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a28',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+  },
+  practiceAutoScrollPlayBtnOn: {
+    backgroundColor: '#00e67622',
+    borderColor: '#00e676',
+  },
+  practiceAutoScrollBpmLabel: { color: '#666', fontSize: 10, fontWeight: '700', letterSpacing: 1, marginRight: 2 },
+  practiceAutoScrollBpmBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1a28',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+  },
+  practiceAutoScrollBpmBtnText: { color: '#ccc', fontSize: 22, fontWeight: '700', lineHeight: 24 },
+  practiceAutoScrollBpmValue: { color: '#fff', fontSize: 17, fontWeight: '800', minWidth: 36, textAlign: 'center' },
   lyricsPanelTitle: { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   lyricsEmpty: { flexGrow: 1, flexShrink: 1, flexBasis: 0, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
   lyricsEmptyText: { color: '#888', fontSize: 15, fontWeight: '700', textAlign: 'center' },
