@@ -1,33 +1,22 @@
 /**
- * Normalize ChordPro / plain lyrics to inline [Chord] markers for practice UI.
- *
- * Unit expectations (run: npm run verify-chord-normalize):
- * - "When you were here before\nG\nCouldn't look you in the eye"
- *   → must NOT contain [e] inside When; G merges or becomes [G]
- * - "(Am) over you" → "[Am] over you"
- * - "G B C Cm" chord line above lyrics → chords merged, not letters bracketed
+ * Quick check for chordLyricsNormalize.
+ * Run: node tools/verify-chord-normalize.mjs
+ * (Uses inline logic mirror — no TS build required.)
  */
-
-const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
 
 const ROOT = '[A-G](?:#|b|♯|♭)?';
 const CHORD_SUFFIX =
   '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|°|Ø|\\d+)?';
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
-/** Whole-token chord: G, Am, C#m7, F/A — never a letter inside a word. */
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
+const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
 
-function isChordToken(token: string): boolean {
+function isChordToken(token) {
   return VALID_CHORD_TOKEN_RE.test(token);
 }
 
-/** Split "word," into { lead, core, trail } punctuation around a token. */
-function splitTokenPunctuation(token: string): {
-  lead: string;
-  core: string;
-  trail: string;
-} {
+function splitTokenPunctuation(token) {
   const lead = token.match(/^[^\w[\]#♯♭/]+/)?.[0] ?? '';
   const rest = token.slice(lead.length);
   const trail = rest.match(/[^\w[\]#♯♭/]+$/)?.[0] ?? '';
@@ -35,19 +24,15 @@ function splitTokenPunctuation(token: string): {
   return { lead, core, trail };
 }
 
-/** Parentheses chord markers: (Am) → [Am]; other parens unchanged. */
-function parenToBrackets(text: string): string {
-  return text.replace(/\(\s*([^)\n]+?)\s*\)/g, (match, inner: string) => {
+function parenToBrackets(text) {
+  return text.replace(/\(\s*([^)\n]+?)\s*\)/g, (match, inner) => {
     const ch = inner.trim();
     return isChordToken(ch) ? `[${ch}]` : match;
   });
 }
 
-/** Bare chord tokens (whole words only) not already in [brackets] → [Chord] */
-function bracketBareChords(line: string): string {
-  if (!line.trim() || CHORD_MARKER_RE.test(line)) {
-    return line;
-  }
+function bracketBareChords(line) {
+  if (!line.trim() || CHORD_MARKER_RE.test(line)) return line;
   return line.replace(/\S+/g, token => {
     if (token.includes('[')) return token;
     const { lead, core, trail } = splitTokenPunctuation(token);
@@ -56,9 +41,8 @@ function bracketBareChords(line: string): string {
   });
 }
 
-/** Chord-only line (above lyrics in ChordPro) merged into next lyric line. */
-function mergeChordLineAboveLyric(lines: string[]): string[] {
-  const out: string[] = [];
+function mergeChordLineAboveLyric(lines) {
+  const out = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
@@ -67,8 +51,7 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
       continue;
     }
     const tokens = trimmed.split(/\s+/).filter(Boolean);
-    const allChords =
-      tokens.length > 0 && tokens.every(t => isChordToken(t));
+    const allChords = tokens.length > 0 && tokens.every(t => isChordToken(t));
     if (allChords && i + 1 < lines.length && lines[i + 1].trim()) {
       const next = lines[i + 1];
       const chords = tokens.map(c => `[${c}]`);
@@ -86,17 +69,37 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
   return out;
 }
 
-/** Full normalization pipeline for stored / fetched lyrics. */
-export function normalizeLyricsChords(text: string): string {
+function normalizeLyricsChords(text) {
   if (!text?.trim()) return text?.trim() ?? '';
-
   let normalized = text.replace(/\r\n/g, '\n').trim();
   normalized = parenToBrackets(normalized);
-
   const lines = mergeChordLineAboveLyric(normalized.split('\n'));
-  normalized = lines
-    .map(line => bracketBareChords(parenToBrackets(line)))
-    .join('\n');
-
+  normalized = lines.map(line => bracketBareChords(parenToBrackets(line))).join('\n');
   return normalized.trim();
 }
+
+const creep =
+  "When you were here before\nG\nCouldn't look you in the eye";
+const creepOut = normalizeLyricsChords(creep);
+
+const tests = [
+  ['creep no [e]', !/\[e\]/i.test(creepOut)],
+  ['creep has [G]', /\[G\]/i.test(creepOut)],
+  ['paren Am', normalizeLyricsChords('(Am) over you') === '[Am] over you'],
+  [
+    'chord line',
+    (() => {
+      const o = normalizeLyricsChords('G B C\nHello world');
+      return o.includes('[G]Hello') && !/\[e\]/.test(o);
+    })(),
+  ],
+  ['Cant', !normalizeLyricsChords("Can't stop").includes('[C]')],
+];
+
+console.log('Output:\n' + creepOut + '\n');
+let failed = 0;
+for (const [name, pass] of tests) {
+  console.log((pass ? 'PASS' : 'FAIL') + ' ' + name);
+  if (!pass) failed++;
+}
+process.exit(failed ? 1 : 0);

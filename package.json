@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "ingest-metadata": "node tools/ingest-musicbrainz-metadata.mjs --target=5000 --limit-artists=80 --max-pages=12",
     "verify-metadata-search": "node tools/verify-metadata-search.mjs",
+    "verify-chord-normalize": "node tools/verify-chord-normalize.mjs",
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch"
   },
   "dependencies": {
