@@ -3,11 +3,12 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { LYRICS_DB } from '../data/lyricsDatabase';
 import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent';
+import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 
 const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
-export const BUILTIN_SEED_VERSION = '2026-05-22-4-creep-chorus';
+export const BUILTIN_SEED_VERSION = '2026-05-22-5-creep-apostrophe';
 /** Dev-only bundle marker; not shown in production Chords UI. */
 export const CHORD_LIBRARY_BUILD = 'chord-v3';
 
@@ -301,6 +302,26 @@ async function purgeStaleBuiltinRows(database: SQLite.SQLiteDatabase): Promise<v
   );
 }
 
+/** Rewrite cached builtin lyrics through normalizeLyricsChords (fixes stale SQLite rows). */
+async function repairBuiltinLyricsInDb(database: SQLite.SQLiteDatabase): Promise<void> {
+  const rows = await database.getAllAsync<{ id: string; lyrics: string | null }>(
+    "SELECT id, lyrics FROM songs WHERE source = 'builtin' AND lyrics IS NOT NULL AND trim(lyrics) != ''",
+  );
+  const ts = nowIso();
+  for (const row of rows) {
+    const raw = row.lyrics ?? '';
+    const norm = normalizeLyricsChords(raw);
+    if (norm !== raw) {
+      await database.runAsync(
+        "UPDATE songs SET lyrics = ?, updated_at = ? WHERE id = ? AND source = 'builtin'",
+        norm,
+        ts,
+        row.id,
+      );
+    }
+  }
+}
+
 /** Refresh builtin rows from app bundle; never overwrites source=user. */
 async function upgradeBuiltinCatalog(database: SQLite.SQLiteDatabase): Promise<BuiltinCatalogUpgradeResult> {
   const stats = builtinCatalogStats();
@@ -370,6 +391,7 @@ export async function initSongLibrary(): Promise<BuiltinCatalogUpgradeResult> {
       await seedBuiltinIfEmpty(database);
       await purgeStaleBuiltinRows(database);
       const upgrade = await upgradeBuiltinCatalog(database);
+      await repairBuiltinLyricsInDb(database);
       await migrateLegacyJson(database);
       db = database;
       return upgrade;

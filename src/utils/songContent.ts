@@ -1,5 +1,6 @@
 import { LYRICS_DB } from '../data/lyricsDatabase';
 import type { SongEntry } from '../data/songDatabase';
+import { normalizeLyricsChords } from './chordLyricsNormalize';
 
 const CHORD_MARKER_RE = /\[[A-G][#b\d]*(?:\/[A-G][#b\d]*)?[^\]]*\]/i;
 
@@ -13,10 +14,12 @@ export function resolveLyricsText(song: SongEntry): string | undefined {
   const fromDb = LYRICS_DB[song.id];
   const inline = song.lyrics;
   if (hasAnnotatedLyrics(fromDb) && !hasAnnotatedLyrics(inline)) {
-    return fromDb.trim() ? fromDb : undefined;
+    const raw = fromDb.trim();
+    return raw ? normalizeLyricsChords(raw) : undefined;
   }
   const merged = inline ?? fromDb;
-  return merged?.trim() ? merged : undefined;
+  const raw = merged?.trim();
+  return raw ? normalizeLyricsChords(raw) : undefined;
 }
 
 /** Merge bundle lyrics DB into entry (runtime + before SQLite persist). */

@@ -56,7 +56,6 @@ import {
   type ProviderId,
 } from '../providers/types';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
-import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 import {
   shareLibraryBackup,
   importLibraryBackupJson,
@@ -505,6 +504,16 @@ function ChordLyricsLine({
   let remaining = normalized;
   let chordPosInLine = 0;
   while (remaining.length > 0) {
+    const chordAt = remaining.search(/\[[A-G]/);
+    if (chordAt < 0) {
+      if (remaining) segs.push({ text: remaining });
+      break;
+    }
+    if (chordAt > 0) {
+      segs.push({ text: remaining.slice(0, chordAt) });
+      remaining = remaining.slice(chordAt);
+      continue;
+    }
     const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/s);
     if (m) {
       const afterChord = m[2];
@@ -999,12 +1008,7 @@ export default function ChordsScreen() {
   async function loadSongForPractice(song: SongEntry): Promise<SongEntry> {
     await initSongLibrary();
     const fromDb = await getSongById(song.id);
-    const resolved = resolveSongEntry(fromDb ?? song);
-    if (resolved.lyrics?.trim()) {
-      const norm = normalizeLyricsChords(resolved.lyrics);
-      if (norm !== resolved.lyrics) return { ...resolved, lyrics: norm };
-    }
-    return resolved;
+    return resolveSongEntry(fromDb ?? song);
   }
 
   async function applyFromLibrarySong(song: SongEntry, provider?: ProviderId) {

@@ -80,6 +80,15 @@ const LINE_LEAD_CONNECTORS = new Set([
 const CONTRACTION_AFTER_CHORD_RE =
   /^(I'm|I've|I'll|I'd|you're|we're|they're|it's|don't|can't|won't|isn't|aren't)$/i;
 
+function normalizeLyricApostrophes(text) {
+  return text.replace(/[\u2018\u2019\u02BC\u0060\u00B4]/g, "'");
+}
+
+function lastWordHasInlineChord(line) {
+  const last = line.trim().split(/\s+/).pop() ?? '';
+  return /\[[A-G][^\]]*\]/i.test(last);
+}
+
 function firstWordCore(line) {
   const w = line.trim().split(/\s+/)[0] ?? '';
   const { core } = splitTokenPunctuation(w);
@@ -140,7 +149,12 @@ function mergeChordLineAboveLyric(lines) {
         if (words.length === 1) {
           out.push(`[${chord}]${trimmedNext}`);
         } else if (lineStartsWithConnector(trimmedNext)) {
-          out.push(attachChordToLastWord(trimmedNext, chord));
+          const prepped = repositionMisplacedInlineChords(trimmedNext);
+          out.push(
+            lastWordHasInlineChord(prepped)
+              ? prepped
+              : attachChordToLastWord(prepped, chord),
+          );
         } else {
           out.push(`[${chord}]${trimmedNext}`);
         }
@@ -175,7 +189,7 @@ function mergeChordLineAboveLyric(lines) {
 
 function normalizeLyricsChords(text) {
   if (!text?.trim()) return text?.trim() ?? '';
-  let normalized = text.replace(/\r\n/g, '\n').trim();
+  let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
   const lines = mergeChordLineAboveLyric(normalized.split('\n'));
@@ -195,6 +209,10 @@ const creepFeather = normalizeLyricsChords(
 const creepChorus = normalizeLyricsChords("But I'm a creep");
 const creepChorusMerge = normalizeLyricsChords("G\nBut I'm a creep");
 const creepChorusBad = normalizeLyricsChords("But [G]I'm a creep");
+const creepChorusCurly = normalizeLyricsChords('But [G]I\u2019m a creep');
+const creepMergeBad = normalizeLyricsChords("G\nBut [G]I'm a creep");
+const csharpLine = normalizeLyricsChords('C#\nHello world');
+const bbLine = normalizeLyricsChords('Bb\nShe loves you');
 
 const tests = [
   ['creep no [e]', !/\[e\]/i.test(creepOut)],
@@ -224,6 +242,16 @@ const tests = [
     'strip [a] creep line',
     normalizeLyricsChords('But [G]I\'m [a] creep') === "But I'm a [G]creep",
   ],
+  [
+    'creep curly apostrophe',
+    creepChorusCurly === "But I'm a [G]creep" && !/\[G\]I/i.test(creepChorusCurly),
+  ],
+  [
+    'creep merge bad inline',
+    creepMergeBad === "But I'm a [G]creep" && !/\[G\]\[G\]/i.test(creepMergeBad),
+  ],
+  ['C# chord line', csharpLine.includes('[C#]Hello') && !/\[C\]#/i.test(csharpLine)],
+  ['Bb chord line', bbLine.includes('[Bb]She') && !/\[B\]b/i.test(bbLine)],
 ];
 
 console.log('Output:\n' + creepOut + '\n');

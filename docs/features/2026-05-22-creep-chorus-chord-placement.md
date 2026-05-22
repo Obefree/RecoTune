@@ -22,7 +22,7 @@
 | `[G]But I'm a creep` | аккорд в начале connector-строки | `But I'm a [G]creep` |
 | `G\nCouldn't look you in the eye` | без изменений | `[G]Couldn't…` (как раньше) |
 
-Нормализация при открытии песни: `loadSongForPractice` → `normalizeLyricsChords` (кэш SQLite с плохим текстом тоже чинится на показе).
+Нормализация: `resolveLyricsText` → `normalizeLyricsChords` на всех путях; см. также [2026-05-22-creep-chorus-runtime-normalize.md](./2026-05-22-creep-chorus-runtime-normalize.md) (апостроф U+2019, repair SQLite).
 
 ## Проверка
 

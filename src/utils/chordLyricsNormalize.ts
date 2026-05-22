@@ -38,6 +38,16 @@ const LINE_LEAD_CONNECTORS = new Set([
 const CONTRACTION_AFTER_CHORD_RE =
   /^(I'm|I've|I'll|I'd|you're|we're|they're|it's|don't|can't|won't|isn't|aren't)$/i;
 
+/** Curly/typographic apostrophes (common in legacy tabs) → ASCII for contraction matching. */
+function normalizeLyricApostrophes(text: string): string {
+  return text.replace(/[\u2018\u2019\u02BC\u0060\u00B4]/g, "'");
+}
+
+function lastWordHasInlineChord(line: string): boolean {
+  const last = line.trim().split(/\s+/).pop() ?? '';
+  return /\[[A-G][^\]]*\]/i.test(last);
+}
+
 function firstWordCore(line: string): string {
   const w = line.trim().split(/\s+/)[0] ?? '';
   return splitTokenPunctuation(w).core.toLowerCase().replace(/^'/, "'");
@@ -169,7 +179,12 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
         if (words.length === 1) {
           out.push(`[${chord}]${trimmedNext}`);
         } else if (lineStartsWithConnector(trimmedNext)) {
-          out.push(attachChordToLastWord(trimmedNext, chord));
+          const prepped = repositionMisplacedInlineChords(trimmedNext);
+          out.push(
+            lastWordHasInlineChord(prepped)
+              ? prepped
+              : attachChordToLastWord(prepped, chord),
+          );
         } else {
           out.push(`[${chord}]${trimmedNext}`);
         }
@@ -206,7 +221,7 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
 export function normalizeLyricsChords(text: string): string {
   if (!text?.trim()) return text?.trim() ?? '';
 
-  let normalized = text.replace(/\r\n/g, '\n').trim();
+  let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
 
