@@ -65,6 +65,60 @@ function bracketBareChords(line) {
   });
 }
 
+const LINE_LEAD_CONNECTORS = new Set([
+  'but',
+  'and',
+  'or',
+  'so',
+  'yet',
+  'for',
+  'nor',
+  "'cause",
+  'because',
+]);
+
+const CONTRACTION_AFTER_CHORD_RE =
+  /^(I'm|I've|I'll|I'd|you're|we're|they're|it's|don't|can't|won't|isn't|aren't)$/i;
+
+function firstWordCore(line) {
+  const w = line.trim().split(/\s+/)[0] ?? '';
+  const { core } = splitTokenPunctuation(w);
+  return core.toLowerCase().replace(/^'/, "'");
+}
+
+function lineStartsWithConnector(line) {
+  return LINE_LEAD_CONNECTORS.has(firstWordCore(line));
+}
+
+function attachChordToLastWord(line, chord) {
+  const words = line.trim().split(/\s+/);
+  if (words.length === 0) return line;
+  const last = words[words.length - 1];
+  const { lead, core, trail } = splitTokenPunctuation(last);
+  words[words.length - 1] = `${lead}[${chord}]${core}${trail}`;
+  return words.join(' ');
+}
+
+function repositionMisplacedInlineChords(line) {
+  const leadChord = line.match(
+    /^\[([^\]\n]+)\]\s*((?:But|And|Or|So|Yet|For|Nor|'cause|Because)\b.+)$/i,
+  );
+  if (leadChord) return attachChordToLastWord(leadChord[2], leadChord[1]);
+
+  const midChord = line.match(
+    /^(.+?)\s+\[([^\]\n]+)\](I'm|I've|I'll|I'd|you're|we're|they're|it's|don't|can't|won't|isn't|aren't)\b(.*)$/i,
+  );
+  if (midChord) {
+    const [, before, chord, contraction, rest] = midChord;
+    if (!before.trim()) return line;
+    const tail = `${contraction}${rest ?? ''}`.trim();
+    const body = `${before.trim()} ${tail}`.trim();
+    if (!CONTRACTION_AFTER_CHORD_RE.test(contraction)) return line;
+    return attachChordToLastWord(body, chord);
+  }
+  return line;
+}
+
 function mergeChordLineAboveLyric(lines) {
   const out = [];
   for (let i = 0; i < lines.length; i++) {
@@ -80,7 +134,16 @@ function mergeChordLineAboveLyric(lines) {
       const next = lines[i + 1];
       const words = next.trim().split(/\s+/);
       if (tokens.length === 1) {
-        out.push(`[${tokens[0]}]${next.trim()}`);
+        const chord = tokens[0];
+        const trimmedNext = next.trim();
+        const words = trimmedNext.split(/\s+/);
+        if (words.length === 1) {
+          out.push(`[${chord}]${trimmedNext}`);
+        } else if (lineStartsWithConnector(trimmedNext)) {
+          out.push(attachChordToLastWord(trimmedNext, chord));
+        } else {
+          out.push(`[${chord}]${trimmedNext}`);
+        }
         i += 1;
         continue;
       }
@@ -116,7 +179,9 @@ function normalizeLyricsChords(text) {
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
   const lines = mergeChordLineAboveLyric(normalized.split('\n'));
-  normalized = lines.map(line => bracketBareChords(parenToBrackets(line))).join('\n');
+  normalized = lines
+    .map(line => repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))))
+    .join('\n');
   return stripSpuriousChordBrackets(normalized).trim();
 }
 
@@ -128,6 +193,8 @@ const creepFeather = normalizeLyricsChords(
   'G B C Cm\nYou float like a feather\nIn a beautiful world',
 );
 const creepChorus = normalizeLyricsChords("But I'm a creep");
+const creepChorusMerge = normalizeLyricsChords("G\nBut I'm a creep");
+const creepChorusBad = normalizeLyricsChords("But [G]I'm a creep");
 
 const tests = [
   ['creep no [e]', !/\[e\]/i.test(creepOut)],
@@ -145,7 +212,18 @@ const tests = [
   ['feather no [a]', !/\[a\]/i.test(creepFeather)],
   ['feather chord line', /\[G\].*\[Cm\]/.test(creepFeather.split('\n')[0])],
   ['chorus no [a]', !/\[a\]/i.test(creepChorus)],
-  ['strip [a]', stripSpuriousChordBrackets('But [G]I\'m [a] creep') === "But [G]I'm a creep"],
+  [
+    'creep chorus merge',
+    creepChorusMerge === "But I'm a [G]creep" && !/\[G\]I'm/i.test(creepChorusMerge),
+  ],
+  [
+    'creep chorus reposition',
+    creepChorusBad === "But I'm a [G]creep" && !/\[G\]I'm/i.test(creepChorusBad),
+  ],
+  [
+    'strip [a] creep line',
+    normalizeLyricsChords('But [G]I\'m [a] creep') === "But I'm a [G]creep",
+  ],
 ];
 
 console.log('Output:\n' + creepOut + '\n');

@@ -6,6 +6,7 @@
  *   → must NOT contain [e] inside When; G merges or becomes [G]
  * - "(Am) over you" → "[Am] over you"
  * - "G B C Cm" + lyric line → no [a] on articles; keep [G], [Am], [Cm]
+ * - "G\\nBut I'm a creep" / "But [G]I'm a creep" → chord on last word, not before I'm
  */
 
 const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
@@ -20,6 +21,40 @@ const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
 
 /** Articles / pronouns that look like note names but are lyrics. */
 const COMMON_WORD_CHORD_FALSE_POS = new Set(['a', 'A', 'i', 'I']);
+
+/** Lyric lines that often carry one chord on the last word (e.g. "But I'm a creep"). */
+const LINE_LEAD_CONNECTORS = new Set([
+  'but',
+  'and',
+  'or',
+  'so',
+  'yet',
+  'for',
+  'nor',
+  "'cause",
+  'because',
+]);
+
+const CONTRACTION_AFTER_CHORD_RE =
+  /^(I'm|I've|I'll|I'd|you're|we're|they're|it's|don't|can't|won't|isn't|aren't)$/i;
+
+function firstWordCore(line: string): string {
+  const w = line.trim().split(/\s+/)[0] ?? '';
+  return splitTokenPunctuation(w).core.toLowerCase().replace(/^'/, "'");
+}
+
+function lineStartsWithConnector(line: string): boolean {
+  return LINE_LEAD_CONNECTORS.has(firstWordCore(line));
+}
+
+function attachChordToLastWord(line: string, chord: string): string {
+  const words = line.trim().split(/\s+/);
+  if (words.length === 0) return line;
+  const last = words[words.length - 1];
+  const { lead, core, trail } = splitTokenPunctuation(last);
+  words[words.length - 1] = `${lead}[${chord}]${core}${trail}`;
+  return words.join(' ');
+}
 
 function isChordToken(token: string): boolean {
   return VALID_CHORD_TOKEN_RE.test(token);
@@ -84,6 +119,33 @@ function bracketBareChords(line: string): string {
   });
 }
 
+/**
+ * Fix chords glued before contractions mid-line ("But [G]I'm") or after bad
+ * single-chord merge ("[G]But I'm a creep") on connector-led phrases.
+ */
+function repositionMisplacedInlineChords(line: string): string {
+  const leadChord = line.match(
+    /^\[([^\]\n]+)\]\s*((?:But|And|Or|So|Yet|For|Nor|'cause|Because)\b.+)$/i,
+  );
+  if (leadChord) {
+    return attachChordToLastWord(leadChord[2], leadChord[1]);
+  }
+
+  const midChord = line.match(
+    /^(.+?)\s+\[([^\]\n]+)\](I'm|I've|I'll|I'd|you're|we're|they're|it's|don't|can't|won't|isn't|aren't)\b(.*)$/i,
+  );
+  if (midChord) {
+    const [, before, chord, contraction, rest] = midChord;
+    if (!before.trim()) return line;
+    const tail = `${contraction}${rest ?? ''}`.trim();
+    const body = `${before.trim()} ${tail}`.trim();
+    if (!CONTRACTION_AFTER_CHORD_RE.test(contraction)) return line;
+    return attachChordToLastWord(body, chord);
+  }
+
+  return line;
+}
+
 /** Chord-only line (above lyrics in ChordPro) merged into next lyric line when counts align. */
 function mergeChordLineAboveLyric(lines: string[]): string[] {
   const out: string[] = [];
@@ -101,7 +163,16 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
       const next = lines[i + 1];
       const words = next.trim().split(/\s+/);
       if (tokens.length === 1) {
-        out.push(`[${tokens[0]}]${next.trim()}`);
+        const chord = tokens[0];
+        const trimmedNext = next.trim();
+        const words = trimmedNext.split(/\s+/);
+        if (words.length === 1) {
+          out.push(`[${chord}]${trimmedNext}`);
+        } else if (lineStartsWithConnector(trimmedNext)) {
+          out.push(attachChordToLastWord(trimmedNext, chord));
+        } else {
+          out.push(`[${chord}]${trimmedNext}`);
+        }
         i += 1;
         continue;
       }
@@ -141,7 +212,9 @@ export function normalizeLyricsChords(text: string): string {
 
   const lines = mergeChordLineAboveLyric(normalized.split('\n'));
   normalized = lines
-    .map(line => bracketBareChords(parenToBrackets(line)))
+    .map(line =>
+      repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))),
+    )
     .join('\n');
 
   return stripSpuriousChordBrackets(normalized).trim();

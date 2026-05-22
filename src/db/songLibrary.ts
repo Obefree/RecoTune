@@ -7,7 +7,7 @@ import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent
 const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
-export const BUILTIN_SEED_VERSION = '2026-05-22-3-minimal';
+export const BUILTIN_SEED_VERSION = '2026-05-22-4-creep-chorus';
 /** Dev-only bundle marker; not shown in production Chords UI. */
 export const CHORD_LIBRARY_BUILD = 'chord-v3';
 

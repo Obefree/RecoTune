@@ -286,7 +286,7 @@ export const BUILTIN_SONGS_SEED: SongEntry[] = [
     "bpm": 92,
     "difficulty": 2,
     "genre": "Alternative",
-    "lyrics": "[G]When you were here before\n[B]Couldn't look you in the eye\n[C]You're just like an angel\n[Cm]Your skin makes me cry\n\n[G]You float like a feather\n[B]In a beautiful world\n[C]I wish I was special\n[Cm]You're so fucking special\n\nBut [G]I'm a creep\n[B]I'm a weirdo\n[C]What the hell am I doing here?\n[Cm]I don't belong here\n\n[G]I don't care if it hurts\n[B]I wanna have control\n[C]I want a perfect body\n[Cm]I want a perfect soul\n\n[G]I want you to notice\n[B]When I'm not around\n[C]You're so fucking special\n[Cm]I wish I was special\n\nBut [G]I'm a creep\n[B]I'm a weirdo\n[C]What the hell am I doing here?\n[Cm]I don't belong here"
+    "lyrics": "[G]When you were here before\n[B]Couldn't look you in the eye\n[C]You're just like an angel\n[Cm]Your skin makes me cry\n\n[G]You float like a feather\n[B]In a beautiful world\n[C]I wish I was special\n[Cm]You're so fucking special\n\nBut I'm a [G]creep\n[B]I'm a weirdo\n[C]What the hell am I doing here?\n[Cm]I don't belong here\n\n[G]I don't care if it hurts\n[B]I wanna have control\n[C]I want a perfect body\n[Cm]I want a perfect soul\n\n[G]I want you to notice\n[B]When I'm not around\n[C]You're so fucking special\n[Cm]I wish I was special\n\nBut I'm a [G]creep\n[B]I'm a weirdo\n[C]What the hell am I doing here?\n[Cm]I don't belong here"
   },
   {
     "id": "s038",
