@@ -18,12 +18,18 @@ import MelodyPlayerEngine, {
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import {
   buildMelodyPlaybackPayload,
+  buildMelodyPlaybackPayloadFromSegments,
   buildStaffPlaybackTimings,
   chordSegmentsForPlayback,
   getMelodyPlaybackTotalMs,
   MELODY_PLAYBACK,
   staffIndicesPerPlaybackNote,
 } from '../utils/melodyPlayback';
+import {
+  isTranscriptionConfidenceOk,
+  segmentsToRegisteredEvents,
+  transcribeFromPitchFrames,
+} from '../utils/melodyTranscription';
 import type { MelodyPlayerMessage } from '../components/MelodyPlayerEngine';
 import { centsToColor, frequencyToNote } from '../utils/noteUtils';
 import SungNoteStrip from '../components/SungNoteStrip';
@@ -56,7 +62,8 @@ import {
   type SavedMelodyMeta,
 } from '../utils/melodyStorage';
 
-const EMA_ALPHA = 0.18;
+/** Display/chart smoothing — raw pitch still goes to detector + pitchFrames for contour. */
+const DISPLAY_EMA = 0.20;
 const CHART_PAD = 32 + 16;
 
 interface NoteState { name: string; octave: number; cents: number; frequency: number }
@@ -84,6 +91,8 @@ export default function MelodyScreen() {
   const [playbackNoteIndex, setPlaybackNoteIndex] = useState(-1);
   const [quantizeRhythm, setQuantizeRhythm] = useState(false);
   const [instrument, setInstrument] = useState<MelodyInstrument>('piano');
+  /** contour = transcription from pitch frames; classic = SungNoteDetector */
+  const [recognitionMode, setRecognitionMode] = useState<'contour' | 'classic'>('contour');
 
   const webViewRef = useRef<WebView>(null);
   const playerRef = useRef<MelodyPlayerHandle>(null);
@@ -95,42 +104,70 @@ export default function MelodyScreen() {
   const {
     notes: sungNotes,
     pitchHistory,
+    pitchFrames,
     registeredEvents,
     feed: feedSungNote,
     reset: resetSungNotes,
     loadSnapshot,
+    detectorDebug,
   } = useSungNoteHistory();
 
-  const keyEst = useMemo(() => estimateKey(registeredEvents), [registeredEvents]);
+  const transcription = useMemo(
+    () => transcribeFromPitchFrames(pitchFrames),
+    [pitchFrames],
+  );
+
+  const useContourRecognition = recognitionMode === 'contour'
+    && isTranscriptionConfidenceOk(transcription);
+
+  const activeEvents = useMemo(() => {
+    if (useContourRecognition) {
+      return segmentsToRegisteredEvents(transcription.segments);
+    }
+    return registeredEvents;
+  }, [useContourRecognition, transcription.segments, registeredEvents]);
+
+  const stripNotes = useMemo(
+    () => activeEvents.map(e => ({
+      name: e.name,
+      octave: e.octave,
+      midi: e.midi,
+      freq: e.freq,
+      ts: e.ts,
+    })),
+    [activeEvents],
+  );
+
+  const keyEst = useMemo(() => estimateKey(activeEvents), [activeEvents]);
 
   const quantizeInputs = useMemo(
-    () => sungNotes.map(n => ({ name: n.name, octave: n.octave, midi: n.midi })),
-    [sungNotes],
+    () => activeEvents.map(e => ({ name: e.name, octave: e.octave, midi: e.midi })),
+    [activeEvents],
   );
 
   const quantizedNotes = useMemo(() => {
-    if (!fitToKey || sungNotes.length === 0) return [];
+    if (!fitToKey || activeEvents.length === 0) return [];
     const key = keyFromEstimate(keyEst);
     return quantizeNotesToKey(quantizeInputs, key);
-  }, [fitToKey, sungNotes.length, quantizeInputs, keyEst]);
+  }, [fitToKey, activeEvents.length, quantizeInputs, keyEst]);
 
   const eventTimestamps = useMemo(
-    () => registeredEvents.map(e => e.ts),
-    [registeredEvents],
+    () => activeEvents.map(e => e.ts),
+    [activeEvents],
   );
 
   const chordSuggestions = useMemo(() => {
     if (suggestedChords.length > 0) return suggestedChords;
-    if (sungNotes.length === 0 || !keyEst) return [];
+    if (activeEvents.length === 0 || !keyEst) return [];
     const forChords = annotateScaleDegrees(quantizeInputs, keyEst);
     return suggestMelodyChords(forChords, keyEst, 6, eventTimestamps);
-  }, [suggestedChords, sungNotes.length, keyEst, quantizeInputs, eventTimestamps]);
+  }, [suggestedChords, activeEvents.length, keyEst, quantizeInputs, eventTimestamps]);
 
   const staffNotes = useMemo(() => {
-    if (sungNotes.length === 0) return [];
+    if (activeEvents.length === 0) return [];
     if (fitToKey && quantizedNotes.length > 0) return quantizedNotes;
     return asStaffNotes(quantizeInputs);
-  }, [sungNotes.length, fitToKey, quantizedNotes, quantizeInputs]);
+  }, [activeEvents.length, fitToKey, quantizedNotes, quantizeInputs]);
 
   const activeChords = appliedChords ?? (chordSuggestions.length ? chordSymbols(chordSuggestions) : null);
 
@@ -170,10 +207,11 @@ export default function MelodyScreen() {
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
       const raw = msg.frequency;
       const prevF = smoothedFreqRef.current;
-      const freq = prevF == null ? raw : EMA_ALPHA * raw + (1 - EMA_ALPHA) * prevF;
+      const freq = prevF == null ? raw : DISPLAY_EMA * raw + (1 - DISPLAY_EMA) * prevF;
       smoothedFreqRef.current = freq;
 
       const info = frequencyToNote(freq);
+      const rawInfo = frequencyToNote(raw);
       const n: NoteState = {
         name: info.name,
         octave: info.octave,
@@ -183,7 +221,13 @@ export default function MelodyScreen() {
       setFrequency(freq);
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
-      feedSungNote({ frequency: freq, signal: msg.signal ?? 0, cents: info.cents });
+      feedSungNote({
+        frequency: raw,
+        chartFrequency: freq,
+        signal: msg.signal ?? 0,
+        cents: rawInfo.cents,
+        yinConfidence: msg.yinConfidence,
+      });
     } else if (msg.type === 'signal') {
       feedSungNote({ frequency: null, signal: msg.signal ?? 0 });
       smoothedFreqRef.current = null;
@@ -234,23 +278,60 @@ export default function MelodyScreen() {
     setSignalLevel(0);
   }, [stopMelodyPlayback]);
 
-  const rhythmEst = useMemo(() => estimateRhythm(registeredEvents), [registeredEvents]);
+  const rhythmEst = useMemo(() => estimateRhythm(activeEvents), [activeEvents]);
+
+  const playbackPitchHistory = useMemo(
+    () => pitchHistory.map(p => ({ ts: p.ts, midi: p.midi })),
+    [pitchHistory],
+  );
 
   const playbackPayload = useMemo(() => {
-    const segments = appliedChords?.length
-      ? chordSegmentsForPlayback(appliedChords, chordSuggestions, registeredEvents.length, eventTimestamps)
+    const chordSegs = appliedChords?.length
+      ? chordSegmentsForPlayback(appliedChords, chordSuggestions, activeEvents.length, eventTimestamps)
       : [];
+    const playOpts = {
+      bpmApprox: quantizeRhythm ? (rhythmEst?.bpmApprox ?? null) : null,
+      quantizeRhythm,
+      pitchHistory: playbackPitchHistory,
+    };
+
+    if (useContourRecognition && transcription.segments.length > 0) {
+      const playSegments = transcription.segments.map(s => ({
+        startMs: s.startMs,
+        endMs: s.endMs,
+        midi: s.midi,
+      }));
+      return buildMelodyPlaybackPayloadFromSegments(
+        playSegments,
+        fitToKey,
+        quantizedNotes,
+        activeEvents.length,
+        chordSegs,
+        playOpts,
+      );
+    }
+
     return buildMelodyPlaybackPayload(
       fitToKey,
       quantizedNotes,
       registeredEvents,
-      segments,
-      {
-        bpmApprox: rhythmEst?.bpmApprox ?? null,
-        quantizeRhythm,
-      },
+      chordSegs,
+      playOpts,
     );
-  }, [fitToKey, quantizedNotes, registeredEvents, appliedChords, chordSuggestions, rhythmEst, quantizeRhythm, eventTimestamps]);
+  }, [
+    fitToKey,
+    quantizedNotes,
+    registeredEvents,
+    activeEvents.length,
+    appliedChords,
+    chordSuggestions,
+    rhythmEst,
+    quantizeRhythm,
+    eventTimestamps,
+    playbackPitchHistory,
+    useContourRecognition,
+    transcription.segments,
+  ]);
 
   const playbackTotalMs = useMemo(
     () => getMelodyPlaybackTotalMs(playbackPayload.notes, playbackPayload.chords),
@@ -262,14 +343,14 @@ export default function MelodyScreen() {
       buildStaffPlaybackTimings(
         staffNotes.length,
         playbackPayload.notes,
-        registeredEvents,
+        activeEvents,
       ),
-    [staffNotes.length, playbackPayload.notes, registeredEvents],
+    [staffNotes.length, playbackPayload.notes, activeEvents],
   );
 
   const playbackStaffGroups = useMemo(
-    () => staffIndicesPerPlaybackNote(registeredEvents),
-    [registeredEvents],
+    () => staffIndicesPerPlaybackNote(activeEvents),
+    [activeEvents],
   );
 
   const activeStaffIndices = useMemo(() => {
@@ -278,11 +359,12 @@ export default function MelodyScreen() {
   }, [isPlayingMelody, playbackNoteIndex, playbackStaffGroups]);
 
   const playbackUsesQuantized = playbackPayload.pitchSource === 'quantized';
-  const fewNotesWarning = registeredEvents.length > 0
-    && registeredEvents.length < MELODY_PLAYBACK.MIN_NOTES_WARNING;
+  const fewNotesWarning = activeEvents.length > 0
+    && activeEvents.length < MELODY_PLAYBACK.MIN_NOTES_WARNING;
+  const singleNoteHint = activeEvents.length === 1;
   const quantizeMismatch = fitToKey
     && quantizedNotes.length > 0
-    && quantizedNotes.length !== registeredEvents.length;
+    && quantizedNotes.length !== activeEvents.length;
 
   const handlePlayMelody = useCallback(async () => {
     if (isPlayingMelody) {
@@ -318,7 +400,7 @@ export default function MelodyScreen() {
 
   const handleSaveMelody = useCallback(async () => {
     if (sungNotes.length === 0) return;
-    const rhythm = estimateRhythm(registeredEvents);
+    const rhythm = estimateRhythm(activeEvents);
     const name = `${t('melodyDefaultName')} ${new Date().toLocaleString()}`;
     const q = fitToKey && keyEst ? quantizeNotesToKey(quantizeInputs, keyEst) : undefined;
     const chords = activeChords ?? undefined;
@@ -332,14 +414,14 @@ export default function MelodyScreen() {
     });
     setSelectedMelodyId(saved.id);
     await refreshSaved();
-  }, [sungNotes, registeredEvents, t, refreshSaved, fitToKey, keyEst, quantizeInputs, activeChords]);
+  }, [sungNotes, activeEvents, t, refreshSaved, fitToKey, keyEst, quantizeInputs, activeChords]);
 
   const handleSuggestChords = useCallback(() => {
-    if (!keyEst || sungNotes.length === 0) return;
+    if (!keyEst || activeEvents.length === 0) return;
     const forChords = annotateScaleDegrees(quantizeInputs, keyEst);
     setSuggestedChords(suggestMelodyChords(forChords, keyEst, 6, eventTimestamps));
     setAppliedChords(null);
-  }, [keyEst, sungNotes.length, quantizeInputs, eventTimestamps]);
+  }, [keyEst, activeEvents.length, quantizeInputs, eventTimestamps]);
 
   const handleApplyChords = useCallback(async () => {
     const symbols = chordSymbols(chordSuggestions);
@@ -421,6 +503,7 @@ export default function MelodyScreen() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>{t('tabMelody')}</Text>
         <Text style={styles.hint}>{t('melodyPlayTimingHint')}</Text>
+        <Text style={styles.hintSecondary}>{t('melodySingDetectionHint')}</Text>
 
         <View style={styles.topRow}>
           <View style={styles.noteCol}>
@@ -496,6 +579,9 @@ export default function MelodyScreen() {
                 thumbColor={quantizeRhythm ? '#7c4dff' : '#555'}
               />
             </View>
+            {singleNoteHint ? (
+              <Text style={styles.playHint}>{t('melodyPlaySingleNoteHint')}</Text>
+            ) : null}
             {fewNotesWarning ? (
               <Text style={styles.playWarning}>{t('melodyPlayFewNotesWarning')}</Text>
             ) : null}
@@ -512,15 +598,52 @@ export default function MelodyScreen() {
           </View>
         </View>
 
+        <View style={styles.recognitionRow}>
+          <Text style={styles.recognitionLabel}>
+            Распознавание: {recognitionMode === 'contour' ? 'контур' : 'классика'}
+          </Text>
+          <Switch
+            value={recognitionMode === 'contour'}
+            onValueChange={v => setRecognitionMode(v ? 'contour' : 'classic')}
+            trackColor={{ false: '#252532', true: '#7c4dff88' }}
+            thumbColor={recognitionMode === 'contour' ? '#7c4dff' : '#555'}
+          />
+        </View>
+        {(isActive || pitchFrames.length > 0) ? (
+          <Text style={styles.recognitionStats}>
+            кадры {pitchFrames.length}
+            {' · '}
+            ноты {transcription.segments.length}
+            {recognitionMode === 'classic' ? '' : ` / классика ${registeredEvents.length}`}
+            {useContourRecognition ? ' · PLAY: контур' : recognitionMode === 'contour' ? ' · PLAY: классика (fallback)' : ' · PLAY: классика'}
+          </Text>
+        ) : null}
+
+        {__DEV__ && isActive && detectorDebug ? (
+          <View style={styles.detectorDebugChip}>
+            <Text style={styles.detectorDebugText}>
+              YIN {detectorDebug.yinConfidence != null ? detectorDebug.yinConfidence.toFixed(3) : '—'}
+              {' · '}
+              vote {detectorDebug.midiVoteAgree}/{detectorDebug.midiVoteRequired}
+              {' · '}
+              conf {detectorDebug.lastConfidence != null ? detectorDebug.lastConfidence.toFixed(2) : '—'}
+              {detectorDebug.attackFastPath ? ' · ATK' : ''}
+              {detectorDebug.inSlide ? ' · SLD' : ''}
+              {detectorDebug.armedLocked ? ' · ARM' : ''}
+              {` · voc ${Math.round(detectorDebug.voicedMs)}ms`}
+            </Text>
+          </View>
+        ) : null}
+
         <MelodyPitchChart
           history={pitchHistory}
-          registeredEvents={registeredEvents}
+          registeredEvents={activeEvents}
           active={isActive}
           chartPlotWidth={chartPlotWidth}
         />
 
         <SungNoteStrip
-          notes={sungNotes}
+          notes={stripNotes}
           label={t('melodySequenceLabel')}
           active={isActive}
           numbered
@@ -528,9 +651,9 @@ export default function MelodyScreen() {
           clearLabel={t('sungNotesClear')}
         />
 
-        <MelodyAnalysisPanel events={registeredEvents} compact />
+        <MelodyAnalysisPanel events={activeEvents} compact />
 
-        {registeredEvents.length > 0 ? (
+        {activeEvents.length > 0 ? (
           <View style={[styles.sectionCard, styles.sectionCardCompact]}>
             <View style={styles.toggleRow}>
               <Text style={styles.sectionTitle}>{t('melodyQuantizedLabel')}</Text>
@@ -561,7 +684,7 @@ export default function MelodyScreen() {
           </View>
         ) : null}
 
-        {registeredEvents.length > 0 && keyEst ? (
+        {activeEvents.length > 0 && keyEst ? (
           <View style={[styles.sectionCard, styles.sectionCardCompact]}>
             <View style={styles.chordsHeader}>
               <Text style={styles.sectionTitle}>{t('melodyChordsTitle')}</Text>
@@ -593,7 +716,7 @@ export default function MelodyScreen() {
           </View>
         ) : null}
 
-        {showStaff && registeredEvents.length > 0 ? (
+        {showStaff && activeEvents.length > 0 ? (
           <DualStaffView
             notes={staffNotes}
             chords={staffChords}
@@ -688,7 +811,7 @@ export default function MelodyScreen() {
           <TouchableOpacity
             style={styles.soonBtn}
             onPress={handleSuggestChords}
-            disabled={registeredEvents.length === 0 || !keyEst}
+            disabled={activeEvents.length === 0 || !keyEst}
             activeOpacity={0.85}
           >
             <Text style={styles.soonText}>{t('melodyShowChords')}</Text>
@@ -723,7 +846,8 @@ const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: '#0a0a0f' },
   scroll: { paddingHorizontal: 16, paddingBottom: 24 },
   title: { color: '#e0e0e0', fontSize: 22, fontWeight: '800', marginTop: 12, marginBottom: 4 },
-  hint: { color: '#555', fontSize: 12, marginBottom: 10 },
+  hint: { color: '#555', fontSize: 12, marginBottom: 4 },
+  hintSecondary: { color: '#484858', fontSize: 11, marginBottom: 10, fontStyle: 'italic' },
   topRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -773,6 +897,7 @@ const styles = StyleSheet.create({
   instChipText: { color: '#666', fontSize: 9, fontWeight: '700' },
   instChipTextActive: { color: '#7c4dff' },
   playSourceHint: { color: '#666', fontSize: 9, fontWeight: '600', marginTop: 2, textAlign: 'center' },
+  playHint: { color: '#888', fontSize: 9, fontWeight: '600', marginTop: 2, textAlign: 'center' },
   playWarning: { color: '#ffb74d', fontSize: 9, fontWeight: '600', marginTop: 2, textAlign: 'center' },
   quantizeRhythmRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4 },
   quantizeRhythmLabel: { color: '#666', fontSize: 9, fontWeight: '600' },
@@ -928,5 +1053,25 @@ const styles = StyleSheet.create({
   signalLabel: { color: '#444', fontSize: 9, letterSpacing: 1.5, fontWeight: '700', width: 24 },
   signalTrack: { flex: 1, height: 4, backgroundColor: '#1e1e28', borderRadius: 2, overflow: 'hidden' },
   signalBar: { height: 4, backgroundColor: '#7c4dff', borderRadius: 2 },
+  detectorDebugChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#1a1528',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#7c4dff44',
+  },
+  detectorDebugText: { color: '#7c4dff', fontSize: 9, fontWeight: '700', fontFamily: 'monospace' },
+  recognitionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  recognitionLabel: { color: '#888', fontSize: 11, fontWeight: '600' },
+  recognitionStats: { color: '#555', fontSize: 10, fontWeight: '600', marginBottom: 8, paddingHorizontal: 4 },
   errorText: { color: '#ff5252', fontSize: 12, textAlign: 'center' },
 });

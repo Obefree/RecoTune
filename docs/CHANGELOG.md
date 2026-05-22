@@ -4,9 +4,36 @@
 
 ## [Unreleased]
 
+### 2026-05-22
+
+- **Chords:** Vercel API табов, починка поиска, НАЙТИ без дубля каталога. См. [docs/features/2026-05-22-vercel-chord-api-nav-cleanup.md](./features/2026-05-22-vercel-chord-api-nav-cleanup.md), [docs/deploy-chord-api-vercel.md](./deploy-chord-api-vercel.md).
+- **Chords:** авто URL прокси из Expo debugger host + UI без AmDm/UG/URL. См. [docs/features/2026-05-22-auto-chord-proxy-ui.md](./features/2026-05-22-auto-chord-proxy-ui.md).
+- **Chords / Практика:** тихая подгрузка таба, ⚙ в шапке, без Alert «Нет источников». См. [docs/features/2026-05-22-practice-quiet-chord-load.md](./features/2026-05-22-practice-quiet-chord-load.md).
+- **Chords:** основной поиск — «База» в Практике; НАЙТИ→Каталог без дубля. См. [docs/features/2026-05-22-practice-library-search-primary.md](./features/2026-05-22-practice-library-search-primary.md).
+- **Chords / Практика:** модал «База песен» — список на всю высоту (flex-шапка + `FlatList`). См. [docs/features/2026-05-22-practice-library-modal-layout.md](./features/2026-05-22-practice-library-modal-layout.md).
+- **Chords / каталог:** архив legacy 536 → `assets/archive/`, активный seed ~32; опциональный импорт в настройках; UI без build-строк. См. [docs/features/2026-05-22-legacy-catalog-archive.md](./features/2026-05-22-legacy-catalog-archive.md).
+- **Chords / каталог:** поиск по bundled JSON без импорта 5000 в SQLite при открытии; опциональный офлайн-индекс. См. [docs/features/2026-05-22-metadata-on-demand-search.md](./features/2026-05-22-metadata-on-demand-search.md).
+- **Melody:** MVP1 транскрипция по контуру кадров, PLAY из сегментов, переключатель контур/классика. См. [docs/features/2026-05-22-melody-transcription-mvp1.md](./features/2026-05-22-melody-transcription-mvp1.md).
+- **Pitch / графики:** откат регрессии сглаживания (TunerEngine, Melody chart, EMA тюнера). См. [docs/features/2026-05-22-pitch-graph-smoothing-regression-fix.md](./features/2026-05-22-pitch-graph-smoothing-regression-fix.md).
+- **Chords:** исправлен nested SQLite transaction при импорте metadata (mutex + retry UI). См. [docs/features/2026-05-22-chords-metadata-nested-tx-fix.md](./features/2026-05-22-chords-metadata-nested-tx-fix.md).
+- **Chords / каталог D7:** MusicBrainz ingestion ≥5000 metadata tracks, bundled `chunk-*.json` до ~10 MB, `npm run ingest-metadata`. См. [docs/features/2026-05-22-metadata-musicbrainz-5000.md](./features/2026-05-22-metadata-musicbrainz-5000.md).
+- **Chords:** поиск первым (НАЙТИ/каталог), SQLite metadata_tracks + bundled chunks, on-demand полный таб. См. [docs/features/2026-05-22-chords-search-first-metadata.md](./features/2026-05-22-chords-search-first-metadata.md).
+- **Chords:** on-demand AmDm / Ultimate Guitar через прокси + feature flags (без скрапера в APK). См. [docs/features/2026-05-22-on-demand-chord-providers.md](./features/2026-05-22-on-demand-chord-providers.md).
+- **Chords:** dev-proxy `tools/chord-fetch` — `npm run dev-proxy`, тест с телефона за 3 шага (README). UX: скролл к тексту после загрузки, ошибки с подсказками.
+- **Chords / каталог:** бейджи контента, миграция builtin seed, открытие полной песни из SQLite + ChordPro-строки (~150 полных / ~386 прогрессия). См. [docs/features/2026-05-22-catalog-chord-lyrics-quality.md](./features/2026-05-22-catalog-chord-lyrics-quality.md).
+- **Chords:** поиск в «База песен» и НАЙТИ→Каталог — init SQLite до запроса, debounce, подсказки. См. [docs/features/2026-05-22-chords-search-init-fix.md](./features/2026-05-22-chords-search-init-fix.md).
+- **Chords / каталог UI:** nested SQLite fix, progress bar, баннер «Повторить», список и пустые состояния. См. [docs/features/2026-05-22-chords-catalog-ui-fix.md](./features/2026-05-22-chords-catalog-ui-fix.md).
+- **Chords:** поиск не пустой при выключенном «Каталог» в настройках; кириллица (`лет`, `кино`); маркер `build: chord-v2` всегда в шапке.
+- **Chords НАЙТИ:** AudD и `EXPO_PUBLIC_AUDD_TOKEN` удалены; офлайн каталог + модуль `src/recognition` (сниппеты, multi-signal roadmap). См. [docs/features/2026-05-22-local-recognition-no-audd.md](./features/2026-05-22-local-recognition-no-audd.md).
+- **Chords:** библиотека Phase 2–4 — провайдеры, умный поиск, импорт/экспорт, сохранение из НАЙТИ. См. [docs/features/2026-05-21-chord-providers-phase2-4.md](./features/2026-05-21-chord-providers-phase2-4.md).
+
 ### 2026-05-21
 
+- **Melody:** anti-noise / anti-slide фильтры детектора (портаменто, дыхание, повторы). См. [docs/features/2026-05-21-melody-detector-noise-slide-filter.md](./features/2026-05-21-melody-detector-noise-slide-filter.md).
+- **Melody:** детектор нот v2 — YIN gate, midi voting, dual-path onset. См. [docs/features/2026-05-21-melody-detector-v2.md](./features/2026-05-21-melody-detector-v2.md).
+- **Melody:** повторы одной ноты (акцент, PLAY, лента). См. [docs/features/2026-05-21-melody-repeat-notes-fix.md](./features/2026-05-21-melody-repeat-notes-fix.md).
 - **Melody:** playhead и подсветка нот на стане при PLAY. См. [docs/features/2026-05-21-staff-playback-playhead.md](./features/2026-05-21-staff-playback-playhead.md).
+- **Melody:** длительности PLAY, монотонные ts, legato. См. [docs/features/2026-05-21-melody-playback-timing-fix.md](./features/2026-05-21-melody-playback-timing-fix.md).
 - **Melody:** PLAY по спетому темпу (ritmo), аккорды по фразам. См. [docs/features/2026-05-21-melody-rhythm-timing.md](./features/2026-05-21-melody-rhythm-timing.md).
 - **Melody:** качество PLAY (ритм, ADSR, аккорды) и детектор нот. См. [docs/features/2026-05-21-melody-playback-quality.md](./features/2026-05-21-melody-playback-quality.md).
 - **График:** скролл к началу, разнесение меток, zoom 2× на Melody. См. [docs/features/2026-05-21-chart-scroll-markers.md](./features/2026-05-21-chart-scroll-markers.md).

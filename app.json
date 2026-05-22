@@ -17,7 +17,9 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "RecoTune needs microphone access for the tuner and recorder.",
         "NSPhotoLibraryUsageDescription": "RecoTune needs access to your media library to browse and play audio and video files.",
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -54,6 +56,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "extra": {
+      "chordFetchApiUrl": ""
+    },
     "plugins": [
       [
         "expo-av",
@@ -68,7 +73,8 @@
           "savePhotosPermission": "Allow RecoTune to save files.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "expo-sqlite"
     ]
   }
 }

@@ -69,10 +69,12 @@ const HTML = `<!DOCTYPE html>
     var attack = 0.008;
     var decay = 0.07;
     var sustainRatio = instrument === 'sine' ? 0.65 : 0.52;
-    var release = 0.14;
+    var release = instrument === 'piano' ? 0.1 : 0.14;
+    var legatoRatio = instrument === 'piano' ? 0.92 : 1.0;
     var peak = (instrument === 'sine' ? 0.2 : 0.26) * peakMul;
+    var voicedDur = durSec * legatoRatio;
     var sustainAt = start + attack + decay;
-    var releaseAt = start + durSec;
+    var releaseAt = start + voicedDur;
     var releaseStart = Math.max(sustainAt + 0.01, releaseAt - release);
     var stopAt = releaseAt + 0.05;
 
@@ -122,7 +124,7 @@ const HTML = `<!DOCTYPE html>
   function scheduleChordBlock(startSec, durSec, midiNotes) {
     if (!ctx || !midiNotes || !midiNotes.length) return;
     var dur = Math.max(MIN_DUR_SEC, durSec);
-    var chordGain = 0.24;
+    var chordGain = 0.12;
     var attack = 0.04;
     var release = 0.12;
     var releaseAt = startSec + dur;
@@ -132,7 +134,7 @@ const HTML = `<!DOCTYPE html>
       osc.type = 'triangle';
       osc.frequency.value = midiToFreq(midiNotes[k]);
       var g = ctx.createGain();
-      var peak = 0.08 * chordGain;
+      var peak = 0.05 * chordGain;
       g.gain.setValueAtTime(0.0001, startSec);
       g.gain.exponentialRampToValueAtTime(Math.max(peak, 0.0002), startSec + attack);
       g.gain.setValueAtTime(peak * 0.75, Math.max(startSec + attack, releaseAt - release));
@@ -215,16 +217,6 @@ const HTML = `<!DOCTYPE html>
     var totalMs = 0;
     playbackNotes = notes;
 
-    for (var c = 0; c < chords.length; c++) {
-      var ch = chords[c];
-      var cStartMs = ch.startMs || 0;
-      var cDurMs = ch.durationMs || 400;
-      var cStart = anchor + cStartMs / 1000;
-      var cDur = clampDurSec(cDurMs);
-      scheduleChordBlock(cStart, cDur, ch.midiNotes || []);
-      totalMs = Math.max(totalMs, cStartMs + cDurMs);
-    }
-
     for (var j = 0; j < notes.length; j++) {
       var n = notes[j];
       var startMs = n.startMs || 0;
@@ -233,6 +225,16 @@ const HTML = `<!DOCTYPE html>
       var durSec = clampDurSec(durMs);
       scheduleTone(startSec, midiToFreq(n.midi), durSec, instrument, 1);
       totalMs = Math.max(totalMs, startMs + durMs);
+    }
+
+    for (var c = 0; c < chords.length; c++) {
+      var ch = chords[c];
+      var cStartMs = ch.startMs || 0;
+      var cDurMs = ch.durationMs || 400;
+      var cStart = anchor + cStartMs / 1000;
+      var cDur = clampDurSec(cDurMs);
+      scheduleChordBlock(cStart, cDur, ch.midiNotes || []);
+      totalMs = Math.max(totalMs, cStartMs + cDurMs);
     }
 
     post({ type: 'ready' });

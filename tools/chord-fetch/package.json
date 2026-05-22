@@ -1,0 +1,11 @@
+{
+  "name": "recotune-chord-fetch",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev-proxy": "node dev-proxy-server.mjs"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0"
+  }
+}

@@ -36,6 +36,14 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# MusicBrainz ingest checkpoint (local resume)
+tools/.mb-ingest-checkpoint.json
+tools/.metadata-ingest-checkpoint.json
+
+# Local APK builds (use CI/release artifacts, not repo root)
+*.apk
+build-apk-log.txt
+
 # generated native folders
 /ios
 /android

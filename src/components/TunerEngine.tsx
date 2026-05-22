@@ -13,6 +13,8 @@ export interface PitchMessage {
   octave?: number;
   cents?: number;
   signal?: number;
+  /** YIN CMNDF minimum — lower is more confident */
+  yinConfidence?: number;
   message?: string;
 }
 
@@ -32,8 +34,8 @@ const HTML = `<!DOCTYPE html>
   /** YIN CMNDF: ищем глобальный минимум в диапазоне лагов (как в типичных тюнерах), а не первый порог —
    *  «первый tau < 0.15» часто цепляется за шум/не ту гармонику → скачки и «не слышит». */
   function detectPitch(buf, sr) {
-    var minP = Math.floor(sr / 2000);
-    var maxP = Math.floor(sr / 55);
+    var minP = Math.floor(sr / 1400);
+    var maxP = Math.floor(sr / 60);
     var len  = Math.min(buf.length, 4096);
     if (len < maxP * 2) return null;
 
@@ -54,7 +56,7 @@ const HTML = `<!DOCTYPE html>
     for (var j = minP + 1; j < maxP; j++) {
       if (yin[j] < bestY) { bestY = yin[j]; bestTau = j; }
     }
-    if (bestY > 0.20) return null;
+    if (bestY > 0.18) return null;
     var bt = bestTau;
     if (bestTau > 0 && bestTau < maxP - 1) {
       var s0 = yin[bestTau - 1], s1 = yin[bestTau], s2 = yin[bestTau + 1];
@@ -62,7 +64,8 @@ const HTML = `<!DOCTYPE html>
       if (Math.abs(dv) > 1e-10) bt = bestTau + (s0 - s2) / (2 * dv);
     }
     var f = sr / bt;
-    return (f >= 55 && f <= 2000) ? f : null;
+    if (f < 60 || f > 1400) return null;
+    return { freq: f, yin: bestY };
   }
 
   var freqRing = [];
@@ -74,32 +77,16 @@ const HTML = `<!DOCTYPE html>
     return a[Math.floor(a.length / 2)];
   }
 
-  /** Свести октавные/гармонические ошибки к фундаменталу относительно последней стабильной */
-  function foldHarmonics(f, ref) {
-    if (!ref || !f) return f;
-    for (var k = 2; k <= 4; k++) {
-      var r = f / ref;
-      if (Math.abs(r - k) < 0.07) return f / k;
-      if (Math.abs(r - 1 / k) < 0.07) return f * k;
-    }
-    return f;
-  }
-
-  /** Медиана по кадрам + подавление скачка (на высоких нотах — жёстче) */
+  /** Медиана по кадрам + подавление скачка > ~4 тона (часто смена гармоники) */
   function stabilizeFreq(f) {
-    var folded = lastStableF != null ? foldHarmonics(f, lastStableF) : f;
-    freqRing.push(folded);
+    freqRing.push(f);
     if (freqRing.length > RING) freqRing.shift();
-    if (freqRing.length < 3) return folded;
+    if (freqRing.length < 3) return f;
     var m = medianRing(freqRing);
     if (lastStableF != null) {
-      var ratio = lastStableF >= 320 ? 1.14 : 1.26;
-      var lo = lastStableF / ratio;
-      var hi = lastStableF * ratio;
-      if (m < lo || m > hi) {
-        var blend = lastStableF >= 320 ? 0.38 : 0.45;
-        m = (1 - blend) * m + blend * lastStableF;
-      }
+      var lo = lastStableF / 1.26;
+      var hi = lastStableF * 1.26;
+      if (m < lo || m > hi) m = 0.55 * m + 0.45 * lastStableF;
     }
     lastStableF = m;
     return m;
@@ -131,11 +118,11 @@ const HTML = `<!DOCTYPE html>
     var signal = Math.min(1, rms * 8);
 
     if (rms > 0.006) {
-      var freq = detectPitch(buf, ctx.sampleRate);
-      if (freq) {
-        var fUse = stabilizeFreq(freq);
+      var det = detectPitch(buf, ctx.sampleRate);
+      if (det) {
+        var fUse = stabilizeFreq(det.freq);
         var n = freqToNote(fUse);
-        post({ type: 'pitch', frequency: fUse, note: n.name, octave: n.octave, cents: n.cents, signal: signal });
+        post({ type: 'pitch', frequency: fUse, note: n.name, octave: n.octave, cents: n.cents, signal: signal, yinConfidence: det.yin });
       } else {
         freqRing.length = 0;
         lastStableF = null;

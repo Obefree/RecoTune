@@ -9,8 +9,59 @@ import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTabBarVisibility } from '../context/TabBarVisibility';
-import { SONGS, type SongEntry } from '../data/songDatabase';
+import { type SongEntry } from '../data/songDatabase';
 import { LYRICS_DB } from '../data/lyricsDatabase';
+import {
+  initSongLibrary,
+  listSongs,
+  listUserSongs,
+  getSongById,
+  upsertUserSong,
+  deleteUserSong,
+  getFavoriteIds,
+  setFavorite,
+  filterSongsQuick,
+} from '../services/initSongLibrary';
+import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
+import {
+  contentQualityScore,
+  hasAnnotatedLyrics,
+  needsOnDemandChordFetch,
+  PROGRESSION_ONLY_HINT,
+  resolveLyricsText,
+  resolveSongEntry,
+} from '../utils/songContent';
+import { getMetadataTrackCount } from '../metadata/metadataDb';
+import {
+  formatMetadataSyncError,
+  isMetadataSyncRunning,
+  startBackgroundIndex,
+  syncAllMetadata,
+  type MetadataSyncProgress,
+} from '../metadata/metadataSync';
+import { ChordFetchError } from '../providers/chordFetchProxy';
+import { fetchAmdmChordSheet } from '../providers/amdmProvider';
+import { fetchUltimateGuitarChordSheet } from '../providers/ultimateGuitarProvider';
+import type { OnDemandChordProviderId, ProviderAttribution } from '../providers/types';
+import { searchProviders, searchResultToSongEntry } from '../providers/registry';
+import { ensureAutoChordProxySettings } from '../providers/autoChordProxy';
+import { resolveChordFetchUrl } from '../providers/chordFetchUrl';
+import {
+  getProviderSettings,
+  saveProviderSettings,
+  type ProviderSettings,
+} from '../providers/providerSettings';
+import {
+  PROVIDER_BADGE_COLORS,
+  type ProviderId,
+} from '../providers/types';
+import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
+import {
+  shareLibraryBackup,
+  importLibraryBackupJson,
+  importChordProFilesFromUris,
+} from '../library/importExport';
+import { ensureSongInUserLibrary } from '../library/persistProviderSong';
 import { CHORD_DIAGRAM_OPTIONS, getChordShape, getDiagramOption } from '../data/chordShapes';
 import { getBasicChordCatalog } from '../data/basicChordCatalog';
 import { Audio } from 'expo-av';
@@ -21,29 +72,19 @@ import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
 import { useLocale } from '../context/LocaleContext';
 import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch } from '../utils/songMatch';
+import { fetchLyricsForTrack } from '../utils/lyricsApi';
 import {
-  auddRecognizeBase64,
-  fetchLyricsForTrack,
-  type AuddTrackResult,
-} from '../utils/auddApi';
+  localSongRecognizer,
+  type IdentifyTrackResult,
+  type RecognizeOutcome,
+} from '../recognition';
 
-/* ─── Persistent storage paths ─── */
-const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
-const FAVORITES_FILE    = (FileSystem.documentDirectory ?? '') + 'song_favorites.json';
-
-async function loadJson<T>(path: string, fallback: T): Promise<T> {
-  try {
-    const info = await FileSystem.getInfoAsync(path);
-    if (info.exists) return JSON.parse(await FileSystem.readAsStringAsync(path));
-  } catch {}
-  return fallback;
-}
-async function saveJson(path: string, data: unknown) {
-  try { await FileSystem.writeAsStringAsync(path, JSON.stringify(data)); } catch {}
+function recognizeOutcomeMessage(outcome: RecognizeOutcome): string {
+  if (outcome.status === 'match') return '';
+  return outcome.message;
 }
 
 /* ─── Types ─── */
-type AuddResult = AuddTrackResult;
 
 /* ─── Chord colours ─── */
 function chordColor(conf: number): string {
@@ -592,6 +633,10 @@ export default function ChordsScreen() {
 
   /* ── Lyrics in practice ── */
   const [practiceLyrics, setPracticeLyrics] = useState('');
+  const [practiceContentHint, setPracticeContentHint] = useState<string | null>(null);
+  const [practiceFetchHint, setPracticeFetchHint] = useState<string | null>(null);
+  const [autoChordFetchDone, setAutoChordFetchDone] = useState(false);
+  const [catalogUpgradeToast, setCatalogUpgradeToast] = useState<string | null>(null);
   const [lyricsEditMode, setLyricsEditMode] = useState(false);
   /* ── Measured lyrics column height (auto-scroll + flex layout) ── */
   const [practiceLyricsViewportH, setPracticeLyricsViewportH] = useState(260);
@@ -687,18 +732,20 @@ export default function ChordsScreen() {
   /* ── Identify state ── */
   const [recSecs, setRecSecs]         = useState(0);
   const [isRecognizing, setIsRecognizing] = useState(false);
-  const [songResult, setSongResult]   = useState<AuddResult | null>(null);
+  const [songResult, setSongResult]   = useState<IdentifyTrackResult | null>(null);
   const [ytUrl, setYtUrl]             = useState('');
   const [ytLoading, setYtLoading]     = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
   const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt' | 'manual'>('mic');
   const [lyrics, setLyrics]           = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
-  const [lyricsSource, setLyricsSource] = useState<'audd' | 'ovh' | 'library' | null>(null);
+  const [lyricsSource, setLyricsSource] = useState<'ovh' | 'library' | null>(null);
   const [libraryMatch, setLibraryMatch] = useState<SongEntry | null>(null);
   const [manualArtist, setManualArtist] = useState('');
   const [manualTitle, setManualTitle]   = useState('');
-  const allSongsRef = useRef<SongEntry[]>(SONGS);
+  const [metadataTrackCount, setMetadataTrackCount] = useState(0);
+  const [metadataSyncProgress, setMetadataSyncProgress] = useState<MetadataSyncProgress | null>(null);
+  const allSongsRef = useRef<SongEntry[]>([]);
 
   const wvRef    = useRef<WebView>(null);
   const recRef   = useRef<Audio.Recording | null>(null);
@@ -910,35 +957,36 @@ export default function ChordsScreen() {
   }
 
   async function finishIdentify(rec: Audio.Recording) {
+    const secs = recSecs;
     try {
       await rec.stopAndUnloadAsync(); recRef.current = null;
       const uri = rec.getURI();
       if (!uri) throw new Error('No recording URI');
-      const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-      const outcome = await auddRecognizeBase64(base64);
-      if (outcome.status === 'success') {
-        await applyIdentifyResult(outcome.result);
-      } else if (outcome.status === 'limit') {
-        Alert.alert(
-          'Лимит API',
-          'Токен AudD исчерпан.\n\nДобавьте EXPO_PUBLIC_AUDD_TOKEN в .env или найдите песню вручную.',
-        );
-      } else if (outcome.status === 'network') {
-        Alert.alert('Нет интернета', 'Проверьте подключение или введите название вручную.');
+      const outcome = await localSongRecognizer.recognizeFromRecording(uri, {
+        durationSec: secs || 10,
+        source: 'mic',
+      });
+      if (outcome.status === 'match' && outcome.candidates[0]) {
+        await applyFromLibrarySong(outcome.candidates[0].song);
       } else {
         Alert.alert(
-          'Не распознано',
-          'Песня не найдена в AudD.\n\nПоднесите телефон ближе к колонке или найдите вручную.',
+          outcome.status === 'snippet_saved' ? 'Запись сохранена' : 'Не найдено',
+          recognizeOutcomeMessage(outcome),
+          [
+            { text: 'База песен', onPress: () => { clearIdentifyResult(); openPracticeLibrary(); } },
+            { text: 'Вручную', onPress: () => { clearIdentifyResult(); setIdentSource('manual'); } },
+            { text: 'OK', style: 'cancel' },
+          ],
         );
       }
-    } catch (e) { Alert.alert('Ошибка распознавания', String(e)); }
+    } catch (e) { Alert.alert('Ошибка записи', String(e)); }
     setIsRecognizing(false); setRecSecs(0);
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
   }
 
   async function fetchLyrics(artist: string, title: string) {
     setLyricsLoading(true);
-    const { text, source } = await fetchLyricsForTrack({ artist, title });
+    const { text, source } = await fetchLyricsForTrack(artist, title);
     if (text) {
       setLyrics(text);
       setPracticeLyrics(text);
@@ -947,18 +995,35 @@ export default function ChordsScreen() {
     setLyricsLoading(false);
   }
 
-  async function applyIdentifyResult(r: AuddResult) {
+  async function loadSongForPractice(song: SongEntry): Promise<SongEntry> {
+    await initSongLibrary();
+    const fromDb = await getSongById(song.id);
+    return resolveSongEntry(fromDb ?? song);
+  }
+
+  async function applyFromLibrarySong(song: SongEntry, provider?: ProviderId) {
+    const persisted = await ensureSongInUserLibrary(song, provider);
+    if (persisted.id !== song.id) await reloadLibrary();
+    const full = await loadSongForPractice(persisted);
+    await applyIdentifyResult(
+      { artist: full.artist, title: full.title },
+      full,
+    );
+  }
+
+  async function applyIdentifyResult(r: IdentifyTrackResult, catalogMatch?: SongEntry | null) {
     setSongResult(r);
     setLyrics(null);
     setLyricsSource(null);
 
-    const match = findBestSongMatch(r.artist, r.title, allSongsRef.current);
+    const matchRaw = catalogMatch ?? findBestSongMatch(r.artist, r.title, allSongsRef.current);
+    const match = matchRaw ? resolveSongEntry(matchRaw) : null;
     setLibraryMatch(match);
 
     if (match) {
       setPracticeInput(match.chords);
       parsePracticeInput(match.chords);
-      const libLyrics = match.lyrics ?? LYRICS_DB[match.id];
+      const libLyrics = resolveLyricsText(match);
       if (libLyrics) {
         setLyrics(libLyrics);
         setPracticeLyrics(libLyrics);
@@ -966,23 +1031,46 @@ export default function ChordsScreen() {
       }
     }
 
-    setLyricsLoading(true);
-    const { text, source } = await fetchLyricsForTrack(r);
-    if (text && !match?.lyrics && !LYRICS_DB[match?.id ?? '']) {
-      setLyrics(text);
-      setPracticeLyrics(text);
-      setLyricsSource(source);
-    } else if (text && match && !(match.lyrics ?? LYRICS_DB[match.id]) && source) {
-      setLyrics(text);
-      setPracticeLyrics(text);
-      setLyricsSource(source);
+    const skipRemoteLyrics = match && needsOnDemandChordFetch(match);
+    if (!skipRemoteLyrics) {
+      setLyricsLoading(true);
+      const { text, source } = await fetchLyricsForTrack(r.artist, r.title);
+      const libText = match ? resolveLyricsText(match) : undefined;
+      if (text && !libText) {
+        setLyrics(text);
+        setPracticeLyrics(text);
+        setLyricsSource(source);
+      }
+      setLyricsLoading(false);
     }
-    setLyricsLoading(false);
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 200);
   }
 
-  function setResultAndFetch(r: AuddResult) {
+  function setResultAndFetch(r: IdentifyTrackResult) {
     void applyIdentifyResult(r);
+  }
+
+  async function retryMetadataCatalog() {
+    try {
+      setMetadataSyncProgress({
+        phase: 'syncing',
+        batchIndex: 0,
+        batchTotal: 0,
+        tracksImported: metadataTrackCount,
+        message: 'Повтор индексации каталога…',
+      });
+      await syncAllMetadata(p => setMetadataSyncProgress(p));
+      const n = await getMetadataTrackCount();
+      setMetadataTrackCount(n);
+    } catch (err) {
+      setMetadataSyncProgress({
+        phase: 'error',
+        batchIndex: 0,
+        batchTotal: 0,
+        tracksImported: metadataTrackCount,
+        message: formatMetadataSyncError(err),
+      });
+    }
   }
 
   function openIdentifyInPractice() {
@@ -1007,14 +1095,23 @@ export default function ChordsScreen() {
       const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*'], copyToCacheDirectory: true });
       if (result.canceled) return;
       setFileLoading(true); setSongResult(null);
-      const base64 = await FileSystem.readAsStringAsync(result.assets[0].uri, { encoding: FileSystem.EncodingType.Base64 });
-      const outcome = await auddRecognizeBase64(base64);
-      if (outcome.status === 'success') {
-        await applyIdentifyResult(outcome.result);
-      } else if (outcome.status === 'limit') {
-        Alert.alert('Лимит API', 'Токен AudD исчерпан. Введите песню вручную или задайте EXPO_PUBLIC_AUDD_TOKEN.');
+      const uri = result.assets[0].uri;
+      const outcome = await localSongRecognizer.recognizeFromRecording(uri, {
+        durationSec: 0,
+        source: 'file',
+      });
+      if (outcome.status === 'match' && outcome.candidates[0]) {
+        await applyFromLibrarySong(outcome.candidates[0].song);
       } else {
-        Alert.alert('Не распознано', 'Попробуйте другой файл или введите название вручную.');
+        Alert.alert(
+          outcome.status === 'snippet_saved' ? 'Файл сохранён' : 'Не найдено',
+          recognizeOutcomeMessage(outcome),
+          [
+            { text: 'База песен', onPress: () => { clearIdentifyResult(); openPracticeLibrary(); } },
+            { text: 'Вручную', onPress: () => { clearIdentifyResult(); setIdentSource('manual'); } },
+            { text: 'OK', style: 'cancel' },
+          ],
+        );
       }
     } catch (e) { Alert.alert('Ошибка', String(e)); }
     setFileLoading(false);
@@ -1046,19 +1143,29 @@ export default function ChordsScreen() {
   const [practiceInput, setPracticeInput]     = useState('Am F C G');
   const [practiceChords, setPracticeChords]   = useState<string[]>(['Am','F','C','G']);
   const [practiceChordIdx, setPracticeChordIdx] = useState(0);
+  const [practiceSong, setPracticeSong]       = useState<SongEntry | null>(null);
+  const [chordFetchLoading, setChordFetchLoading] = useState(false);
+  const [onDemandAttribution, setOnDemandAttribution] = useState<ProviderAttribution | null>(null);
 
   /* ── Song library ── */
   const [showLibrary, setShowLibrary]         = useState(false);
   const [showInstrumentModal, setShowInstrumentModal] = useState(false);
   const [showBasicChordsModal, setShowBasicChordsModal] = useState(false);
   const [libSearch, setLibSearch]             = useState('');
+  const [libSearchHits, setLibSearchHits]     = useState<SongEntry[]>([]);
+  const [libProviderMeta, setLibProviderMeta] = useState<Map<string, ProviderId>>(new Map());
+  const [libSearchBusy, setLibSearchBusy]     = useState(false);
+  const [showProviderSettings, setShowProviderSettings] = useState(false);
+  const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [libGenre, setLibGenre]               = useState('');
   const [libDiff, setLibDiff]                 = useState<0|1|2|3>(0);
   const [libFavOnly, setLibFavOnly]           = useState(false);
   const [libSortBy, setLibSortBy]             = useState<'title'|'artist'|'bpm'>('title');
 
-  /* ── Custom songs & favorites ── */
-  const [customSongs, setCustomSongs]         = useState<SongEntry[]>([]);
+  /* ── Song library (SQLite) ── */
+  const [librarySongs, setLibrarySongs]       = useState<SongEntry[]>([]);
+  const [libraryInitError, setLibraryInitError] = useState<string | null>(null);
+  const [userSongCount, setUserSongCount]     = useState(0);
   const [favorites, setFavorites]             = useState<Set<string>>(new Set());
 
   /* ── Add/Edit song modal ── */
@@ -1067,120 +1174,363 @@ export default function ChordsScreen() {
   const blankForm = () => ({ title:'', artist:'', genre:'', key:'', bpm:'', difficulty:'1' as '1'|'2'|'3', chords:'', lyrics:'' });
   const [addForm, setAddForm]                 = useState(blankForm());
 
-  /* load on mount */
+  async function reloadLibrary() {
+    try {
+      setLibraryInitError(null);
+      const upgrade = await initSongLibrary();
+      if (upgrade.upgraded) {
+        const msg = `Каталог обновлён: ${upgrade.fullChordCount} с полными аккордами (из ${upgrade.totalBuiltin})`;
+        setCatalogUpgradeToast(msg);
+        setTimeout(() => setCatalogUpgradeToast(null), 6000);
+      }
+      const [songs, favs, userSongs] = await Promise.all([
+        listSongs(),
+        getFavoriteIds(),
+        listUserSongs(),
+      ]);
+      setLibrarySongs(songs);
+      setFavorites(favs);
+      setUserSongCount(userSongs.length);
+      const metaN = await getMetadataTrackCount();
+      setMetadataTrackCount(metaN);
+      await ensureAutoChordProxySettings();
+      const settings = await getProviderSettings();
+      if (settings.metadataFullIndexOffline && !isMetadataSyncRunning()) {
+        startBackgroundIndex(p => {
+          setMetadataSyncProgress(p);
+          if (p.phase === 'done' || p.phase === 'syncing') {
+            void getMetadataTrackCount().then(setMetadataTrackCount);
+          }
+        });
+      }
+      if (__DEV__) {
+        console.log(`[RecoTune] song library: ${songs.length} songs (${userSongs.length} user), metadata: ${metaN}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'ошибка инициализации БД';
+      setLibraryInitError(msg);
+      setLibrarySongs([]);
+      setFavorites(new Set());
+      setUserSongCount(0);
+      if (__DEV__) console.warn('[RecoTune] reloadLibrary failed', err);
+    }
+  }
+
   useFocusEffect(useCallback(() => {
-    loadJson<SongEntry[]>(CUSTOM_SONGS_FILE, []).then(setCustomSongs);
-    loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
+    reloadLibrary().catch(() => {});
   }, []));
 
-  // Merge LYRICS_DB into built-in songs (external lyrics file wins over inline)
-  const allSongs = [...SONGS.map(s => LYRICS_DB[s.id] ? { ...s, lyrics: LYRICS_DB[s.id] } : s), ...customSongs];
+  const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
   const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
+  useEffect(() => {
+    let cancelled = false;
+    const q = libSearch.trim();
+    const run = async () => {
+      if (libraryInitError) {
+        setLibSearchHits([]);
+        setLibProviderMeta(new Map());
+        setLibSearchBusy(false);
+        return;
+      }
+      if (!q) {
+        setLibSearchHits(librarySongs);
+        setLibProviderMeta(new Map());
+        setLibSearchBusy(false);
+        return;
+      }
+      setLibSearchBusy(true);
+      try {
+        await initSongLibrary();
+        const results = await searchProviders(q, { limit: 150 });
+        if (cancelled) return;
+        const meta = new Map<string, ProviderId>();
+        const songs: SongEntry[] = [];
+        for (const r of results) {
+          const song = searchResultToSongEntry(r);
+          if (song) {
+            songs.push(song);
+            meta.set(song.id, r.provider);
+          }
+        }
+        if (songs.length === 0 && librarySongs.length > 0) {
+          for (const song of filterSongsQuick(librarySongs, q)) {
+            songs.push(song);
+            meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
+          }
+        }
+        setLibSearchHits(songs);
+        setLibProviderMeta(meta);
+      } catch (err) {
+        if (__DEV__) console.warn('[RecoTune] library search failed', err);
+        if (!cancelled) {
+          const songs = filterSongsQuick(librarySongs, q);
+          const meta = new Map<string, ProviderId>();
+          for (const song of songs) {
+            meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
+          }
+          setLibSearchHits(songs);
+          setLibProviderMeta(meta);
+        }
+      } finally {
+        if (!cancelled) setLibSearchBusy(false);
+      }
+    };
+    const t = setTimeout(() => { void run(); }, 180);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [libSearch, librarySongs]);
+
   const libResults = (() => {
-    let list = allSongs;
-    const q = libSearch.toLowerCase();
-    if (q) list = list.filter(s =>
-      s.title.toLowerCase().includes(q) ||
-      s.artist.toLowerCase().includes(q) ||
-      s.chords.toLowerCase().includes(q) ||
-      s.genre.toLowerCase().includes(q)
-    );
+    let list = libSearch.trim() ? libSearchHits : allSongs;
     if (libGenre)   list = list.filter(s => s.genre === libGenre);
     if (libDiff)    list = list.filter(s => s.difficulty === libDiff);
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
-    if (libSortBy === 'title')  list = [...list].sort((a,b) => a.title.localeCompare(b.title));
+    if (libSearch.trim() && libSortBy === 'title') {
+      list = [...list].sort((a, b) => {
+        const qa = contentQualityScore(resolveSongEntry(a));
+        const qb = contentQualityScore(resolveSongEntry(b));
+        return qb - qa || a.title.localeCompare(b.title);
+      });
+    } else if (libSortBy === 'title')  list = [...list].sort((a,b) => a.title.localeCompare(b.title));
     if (libSortBy === 'artist') list = [...list].sort((a,b) => a.artist.localeCompare(b.artist));
     if (libSortBy === 'bpm')    list = [...list].sort((a,b) => (b.bpm ?? 0) - (a.bpm ?? 0));
     return list;
   })();
 
+  function providerForSong(item: SongEntry): ProviderId {
+    return libProviderMeta.get(item.id) ?? (item.id.startsWith('custom_') ? 'user' : 'builtin');
+  }
+
+  async function openProviderSettings() {
+    await ensureAutoChordProxySettings();
+    const s = await getProviderSettings();
+    setProviderSettings(s);
+    setShowProviderSettings(true);
+  }
+
+  function practiceFetchHintForSettings(settings: ProviderSettings): string | null {
+    const hasUrl = !!(settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl());
+    if (!hasUrl || !settings.enabled.amdm) {
+      return 'Табы онлайн подгрузятся при настроенном сервере или dev-proxy';
+    }
+    return null;
+  }
+
+  async function enrichSongForPractice(base: SongEntry): Promise<{
+    song: SongEntry;
+    lyrics?: string;
+    hint: string | null;
+    stillNeedsFetch: boolean;
+  }> {
+    const resolved = resolveSongEntry(base);
+    if (hasAnnotatedLyrics(resolved.lyrics)) {
+      return { song: resolved, lyrics: resolved.lyrics!, hint: null, stillNeedsFetch: false };
+    }
+
+    const catalogMatch = findBestSongMatch(resolved.artist, resolved.title, allSongsRef.current);
+    if (catalogMatch && catalogMatch.id !== resolved.id) {
+      const fromDb = await loadSongForPractice(catalogMatch);
+      if (hasAnnotatedLyrics(fromDb.lyrics)) {
+        return { song: fromDb, lyrics: fromDb.lyrics!, hint: null, stillNeedsFetch: false };
+      }
+      if (fromDb.lyrics?.trim() && !needsOnDemandChordFetch(fromDb)) {
+        return { song: fromDb, lyrics: fromDb.lyrics, hint: null, stillNeedsFetch: false };
+      }
+    }
+
+    await ensureAutoChordProxySettings();
+    const settings = await getProviderSettings();
+    let working = resolved;
+
+    if (settings.enabled.lyrics !== false) {
+      try {
+        const { text } = await fetchLyricsForTrack(resolved.artist, resolved.title);
+        if (text?.trim()) {
+          working = { ...working, lyrics: text };
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('[RecoTune] lyrics.ovh silent', e);
+      }
+    }
+
+    if (hasAnnotatedLyrics(working.lyrics)) {
+      return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
+    }
+
+    const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
+    if (proxyUrl && settings.enabled.amdm) {
+      try {
+        const detail = await fetchAmdmChordSheet(resolved.artist, resolved.title);
+        const persisted = await ensureSongInUserLibrary(detail, 'amdm');
+        await upsertUserSong(persisted);
+        await reloadLibrary();
+        const full = await loadSongForPractice(persisted);
+        setOnDemandAttribution(detail.attribution ?? null);
+        if (hasAnnotatedLyrics(full.lyrics)) {
+          return { song: full, lyrics: full.lyrics!, hint: null, stillNeedsFetch: false };
+        }
+        working = full;
+      } catch (e) {
+        if (__DEV__) console.warn('[RecoTune] silent online tab fetch', e);
+      }
+    }
+
+    const stillNeedsFetch = needsOnDemandChordFetch(working);
+    const hint = stillNeedsFetch ? practiceFetchHintForSettings(settings) : null;
+    return {
+      song: working,
+      lyrics: working.lyrics?.trim() ? working.lyrics : undefined,
+      hint,
+      stillNeedsFetch,
+    };
+  }
+
+  async function runAutoChordEnrichment(initial: SongEntry) {
+    if (chordFetchLoading) return;
+    setChordFetchLoading(true);
+    setAutoChordFetchDone(false);
+    try {
+      const result = await enrichSongForPractice(initial);
+      setPracticeSong(result.song);
+      setPracticeInput(result.song.chords?.trim() || 'C G Am F');
+      parsePracticeInput(result.song.chords?.trim() || 'C G Am F');
+      setPracticeChordIdx(0);
+      if (result.lyrics) {
+        setPracticeLyrics(result.lyrics);
+        setPracticeContentHint(null);
+      } else if (result.stillNeedsFetch) {
+        setPracticeLyrics('');
+        setPracticeContentHint(PROGRESSION_ONLY_HINT);
+      }
+      setPracticeFetchHint(result.hint);
+    } finally {
+      setChordFetchLoading(false);
+      setAutoChordFetchDone(true);
+    }
+  }
+
+  async function persistProviderSettings(next: ProviderSettings) {
+    const toSave: ProviderSettings = {
+      ...next,
+      devProxyUrlHintDismissed:
+        next.devProxyUrlHintDismissed === true
+        || !!next.chordFetchProxyUrl.trim(),
+    };
+    await saveProviderSettings(toSave);
+    setProviderSettings(toSave);
+    if (libSearch.trim()) {
+      const results = await searchProviders(libSearch, { limit: 150 });
+      const meta = new Map<string, ProviderId>();
+      const songs: SongEntry[] = [];
+      for (const r of results) {
+        const song = searchResultToSongEntry(r);
+        if (song) {
+          songs.push(song);
+          meta.set(song.id, r.provider);
+        }
+      }
+      setLibSearchHits(songs);
+      setLibProviderMeta(meta);
+    }
+  }
+
+  async function saveIdentifyToLibrary() {
+    if (!songResult) return;
+    const chordFromLyrics = [...new Set((lyrics?.match(/\[([A-G][^\]]*)\]/g) ?? []).map(c => c.replace(/[\[\]]/g, '')))];
+    const chords =
+      libraryMatch?.chords ??
+      (chordFromLyrics.length ? chordFromLyrics.slice(0, 8).join(' ') : 'C G Am F');
+    const song: SongEntry = {
+      id: `custom_${Date.now()}`,
+      title: songResult.title.trim() || 'Без названия',
+      artist: songResult.artist.trim() || 'Unknown',
+      chords,
+      key: libraryMatch?.key,
+      bpm: libraryMatch?.bpm,
+      difficulty: libraryMatch?.difficulty ?? (chordFromLyrics.length <= 3 ? 1 : chordFromLyrics.length <= 5 ? 2 : 3),
+      genre: 'НАЙТИ',
+      lyrics: lyrics ?? libraryMatch?.lyrics,
+    };
+    await upsertUserSong(song);
+    await reloadLibrary();
+    Alert.alert('Сохранено', `"${song.title}" добавлена в «Мои песни»`);
+  }
+
   async function toggleFavorite(id: string) {
+    const on = !favorites.has(id);
+    await setFavorite(id, on);
     const next = new Set(favorites);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (on) next.add(id); else next.delete(id);
     setFavorites(next);
-    await saveJson(FAVORITES_FILE, [...next]);
   }
 
   async function saveCustomSong(song: SongEntry) {
-    const next = editingSong
-      ? customSongs.map(s => s.id === song.id ? song : s)
-      : [...customSongs, song];
-    setCustomSongs(next);
-    await saveJson(CUSTOM_SONGS_FILE, next);
+    await upsertUserSong(song);
+    await reloadLibrary();
   }
 
-  async function importChordProFile() {
+  async function importChordProFile(multiple = false) {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['text/plain', 'application/octet-stream', '*/*'],
         copyToCacheDirectory: true,
+        multiple,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      if (multiple && result.assets.length > 1) {
+        const batch = await importChordProFilesFromUris(result.assets);
+        await reloadLibrary();
+        Alert.alert(
+          'Импорт',
+          `Добавлено: ${batch.imported}${batch.failed ? `, ошибок: ${batch.failed}` : ''}`,
+        );
+        return;
+      }
+      const asset = result.assets[0];
+      const raw = await FileSystem.readAsStringAsync(asset.uri);
+      const fallbackTitle = asset.name?.replace(/\.(cho|txt|chordpro|pro|md)$/i, '') ?? 'Без названия';
+      const parsed = parseChordProText(raw, fallbackTitle);
+      const song = chordProToSongEntry(parsed, `custom_${Date.now()}`);
+      await upsertUserSong(song);
+      await reloadLibrary();
+      Alert.alert('Импортировано', `"${song.title}" добавлена в библиотеку`);
+    } catch (e) {
+      Alert.alert('Ошибка импорта', String(e));
+    }
+  }
+
+  async function exportLibraryJson() {
+    try {
+      await shareLibraryBackup();
+    } catch (e) {
+      Alert.alert('Экспорт', String(e));
+    }
+  }
+
+  async function importLibraryJson() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'text/plain', '*/*'],
+        copyToCacheDirectory: true,
         multiple: false,
       });
       if (result.canceled || !result.assets?.length) return;
-      const asset = result.assets[0];
-      const raw = await FileSystem.readAsStringAsync(asset.uri);
-
-      // Parse ChordPro / plain-text files.
-      // Supports: {title:}, {artist:}, {key:}, {tempo:}, [Chord] inline markers
-      const lines = raw.split('\n');
-      let title = asset.name.replace(/\.(cho|txt|chordpro|pro)$/i, '') || 'Без названия';
-      let artist = 'Unknown';
-      let key = '';
-      let bpm: number | undefined;
-      const lyricsLines: string[] = [];
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        // Directives: {title: ...}, {t: ...}
-        const titleM = trimmed.match(/^\{(?:title|t):\s*(.+)\}/i);
-        if (titleM) { title = titleM[1].trim(); continue; }
-        const artistM = trimmed.match(/^\{(?:artist|a|subtitle|st):\s*(.+)\}/i);
-        if (artistM) { artist = artistM[1].trim(); continue; }
-        const keyM = trimmed.match(/^\{key:\s*(.+)\}/i);
-        if (keyM) { key = keyM[1].trim(); continue; }
-        const tempoM = trimmed.match(/^\{(?:tempo|bpm):\s*(\d+)\}/i);
-        if (tempoM) { bpm = parseInt(tempoM[1]); continue; }
-        // Skip other directives
-        if (trimmed.startsWith('{') && trimmed.endsWith('}')) continue;
-        // Keep lyric lines (including [Chord] markers)
-        lyricsLines.push(line);
-      }
-
-      // Extract chord names from lyrics for the `chords` field
-      const chordMatches = raw.match(/\[([A-G][^\]]*)\]/g) ?? [];
-      const uniqueChords = [...new Set(chordMatches.map(c => c.replace(/[\[\]]/g, '')))];
-
-      const song: SongEntry = {
-        id: `custom_${Date.now()}`,
-        title,
-        artist,
-        chords: uniqueChords.slice(0, 8).join(' ') || 'C G Am F',
-        key: key || undefined,
-        bpm,
-        difficulty: uniqueChords.length <= 3 ? 1 : uniqueChords.length <= 5 ? 2 : 3,
-        genre: 'Импорт',
-        lyrics: lyricsLines.join('\n').trim(),
-      };
-
-      const next = [...customSongs, song];
-      setCustomSongs(next);
-      await saveJson(CUSTOM_SONGS_FILE, next);
-      Alert.alert('Импортировано', `"${title}" добавлена в библиотеку`);
+      const raw = await FileSystem.readAsStringAsync(result.assets[0].uri);
+      const { imported, skipped } = await importLibraryBackupJson(raw);
+      await reloadLibrary();
+      Alert.alert('Импорт бэкапа', `Добавлено: ${imported}${skipped ? `, пропущено: ${skipped}` : ''}`);
     } catch (e) {
       Alert.alert('Ошибка импорта', String(e));
     }
   }
 
   async function deleteCustomSong(id: string) {
-    const next = customSongs.filter(s => s.id !== id);
-    setCustomSongs(next);
-    await saveJson(CUSTOM_SONGS_FILE, next);
+    await deleteUserSong(id);
     const favNext = new Set(favorites);
     favNext.delete(id);
     setFavorites(favNext);
-    await saveJson(FAVORITES_FILE, [...favNext]);
+    await reloadLibrary();
   }
 
   function openAddSong(existing?: SongEntry) {
@@ -1222,18 +1572,119 @@ export default function ChordsScreen() {
     setShowAddSong(false);
   }
 
-  function pickSong(song: SongEntry) {
-    setPracticeInput(song.chords);
-    parsePracticeInput(song.chords);
+  function openPracticeLibrary(prefill?: string) {
+    if (mode !== 'practice') {
+      if (liveActive) stopLive();
+      if (pitchActive) stopPitchDetection();
+      setMode('practice');
+    }
+    if (prefill?.trim()) setLibSearch(prefill.trim());
+    setShowLibrary(true);
+    if (librarySongs.length === 0) void reloadLibrary();
+  }
+
+  async function pickSong(song: SongEntry) {
+    const provider = providerForSong(song);
+    const persisted = await ensureSongInUserLibrary(song, provider);
+    if (persisted.id !== song.id) await reloadLibrary();
+    const resolved = await loadSongForPractice(persisted);
+    setPracticeSong(resolved);
+    setOnDemandAttribution(null);
+    setPracticeContentHint(null);
+    setPracticeFetchHint(null);
+    setAutoChordFetchDone(false);
+    setPracticeInput(resolved.chords?.trim() || 'C G Am F');
+    parsePracticeInput(resolved.chords?.trim() || 'C G Am F');
     setPracticeChordIdx(0);
-    setLyricsEditMode(false); // always show view mode after picking
+    setLyricsEditMode(false);
     setShowLibrary(false);
-    if (song.lyrics) {
-      setPracticeLyrics(song.lyrics);
+    if (hasAnnotatedLyrics(resolved.lyrics)) {
+      setPracticeLyrics(resolved.lyrics!);
+      setAutoChordFetchDone(true);
+    } else if (needsOnDemandChordFetch(resolved)) {
+      setPracticeLyrics('');
+      setPracticeContentHint(PROGRESSION_ONLY_HINT);
+      void runAutoChordEnrichment(resolved);
+    } else if (resolved.lyrics?.trim()) {
+      setPracticeLyrics(resolved.lyrics);
+      setAutoChordFetchDone(true);
     } else {
       setPracticeLyrics('');
-      fetchLyrics(song.artist, song.title);
+      setAutoChordFetchDone(true);
+      void fetchLyrics(resolved.artist, resolved.title);
     }
+  }
+
+  async function runOnDemandChordFetch(
+    provider: OnDemandChordProviderId,
+    options?: { silent?: boolean },
+  ) {
+    const base = practiceSong;
+    if (!base || chordFetchLoading) return;
+    setChordFetchLoading(true);
+    try {
+      const detail =
+        provider === 'amdm'
+          ? await fetchAmdmChordSheet(base.artist, base.title)
+          : await fetchUltimateGuitarChordSheet(base.artist, base.title);
+      const persisted = await ensureSongInUserLibrary(detail, provider);
+      await upsertUserSong(persisted);
+      await reloadLibrary();
+      setOnDemandAttribution(detail.attribution ?? null);
+      const full = await loadSongForPractice(persisted);
+      setPracticeSong(full);
+      setPracticeInput(full.chords?.trim() || 'C G Am F');
+      parsePracticeInput(full.chords?.trim() || 'C G Am F');
+      setPracticeChordIdx(0);
+      if (hasAnnotatedLyrics(full.lyrics)) {
+        setPracticeLyrics(full.lyrics!);
+        setPracticeContentHint(null);
+        setPracticeFetchHint(null);
+      }
+      setAutoChordFetchDone(true);
+      setTimeout(() => {
+        lyricsScrollRef.current?.scrollTo({ y: 0, animated: true });
+      }, 350);
+    } catch (e) {
+      if (__DEV__) console.warn('[RecoTune] on-demand chord fetch', e);
+      if (!options?.silent) {
+        const msg = e instanceof ChordFetchError
+          ? e.message
+          : 'Не удалось загрузить аккорды';
+        setPracticeFetchHint(msg.length > 72 ? `${msg.slice(0, 72)}…` : msg);
+      }
+    } finally {
+      setChordFetchLoading(false);
+    }
+  }
+
+  function openOnDemandChordFetchManual() {
+    if (!practiceSong || !needsOnDemandChordFetch(practiceSong)) return;
+    void (async () => {
+      const settings = await getProviderSettings();
+      const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
+      const providers: OnDemandChordProviderId[] = [];
+      if (settings.enabled.amdm && proxyUrl) providers.push('amdm');
+      if (settings.enabled.ultimate_guitar && proxyUrl) providers.push('ultimate_guitar');
+      if (providers.length === 0) {
+        setPracticeFetchHint(practiceFetchHintForSettings(settings) ?? 'Табы онлайн: укажите сервер в .env или dev-proxy');
+        void openProviderSettings();
+        return;
+      }
+      if (providers.length === 1) {
+        void runOnDemandChordFetch(providers[0]);
+        return;
+      }
+      Alert.alert(
+        'Подгрузить таб',
+        `${practiceSong.artist} — ${practiceSong.title}`,
+        [
+          { text: 'Таб из интернета', onPress: () => void runOnDemandChordFetch('amdm') },
+          { text: 'Доп. источник (скоро)', onPress: () => void runOnDemandChordFetch('ultimate_guitar') },
+          { text: 'Отмена', style: 'cancel' },
+        ],
+      );
+    })();
   }
 
   function parsePracticeInput(text: string) {
@@ -1365,7 +1816,9 @@ export default function ChordsScreen() {
       ]}>
       {/* ── Header ── */}
       <View style={styles.header}>
-        <Text style={styles.title}>CHORDS</Text>
+        <View>
+          <Text style={styles.title}>CHORDS</Text>
+        </View>
         <View style={styles.modePills}>
           {(['live','practice','identify'] as Mode[]).map(m => {
             const labels: Record<Mode,string>   = { live:'LIVE', practice:'ПРАКТИКА', identify:'НАЙТИ' };
@@ -1383,6 +1836,11 @@ export default function ChordsScreen() {
           })}
         </View>
       </View>
+      {catalogUpgradeToast ? (
+        <View style={{ backgroundColor: '#00e67622', paddingHorizontal: 12, paddingVertical: 8, marginBottom: 6, borderRadius: 8, marginHorizontal: 4 }}>
+          <Text style={{ color: '#00e676', fontSize: 12, fontWeight: '600' }}>{catalogUpgradeToast}</Text>
+        </View>
+      ) : null}
 
       {/* ── LIVE MODE ── */}
       {mode === 'live' && (
@@ -1485,7 +1943,7 @@ export default function ChordsScreen() {
             <View style={styles.practiceBarRow}>
               <TouchableOpacity
                 style={styles.practiceBarBtnLib}
-                onPress={() => setShowLibrary(true)}
+                onPress={() => openPracticeLibrary()}
                 activeOpacity={0.75}
                 accessibilityRole="button"
                 accessibilityLabel="База песен"
@@ -1496,6 +1954,15 @@ export default function ChordsScreen() {
                     ? practiceInput.split(/\s+/).slice(0, 4).join(' ') + (practiceInput.split(/\s+/).length > 4 ? '…' : '')
                     : 'База песен'}
                 </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.practiceBarBtnIcon}
+                onPress={() => { void openProviderSettings(); }}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Источники песен"
+              >
+                <Ionicons name="settings-outline" size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.practiceBarBtnIcon, showPracticePanel && styles.practiceBarBtnIconActive]}
@@ -1573,7 +2040,9 @@ export default function ChordsScreen() {
                         : styles.practiceDiagRightGrow
                     }
                   >
-                    <Text style={styles.practiceChordName}>{practiceCurrentChord === '—' ? '← выберите' : practiceCurrentChord}</Text>
+                    <TouchableOpacity onPress={() => openPracticeLibrary()} activeOpacity={0.75} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                      <Text style={styles.practiceChordName}>{practiceCurrentChord === '—' ? '← выберите' : practiceCurrentChord}</Text>
+                    </TouchableOpacity>
                     <View style={styles.chordTonesRowCompact}>
                       {chordTones.length > 0
                         ? chordTones.map((n, i) => (
@@ -1581,7 +2050,11 @@ export default function ChordsScreen() {
                               <Text style={[styles.chordToneTextSm, n === voiceNoteBase && { color: '#00e676' }]}>{n}</Text>
                             </View>
                           ))
-                        : <Text style={styles.chordTonesEmpty}>{practiceChords.length === 0 ? 'БАЗА → выберите песню' : ''}</Text>
+                        : (
+                          <TouchableOpacity onPress={() => openPracticeLibrary()} activeOpacity={0.75}>
+                            <Text style={styles.chordTonesEmpty}>БАЗА → выберите песню</Text>
+                          </TouchableOpacity>
+                        )
                       }
                     </View>
                     <View style={styles.diagVoiceRow}>
@@ -1658,6 +2131,17 @@ export default function ChordsScreen() {
                       color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
                   </TouchableOpacity>
                 </View>
+                {practiceFetchHint ? (
+                  <Text style={styles.practiceFetchHint} numberOfLines={2}>
+                    {practiceFetchHint}
+                  </Text>
+                ) : null}
+                {chordFetchLoading && !practiceLyrics ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 }}>
+                    <ActivityIndicator size="small" color="#7c4dff" />
+                    <Text style={{ color: '#666', fontSize: 10 }}>Подбор текста и таба…</Text>
+                  </View>
+                ) : null}
               </View>
               </ScrollView>
             )}
@@ -1790,12 +2274,34 @@ export default function ChordsScreen() {
               contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 28 }}
               showsVerticalScrollIndicator={false}>
               <Ionicons name="musical-notes-outline" size={36} color="#3a3a55" />
-              <Text style={[styles.lyricsEmptyText, { marginTop: 12 }]}>Текст с аккордами</Text>
-              <Text style={styles.lyricsEmptyHint}>
-                Выберите песню из БАЗЫ (кнопка выше).{'\n'}
-                Нажмите карандаш чтобы вставить текст.{'\n\n'}
-                Формат: [Am]Слово [F]другое
+              <Text style={[styles.lyricsEmptyText, { marginTop: 12 }]}>
+                {practiceContentHint ? 'Нет строк с аккордами' : 'Текст с аккордами'}
               </Text>
+              <Text style={styles.lyricsEmptyHint} numberOfLines={4}>
+                {practiceContentHint ?? (
+                  'Выберите песню из БАЗЫ или вставьте текст (ред.).\nФормат: [Am]Слово [F]другое'
+                )}
+              </Text>
+              {onDemandAttribution ? (
+                <Text style={{ color: '#666', fontSize: 10, textAlign: 'center', marginTop: 8, paddingHorizontal: 12 }}>
+                  {onDemandAttribution.label}
+                  {onDemandAttribution.licenseNote ? ` · ${onDemandAttribution.licenseNote}` : ''}
+                </Text>
+              ) : null}
+              {practiceSong && needsOnDemandChordFetch(practiceSong) && autoChordFetchDone && !chordFetchLoading ? (
+                <TouchableOpacity
+                  style={[styles.lyricsEmptyBtn, { marginTop: 12, backgroundColor: '#1565c0' }]}
+                  onPress={openOnDemandChordFetchManual}
+                  disabled={chordFetchLoading}
+                >
+                  {chordFetchLoading ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Ionicons name="cloud-download-outline" size={16} color="#fff" />
+                  )}
+                  <Text style={styles.lyricsEmptyBtnText}>Подгрузить таб</Text>
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity style={styles.lyricsEmptyBtn} onPress={() => setLyricsEditMode(true)}>
                 <Ionicons name="create-outline" size={16} color="#fff" />
                 <Text style={styles.lyricsEmptyBtnText}>Добавить текст</Text>
@@ -1868,6 +2374,11 @@ export default function ChordsScreen() {
                     {libraryMatch ? 'В практику с аккордами' : 'В практику'}
                   </Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#00e67618', borderColor: '#00e67655' }]}
+                  onPress={() => { void saveIdentifyToLibrary(); }}>
+                  <Ionicons name="bookmark-outline" size={16} color="#00e676" />
+                  <Text style={[styles.chordsBtnText, { color: '#00e676' }]}>Сохранить в библиотеку</Text>
+                </TouchableOpacity>
               </View>
 
               <View style={styles.resultDivider} />
@@ -1877,7 +2388,7 @@ export default function ChordsScreen() {
                 <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
                 {lyricsSource && !lyricsLoading && (
                   <Text style={styles.lyricsSourceTag}>
-                    {lyricsSource === 'library' ? 'каталог' : lyricsSource === 'audd' ? 'AudD' : 'lyrics.ovh'}
+                    {lyricsSource === 'library' ? 'каталог' : 'lyrics.ovh'}
                   </Text>
                 )}
               </View>
@@ -1886,7 +2397,7 @@ export default function ChordsScreen() {
               ) : lyrics ? (
                 <Text style={styles.resultLyricsText}>{lyrics}</Text>
               ) : (
-                <Text style={styles.identifyLyricsEmpty}>Текст не найден (AudD / lyrics.ovh)</Text>
+                <Text style={styles.identifyLyricsEmpty}>Текст не найден (каталог / lyrics.ovh)</Text>
               )}
 
               <View style={{ height: 40 }} />
@@ -1898,10 +2409,10 @@ export default function ChordsScreen() {
               {/* Source tabs */}
               <View style={styles.identTabRow}>
                 {([
-                  ['mic',    'ear',          'Слушать',  '#7c4dff'],
-                  ['file',   'document',     'Файл',     '#ff9800'],
-                  ['yt',     'logo-youtube', 'YouTube',  '#ff0000'],
-                  ['manual', 'create',       'Вручную',  '#00e676'],
+                  ['mic',     'ear',          'Запись',   '#7c4dff'],
+                  ['file',    'document',     'Файл',     '#ff9800'],
+                  ['yt',      'logo-youtube', 'YouTube',  '#ff0000'],
+                  ['manual',  'create',       'Вручную',  '#888'],
                 ] as const).map(([src, icon, label, accent]) => (
                   <TouchableOpacity key={src}
                     style={[styles.identTab, identSource === src && { backgroundColor: accent + '22', borderColor: accent + '88' }]}
@@ -1918,8 +2429,8 @@ export default function ChordsScreen() {
                 {identSource === 'mic' && (
                   <>
                     <Ionicons name="ear-outline" size={64} color="#7c4dff33" />
-                    <Text style={styles.identActionTitle}>Распознать по звуку</Text>
-                    <Text style={styles.identActionSub}>Поднесите телефон к колонке.{'\n'}Запись 10 с → AudD (~100 запросов/день)</Text>
+                    <Text style={styles.identActionTitle}>Запись для распознавания</Text>
+                    <Text style={styles.identActionSub}>10 с → сохранение на устройстве.{'\n'}Облачный AudD отключён; сопоставление по звуку — позже.</Text>
                     {isRecognizing ? (
                       <View style={styles.recProgressBig}>
                         <ActivityIndicator color="#7c4dff" size="large" />
@@ -1942,7 +2453,7 @@ export default function ChordsScreen() {
                   <>
                     <Ionicons name="musical-note-outline" size={64} color="#ff980033" />
                     <Text style={styles.identActionTitle}>Распознать из файла</Text>
-                    <Text style={styles.identActionSub}>MP3, AAC, WAV с устройства.{'\n'}Отправляется в AudD для анализа.</Text>
+                    <Text style={styles.identActionSub}>MP3, AAC, WAV — копия сохраняется локально.{'\n'}Поиск по метаданным каталога (без облака).</Text>
                     {fileLoading ? (
                       <View style={styles.recProgressBig}>
                         <ActivityIndicator color="#ff9800" size="large" />
@@ -1984,7 +2495,10 @@ export default function ChordsScreen() {
                   <>
                     <Ionicons name="search-outline" size={64} color="#00e67633" />
                     <Text style={styles.identActionTitle}>Поиск вручную</Text>
-                    <Text style={styles.identActionSub}>Введите исполнителя и название —{'\n'}найдём текст песни.</Text>
+                    <Text style={styles.identActionSub}>
+                      Только текст (lyrics.ovh) и сопоставление с базой.{'\n'}
+                      Поиск песен с аккордами — «База песен» в Практике.
+                    </Text>
                     <TextInput style={[styles.urlInput, { width: '100%', marginBottom: 10 }]}
                       placeholder="Исполнитель (напр. The Beatles)"
                       placeholderTextColor="#333" value={manualArtist} onChangeText={setManualArtist}
@@ -2001,7 +2515,7 @@ export default function ChordsScreen() {
                   </>
                 )}
 
-                <Text style={styles.identFooter}>lyrics.ovh · AudD</Text>
+                <Text style={styles.identFooter}>база офлайн · lyrics.ovh · ChordPro</Text>
               </View>
             </>
           )}
@@ -2120,23 +2634,38 @@ export default function ChordsScreen() {
 
       {/* ── Song Library Modal ── */}
       <Modal visible={showLibrary} animationType="slide" onRequestClose={() => setShowLibrary(false)}>
-        <View style={[styles.libModal, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
+          <View style={styles.libModalChrome}>
           {/* Header */}
           <View style={styles.libHeader}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.libHeaderTitleBlock}>
               <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
-              <Text style={styles.libSubtitle}>{allSongs.length} песен ({customSongs.length} своих)</Text>
+              <Text style={styles.libSubtitle} numberOfLines={1}>
+                {allSongs.length} песен ({userSongCount} своих)
+              </Text>
+              {libraryInitError ? (
+                <Text style={{ color: '#ff6b6b', fontSize: 11, marginTop: 6 }} numberOfLines={2}>
+                  {formatMetadataSyncError(new Error(libraryInitError))}
+                </Text>
+              ) : null}
             </View>
-            <TouchableOpacity onPress={importChordProFile}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#00e67618', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 7, borderWidth: 1, borderColor: '#00e67644', marginRight: 6 }}>
-              <Ionicons name="document-text-outline" size={15} color="#00e676" />
-              <Text style={{ color: '#00e676', fontSize: 10, fontWeight: '700' }}>ИМПОРТ</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => openAddSong()}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#7c4dff22', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: '#7c4dff44', marginRight: 8 }}>
-              <Ionicons name="add-circle-outline" size={16} color="#7c4dff" />
-              <Text style={{ color: '#7c4dff', fontSize: 11, fontWeight: '700' }}>ДОБАВИТЬ</Text>
-            </TouchableOpacity>
+            <View style={styles.libHeaderActions}>
+              <TouchableOpacity onPress={() => { void openProviderSettings(); }} style={styles.libHeaderIconBtn}
+                accessibilityLabel="Источники песен">
+                <Ionicons name="settings-outline" size={22} color="#7c4dff" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { void importChordProFile(true); }} style={styles.libHeaderImportBtn}>
+                <Ionicons name="document-text-outline" size={15} color="#00e676" />
+                <Text style={{ color: '#00e676', fontSize: 10, fontWeight: '700' }}>ИМПОРТ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { void exportLibraryJson(); }} style={styles.libHeaderIconBtn}>
+                <Ionicons name="share-outline" size={20} color="#888" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => openAddSong()} style={styles.libHeaderAddBtn}>
+                <Ionicons name="add-circle-outline" size={16} color="#7c4dff" />
+                <Text style={{ color: '#7c4dff', fontSize: 11, fontWeight: '700' }}>ДОБАВИТЬ</Text>
+              </TouchableOpacity>
+            </View>
             <TouchableOpacity onPress={() => setShowLibrary(false)} style={styles.libClose}>
               <Ionicons name="close" size={24} color="#888" />
             </TouchableOpacity>
@@ -2153,6 +2682,9 @@ export default function ChordsScreen() {
               onChangeText={setLibSearch}
               autoCorrect={false}
             />
+            {libSearchBusy ? (
+              <ActivityIndicator size="small" color="#7c4dff" style={{ marginRight: 8 }} />
+            ) : null}
             {libSearch ? (
               <TouchableOpacity onPress={() => setLibSearch('')} style={{ padding: 8 }}>
                 <Ionicons name="close-circle" size={16} color="#444" />
@@ -2211,16 +2743,29 @@ export default function ChordsScreen() {
             </View>
             <Text style={styles.libCount}>{libResults.length} из {allSongs.length}</Text>
           </View>
+          </View>
 
           {/* Song list */}
           <FlatList
+            style={styles.libList}
             data={libResults}
             keyExtractor={item => item.id}
-            contentContainerStyle={{ paddingBottom: 30 }}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={libResults.length === 0 ? styles.libListEmptyContent : styles.libListContent}
+            ListEmptyComponent={
+              libSearch.trim() ? (
+                <Text style={styles.identEmptyHint}>
+                  {allSongs.length === 0
+                    ? 'Каталог ещё загружается… Подождите секунду и повторите.'
+                    : 'Ничего не найдено по запросу. Проверьте написание или фильтры.'}
+                </Text>
+              ) : null
+            }
             renderItem={({ item }) => {
               const diffColor = item.difficulty === 1 ? '#00e676' : item.difficulty === 2 ? '#ffeb3b' : '#ff5252';
               const isFav = favorites.has(item.id);
               const isCustom = item.id.startsWith('custom_');
+              const resolved = resolveSongEntry(item);
               return (
                 <TouchableOpacity style={styles.libItem} onPress={() => pickSong(item)} activeOpacity={0.7}>
                   <View style={[styles.libItemDot, { backgroundColor: diffColor }]} />
@@ -2233,7 +2778,9 @@ export default function ChordsScreen() {
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
                   </View>
                   <View style={styles.libItemRight}>
-                    {item.lyrics ? <Text style={styles.libItemHasLyrics}>♪ текст</Text> : null}
+                    {hasAnnotatedLyrics(resolved.lyrics) || resolved.lyrics?.trim() ? (
+                      <Text style={styles.libItemHasLyrics}>♪ текст</Text>
+                    ) : null}
                     <Text style={styles.libItemGenre}>{item.genre}</Text>
                     {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
                     {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
@@ -2267,16 +2814,206 @@ export default function ChordsScreen() {
         </View>
       </Modal>
 
+      {/* ── Provider settings ── */}
+      <Modal visible={showProviderSettings} animationType="fade" transparent onRequestClose={() => setShowProviderSettings(false)}>
+        <View style={{ flex: 1, backgroundColor: '#000c', justifyContent: 'flex-end' }}>
+          <View style={{
+            backgroundColor: '#12121a',
+            borderTopLeftRadius: 16,
+            borderTopRightRadius: 16,
+            maxHeight: '85%',
+            minHeight: 120,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', flex: 1 }}>Подгрузка табов</Text>
+              <TouchableOpacity onPress={() => setShowProviderSettings(false)}>
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={{ maxHeight: Math.round(windowH * 0.72) }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 16 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
+            <Text style={{ color: '#666', fontSize: 11, marginBottom: 10 }}>
+              Каталог и «Мои» — офлайн. Полный таб — «Табы онлайн» (ваш Vercel API или dev-proxy на ПК).
+            </Text>
+            {providerSettings && (
+              <>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                  onPress={() => {
+                    const next = {
+                      ...providerSettings,
+                      enabled: { ...providerSettings.enabled, amdm: !providerSettings.enabled.amdm },
+                    };
+                    void persistProviderSettings(next);
+                  }}
+                >
+                  <Ionicons
+                    name={providerSettings.enabled.amdm ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={PROVIDER_BADGE_COLORS.amdm}
+                  />
+                  <Text style={{ color: '#ddd', marginLeft: 10, flex: 1 }}>Табы онлайн</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28', opacity: 0.45 }}
+                  disabled
+                >
+                  <Ionicons name="square-outline" size={22} color={PROVIDER_BADGE_COLORS.ultimate_guitar} />
+                  <Text style={{ color: '#ddd', marginLeft: 10, flex: 1 }}>Доп. источник (скоро)</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                  onPress={() => {
+                    const next = {
+                      ...providerSettings,
+                      enabled: { ...providerSettings.enabled, lyrics: !providerSettings.enabled.lyrics },
+                    };
+                    void persistProviderSettings(next);
+                  }}
+                >
+                  <Ionicons
+                    name={providerSettings.enabled.lyrics !== false ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={PROVIDER_BADGE_COLORS.lyrics}
+                  />
+                  <Text style={{ color: '#ddd', marginLeft: 10, flex: 1 }}>Текст онлайн</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            {providerSettings && (
+              <>
+                <Text style={{ color: '#888', fontSize: 11, marginTop: 14, marginBottom: 6 }}>ChordPro raw URL</Text>
+                <TextInput
+                  style={[styles.urlInput, { marginBottom: 8 }]}
+                  placeholder="https://gist.githubusercontent.com/.../song.cho"
+                  placeholderTextColor="#333"
+                  value={providerSettings.chordProUrl}
+                  onChangeText={v => setProviderSettings(s => s ? { ...s, chordProUrl: v } : s)}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Text style={{ color: '#888', fontSize: 11, marginTop: 8, marginBottom: 6 }}>
+                  Сервер каталога метаданных (GET …/metadata/batch). Пусто = встроенные MusicBrainz chunks
+                </Text>
+                <TextInput
+                  style={[styles.urlInput, { marginBottom: 8 }]}
+                  placeholder="http://192.168.x.x:8790"
+                  placeholderTextColor="#333"
+                  value={providerSettings.metadataSyncBaseUrl}
+                  onChangeText={v => setProviderSettings(s => s ? { ...s, metadataSyncBaseUrl: v } : s)}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  style={[styles.identBtnBig, { backgroundColor: '#00e67633', marginBottom: 8 }]}
+                  onPress={() => {
+                    if (!providerSettings) return;
+                    const next = { ...providerSettings, metadataFullIndexOffline: true };
+                    setProviderSettings(next);
+                    void saveProviderSettings(next).then(() => {
+                      startBackgroundIndex(p => setMetadataSyncProgress(p));
+                    });
+                  }}
+                >
+                  <Text style={styles.identBtnBigText}>Скачать полный индекс офлайн</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.identBtnBig, { backgroundColor: '#44444455', marginBottom: 8 }]}
+                  onPress={() => {
+                    void syncAllMetadata(p => setMetadataSyncProgress(p))
+                      .then(async () => {
+                        setMetadataTrackCount(await getMetadataTrackCount());
+                        await reloadLibrary();
+                      })
+                      .catch(() => {});
+                  }}
+                >
+                  <Text style={styles.identBtnBigText}>Синхронизировать каталог (сервер URL)</Text>
+                </TouchableOpacity>
+                {providerSettings?.metadataFullIndexOffline ? (
+                  <Text style={{ color: '#00e676', fontSize: 11, marginBottom: 8 }}>
+                    Офлайн-индекс включён — фоновая загрузка в SQLite
+                  </Text>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.identBtnBig, { backgroundColor: '#7c4dff55', marginBottom: 8 }]}
+                  onPress={() => {
+                    if (!providerSettings) return;
+                    const next: ProviderSettings = {
+                      ...providerSettings,
+                      devProxyUrlHintDismissed: true,
+                    };
+                    void persistProviderSettings(next);
+                  }}
+                >
+                  <Text style={styles.identBtnBigText}>Сохранить настройки</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.identBtnBig, { backgroundColor: '#ff980022', marginBottom: 8 }]}
+                  disabled={providerSettings?.legacyArchiveImported}
+                  onPress={() => {
+                    if (!providerSettings) return;
+                    Alert.alert(
+                      'Архивный каталог (536)',
+                      'Старый встроенный список с черновыми текстами. Восстановить в SQLite для офлайн-поиска по прогрессиям?',
+                      [
+                        { text: 'Отмена', style: 'cancel' },
+                        {
+                          text: 'Импортировать',
+                          onPress: () => {
+                            void (async () => {
+                              try {
+                                const { imported } = await importLegacyArchiveCatalog();
+                                const next = { ...providerSettings, legacyArchiveImported: true };
+                                await saveProviderSettings(next);
+                                setProviderSettings(next);
+                                await reloadLibrary();
+                                Alert.alert('Готово', `Импортировано ${imported} песен из архива.`);
+                              } catch (e) {
+                                Alert.alert('Ошибка', String(e));
+                              }
+                            })();
+                          },
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <Text style={styles.identBtnBigText}>
+                    {providerSettings?.legacyArchiveImported
+                      ? 'Архив 536 уже импортирован'
+                      : 'Импорт архивного каталога (536)'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ paddingVertical: 10 }}
+                  onPress={() => { void importLibraryJson(); }}
+                >
+                  <Text style={{ color: '#00e676', fontWeight: '700' }}>Импорт JSON-бэкапа библиотеки</Text>
+                </TouchableOpacity>
+              </>
+            )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Add / Edit Song Modal ── */}
       <Modal visible={showAddSong} animationType="slide" onRequestClose={() => setShowAddSong(false)}>
-        <View style={[styles.libModal, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.libHeader}>
-            <Text style={styles.libTitle}>{editingSong ? 'РЕДАКТИРОВАТЬ' : 'ДОБАВИТЬ ПЕСНЮ'}</Text>
+            <Text style={[styles.libTitle, { flex: 1, minWidth: 0 }]}>{editingSong ? 'РЕДАКТИРОВАТЬ' : 'ДОБАВИТЬ ПЕСНЮ'}</Text>
             <TouchableOpacity onPress={() => setShowAddSong(false)} style={styles.libClose}>
               <Ionicons name="close" size={24} color="#888" />
             </TouchableOpacity>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 40 }}
+          <ScrollView
+            style={styles.libFormScroll}
+            contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 24 }}
             keyboardShouldPersistTaps="handled">
 
             {/* Title */}
@@ -2407,9 +3144,9 @@ export default function ChordsScreen() {
       </Modal>
 
       <Modal visible={showBasicChordsModal} animationType="slide" onRequestClose={() => setShowBasicChordsModal(false)}>
-        <View style={[styles.libModal, { paddingTop: insets.top + 8 }]}>
+        <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.libHeader}>
-            <View style={{ flex: 1 }}>
+            <View style={styles.libHeaderTitleBlock}>
               <Text style={styles.libTitle}>ОСНОВНЫЕ АККОРДЫ</Text>
               <Text style={styles.libSubtitle}>{currentInstrumentLabel} · схемы как в практике</Text>
             </View>
@@ -2418,7 +3155,7 @@ export default function ChordsScreen() {
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            style={{ maxHeight: 44, borderBottomWidth: 1, borderColor: '#1e1e28' }}
+            style={[styles.libGenreScroll, { borderBottomWidth: 1, borderColor: '#1e1e28' }]}
             contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingVertical: 8, alignItems: 'center' }}>
             {CHORD_DIAGRAM_OPTIONS.map(opt => (
               <TouchableOpacity
@@ -2485,6 +3222,7 @@ const styles = StyleSheet.create({
   mainScreenColumn: { flex: 1, minHeight: 0, flexDirection: 'column' },
   header:     { flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 8 },
   title:      { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600' },
+  devBuildLabel: { color: '#00e676', fontSize: 9, fontWeight: '700', marginTop: 2, letterSpacing: 0.5 },
   modePills:  { flexDirection: 'row', gap: 5 },
   pill:       { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: '#333' },
   pillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
@@ -2764,6 +3502,14 @@ const styles = StyleSheet.create({
     borderTopColor: '#1e1e28',
     backgroundColor: '#0d0d14',
   },
+  practiceFetchHint: {
+    color: '#888',
+    fontSize: 10,
+    textAlign: 'center',
+    paddingHorizontal: 10,
+    paddingBottom: 4,
+    lineHeight: 14,
+  },
   practiceChordNavArrow: { paddingHorizontal: 4, paddingVertical: 4 },
   practiceChordPillsScroll: { flex: 1 },
   practiceChordPillsRow: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 2, paddingVertical: 2 },
@@ -2899,7 +3645,110 @@ const styles = StyleSheet.create({
   identTabRow:  { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#1e1e28', backgroundColor: '#0d0d14' },
   identTab:     { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 10, borderRightWidth: 1, borderColor: '#1e1e28', borderWidth: 1, borderTopWidth: 0, borderBottomWidth: 0, borderLeftWidth: 0 },
   identTabText: { color: '#444', fontSize: 10, fontWeight: '700' },
-  identActionArea:  { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 24, paddingBottom: 20 },
+  identActionArea:  { flex: 1, alignItems: 'stretch', justifyContent: 'flex-start', gap: 14, paddingHorizontal: 0, paddingBottom: 20, minWidth: 0 },
+  identCatalogPanel: {
+    flexShrink: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingTop: 24,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  catalogHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%', minWidth: 0 },
+  catalogHeaderTitle: { flex: 1, flexShrink: 1, minWidth: 0, textAlign: 'left', fontSize: 17 },
+  catalogStatusPill: { flexShrink: 0, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  catalogStatusReady: { backgroundColor: '#00e67618', borderColor: '#00e67655' },
+  catalogStatusLoading: { backgroundColor: '#ff980018', borderColor: '#ff980055' },
+  catalogStatusText: { fontSize: 11, fontWeight: '800', color: '#ccc' },
+  catalogSubtitleOne: { color: '#555', fontSize: 12, lineHeight: 17, width: '100%' },
+  catalogProgressWrap: { width: '100%', gap: 6 },
+  catalogProgressTrack: { height: 4, backgroundColor: '#1e1e28', borderRadius: 2, overflow: 'hidden' },
+  catalogProgressFill: { height: 4, backgroundColor: '#7c4dff', borderRadius: 2 },
+  catalogProgressLabel: { color: '#7c4dff', fontSize: 11, fontWeight: '600' },
+  catalogErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    backgroundColor: '#ff525218',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ff525244',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  catalogErrorText: { flex: 1, color: '#ff8a80', fontSize: 12, lineHeight: 16 },
+  catalogRetryBtn: {
+    backgroundColor: '#ff525233',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ff525266',
+  },
+  catalogRetryText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  catalogSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    width: '100%',
+    maxWidth: '100%',
+    backgroundColor: '#12121c',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2a2a3a',
+    minHeight: 48,
+    overflow: 'hidden',
+  },
+  catalogSearchInput: {
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    color: '#eee',
+    fontSize: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+  },
+  catalogClearBtn: { flexShrink: 0, paddingRight: 10, paddingLeft: 4 },
+  catalogBusyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 16, justifyContent: 'center' },
+  catalogBusyText: { color: '#888', fontSize: 13, fontWeight: '600' },
+  catalogResultsScroll: { width: '100%', flex: 1, minHeight: 0 },
+  catalogHitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a24',
+  },
+  catalogHitMain: { flex: 1, minWidth: 0 },
+  catalogHitTitle: { color: '#f0f0f0', fontSize: 15, fontWeight: '800' },
+  catalogHitArtist: { color: '#777', fontSize: 13, marginTop: 2 },
+  catalogHitBadge: {
+    fontSize: 10,
+    fontWeight: '800',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  catalogEmptyBox: { alignItems: 'center', paddingVertical: 28, paddingHorizontal: 16, gap: 8 },
+  catalogEmptyTitle: { color: '#aaa', fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  catalogEmptyHint: { color: '#555', fontSize: 12, textAlign: 'center' },
+  catalogExampleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 4 },
+  catalogExampleChip: {
+    backgroundColor: '#1a1a24',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#00e67644',
+  },
+  catalogExampleChipText: { color: '#00e676', fontSize: 12, fontWeight: '700' },
   identActionTitle: { color: '#ccc', fontSize: 18, fontWeight: '800', textAlign: 'center' },
   identActionSub:   { color: '#444', fontSize: 12, textAlign: 'center', lineHeight: 18 },
   identBtnBig:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 28, paddingVertical: 16, borderRadius: 16, backgroundColor: '#7c4dff88' },
@@ -2907,6 +3756,10 @@ const styles = StyleSheet.create({
   recProgressBig:   { alignItems: 'center', gap: 12 },
   recSecsBig:       { color: '#7c4dff', fontSize: 28, fontWeight: '900' },
   identFooter:      { color: '#222', fontSize: 10, textAlign: 'center', position: 'absolute', bottom: 8 },
+  identCatalogHit:  { paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#1e1e28' },
+  identCatalogHitTitle: { color: '#eee', fontSize: 14, fontWeight: '700' },
+  identCatalogHitArtist: { color: '#666', fontSize: 12, marginTop: 2 },
+  identEmptyHint: { color: '#888', fontSize: 12, textAlign: 'center', padding: 16 },
 
   /* Identify mode — full-screen result */
   resultPage:       { padding: 16, gap: 6 },
@@ -2950,20 +3803,74 @@ const styles = StyleSheet.create({
   libBtnText:  { color: '#7c4dff', fontSize: 9, fontWeight: '800' },
 
   /* Song Library Modal */
-  libModal:    { flex: 1, backgroundColor: '#0a0a0f' },
-  libHeader:   { paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: 1, borderColor: '#1e1e28' },
+  libModal:    { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f' },
+  libModalChrome: { flexShrink: 0 },
+  libHeader:   {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    flexShrink: 0,
+    paddingHorizontal: 16,
+    paddingTop: 2,
+    paddingRight: 44,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderColor: '#1e1e28',
+    gap: 6,
+  },
+  libHeaderTitleBlock: { flex: 1, minWidth: 140 },
+  libHeaderActions: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
+  libHeaderIconBtn: { padding: 8 },
+  libHeaderImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#00e67618',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: '#00e67644',
+  },
+  libHeaderAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#7c4dff22',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: '#7c4dff44',
+  },
   libTitle:    { color: '#7c4dff', fontSize: 13, fontWeight: '900', letterSpacing: 3 },
   libSubtitle: { color: '#333', fontSize: 11, marginTop: 2, marginBottom: 2 },
-  libClose:    { position: 'absolute', right: 12, top: 0 },
+  libClose:    { position: 'absolute', right: 12, top: 2 },
 
-  libSearchRow:  { flexDirection: 'row', alignItems: 'center', margin: 12, backgroundColor: '#111118', borderRadius: 12, borderWidth: 1, borderColor: '#1e1e28' },
-  libSearchInput:{ flex: 1, color: '#ccc', fontSize: 14, padding: 10 },
+  libSearchRow:  {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 4,
+    minWidth: 0,
+    backgroundColor: '#111118',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e1e28',
+  },
+  libSearchInput:{ flex: 1, minWidth: 0, color: '#ccc', fontSize: 14, paddingVertical: 10, paddingHorizontal: 8 },
   libGenreScroll:{ flexShrink: 0, maxHeight: 42 },
   libGenrePill:  { paddingHorizontal: 12, paddingVertical: 5, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
   libGenrePillActive: { backgroundColor: '#7c4dff', borderColor: '#7c4dff' },
   libGenreText:  { color: '#555', fontSize: 11, fontWeight: '600' },
 
-  libLegend:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 4 },
+  libLegend:   { flexShrink: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 4 },
+  libList:     { flex: 1, minHeight: 0 },
+  libListContent: { paddingBottom: 24 },
+  libListEmptyContent: { flexGrow: 1, paddingBottom: 24 },
+  libFormScroll: { flex: 1, minHeight: 0 },
   libDot:      { fontSize: 10 },
   libLegText:  { color: '#444', fontSize: 10, marginRight: 6 },
   libCount:    { color: '#333', fontSize: 10 },

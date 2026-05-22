@@ -16,6 +16,7 @@ import MelodyScreen from './src/screens/MelodyScreen';
 import MediaScreen from './src/screens/MediaScreen';
 import AILabScreen from './src/screens/AILabScreen';
 import { initMediaRemoteControls } from './src/utils/mediaRemoteControls';
+import { initSongLibrary } from './src/services/initSongLibrary';
 
 const Tab = createBottomTabNavigator();
 
@@ -32,6 +33,9 @@ function AppInner() {
 
   React.useEffect(() => {
     initMediaRemoteControls();
+    initSongLibrary().catch((err) => {
+      if (__DEV__) console.warn('[RecoTune] initSongLibrary failed on mount', err);
+    });
   }, []);
   const tabBarHeight = tabBarHidden ? 0 : 56 + insets.bottom;
 

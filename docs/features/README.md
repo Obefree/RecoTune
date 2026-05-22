@@ -11,7 +11,29 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-22 | Vercel chord API, поиск, НАЙТИ без каталога | [2026-05-22-vercel-chord-api-nav-cleanup.md](./2026-05-22-vercel-chord-api-nav-cleanup.md) |
+| 2026-05-22 | Авто-прокси табов, нейтральный UI | [2026-05-22-auto-chord-proxy-ui.md](./2026-05-22-auto-chord-proxy-ui.md) |
+| 2026-05-22 | Практика: тихая подгрузка аккордов, ⚙ в шапке | [2026-05-22-practice-quiet-chord-load.md](./2026-05-22-practice-quiet-chord-load.md) |
+| 2026-05-22 | Chords: поиск в Практике (база), не дубль на НАЙТИ | [2026-05-22-practice-library-search-primary.md](./2026-05-22-practice-library-search-primary.md) |
+| 2026-05-22 | Практика: модал «База песен» на всю высоту | [2026-05-22-practice-library-modal-layout.md](./2026-05-22-practice-library-modal-layout.md) |
+| 2026-05-22 | Архив legacy 536, минимальный builtin seed | [2026-05-22-legacy-catalog-archive.md](./2026-05-22-legacy-catalog-archive.md) |
+| 2026-05-22 | Metadata: поиск без полной загрузки SQLite | [2026-05-22-metadata-on-demand-search.md](./2026-05-22-metadata-on-demand-search.md) |
+| 2026-05-22 | Pitch: регрессия сглаживания графиков | [2026-05-22-pitch-graph-smoothing-regression-fix.md](./2026-05-22-pitch-graph-smoothing-regression-fix.md) |
+| 2026-05-22 | Melody: транскрипция MVP1 (контур) | [2026-05-22-melody-transcription-mvp1.md](./2026-05-22-melody-transcription-mvp1.md) |
+| 2026-05-22 | Chords: nested SQLite tx при metadata import | [2026-05-22-chords-metadata-nested-tx-fix.md](./2026-05-22-chords-metadata-nested-tx-fix.md) |
+| 2026-05-22 | Metadata: MusicBrainz ≥5000 (D7) | [2026-05-22-metadata-musicbrainz-5000.md](./2026-05-22-metadata-musicbrainz-5000.md) |
+| 2026-05-22 | Chords: поиск первым, metadata catalog | [2026-05-22-chords-search-first-metadata.md](./2026-05-22-chords-search-first-metadata.md) |
+| 2026-05-22 | On-demand AmDm/UG через прокси | [2026-05-22-on-demand-chord-providers.md](./2026-05-22-on-demand-chord-providers.md) |
+| 2026-05-22 | Каталог: аккорды в строках, миграция builtin | [2026-05-22-catalog-chord-lyrics-quality.md](./2026-05-22-catalog-chord-lyrics-quality.md) |
+| 2026-05-22 | Chords: каталог UI + SQLite nested tx | [2026-05-22-chords-catalog-ui-fix.md](./2026-05-22-chords-catalog-ui-fix.md) |
+| 2026-05-22 | Chords: поиск каталог / НАЙТИ init fix | [2026-05-22-chords-search-init-fix.md](./2026-05-22-chords-search-init-fix.md) |
+| 2026-05-22 | Chords НАЙТИ: без AudD, локальный recognizer | [2026-05-22-local-recognition-no-audd.md](./2026-05-22-local-recognition-no-audd.md) |
+| 2026-05-22 | Chords: библиотека Phase 2–4, умный поиск | [2026-05-21-chord-providers-phase2-4.md](./2026-05-21-chord-providers-phase2-4.md) |
+| 2026-05-21 | Melody: anti-noise / anti-slide детектор | [2026-05-21-melody-detector-noise-slide-filter.md](./2026-05-21-melody-detector-noise-slide-filter.md) |
+| 2026-05-21 | Melody: детектор нот v2 (YIN, voting) | [2026-05-21-melody-detector-v2.md](./2026-05-21-melody-detector-v2.md) |
+| 2026-05-21 | Melody: повторы одной ноты, акцент, PLAY | [2026-05-21-melody-repeat-notes-fix.md](./2026-05-21-melody-repeat-notes-fix.md) |
 | 2026-05-21 | Melody: playhead на нотном стане при PLAY | [2026-05-21-staff-playback-playhead.md](./2026-05-21-staff-playback-playhead.md) |
+| 2026-05-21 | Melody: длительности PLAY, монотонные ts | [2026-05-21-melody-playback-timing-fix.md](./2026-05-21-melody-playback-timing-fix.md) |
 | 2026-05-21 | Melody: PLAY по спетому темпу | [2026-05-21-melody-rhythm-timing.md](./2026-05-21-melody-rhythm-timing.md) |
 | 2026-05-21 | График: скролл к началу, разнесение меток | [2026-05-21-chart-scroll-markers.md](./2026-05-21-chart-scroll-markers.md) |
 | 2026-05-21 | Melody: качество PLAY, детектор нот | [2026-05-21-melody-playback-quality.md](./2026-05-21-melody-playback-quality.md) |

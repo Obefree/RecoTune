@@ -1,0 +1,357 @@
+/** Default practice builtin seed — ChordPro-quality lyrics only (~32 songs). */
+import type { SongEntry } from './songDatabase';
+
+export const BUILTIN_SONGS_SEED: SongEntry[] = [
+  {
+    "id": "s001",
+    "title": "Let It Be",
+    "artist": "The Beatles",
+    "chords": "C G Am F",
+    "key": "C",
+    "bpm": 76,
+    "difficulty": 1,
+    "genre": "Classic Rock",
+    "lyrics": "[C]When I find myself in [G]times of trouble\n[Am]Mother Mary [F]comes to me\n[C]Speaking words of [G]wisdom\nLet it [F]be [C]\n\n[C]And in my hour of [G]darkness\n[Am]She is standing [F]right in front of me\n[C]Speaking words of [G]wisdom\nLet it [F]be [C]\n\n[Am]Let it be [G] let it be [F]\n[C]Let it be [G] let it be\n[F]Whisper words of [C]wisdom\nLet it [G]be [F] [C]"
+  },
+  {
+    "id": "s002",
+    "title": "Knockin' on Heaven's Door",
+    "artist": "Bob Dylan",
+    "chords": "G D Am",
+    "key": "G",
+    "bpm": 72,
+    "difficulty": 1,
+    "genre": "Folk Rock",
+    "lyrics": "[G]Mama take this [D]badge off of me\nI can't [Am]use it anymore\n[G]It's gettin' [D]dark too dark to see\nI feel I'm [Am]knockin' on heaven's door\n\n[G]Knock knock [D]knockin' on [Am]heaven's door\n[G]Knock knock [D]knockin' on [Am]heaven's door\n[G]Knock knock [D]knockin' on [Am]heaven's door\n[G]Knock knock [D]knockin' on [Am]heaven's door"
+  },
+  {
+    "id": "s003",
+    "title": "No Woman No Cry",
+    "artist": "Bob Marley",
+    "chords": "C G Am F",
+    "key": "C",
+    "bpm": 80,
+    "difficulty": 1,
+    "genre": "Reggae",
+    "lyrics": "[C]No woman [G]no cry\n[Am]No woman [F]no cry\n[C]No woman [G]no cry\n[Am]No woman [F]no cry\n\n[C]Said I remember [G]when we used to sit\n[Am]In the government yard [F]in Trenchtown\n[C]Oba observing the [G]hypocrites\n[Am]As they would mingle [F]with the good people we meet\n\n[C]Good friends we have [G]oh good friends we've lost\n[Am]Along the [F]way\n[C]In this great [G]future you can't forget your [Am]past\n[F]So dry your tears [C]I say"
+  },
+  {
+    "id": "s004",
+    "title": "Stand By Me",
+    "artist": "Ben E. King",
+    "chords": "A F#m D E",
+    "key": "A",
+    "bpm": 122,
+    "difficulty": 1,
+    "genre": "Soul",
+    "lyrics": "[A]When the night has come\nAnd the land is [F#m]dark\nAnd the moon is the [D]only light we'll [E]see\nNo I won't be [A]afraid\nNo I won't be afraid\nJust as [F#m]long as you stand, stand by [D]me [E]\n\n[A]So darling darling [F#m]stand by me\nOh [D]stand by [E]me\nOh [A]stand, stand by me\nStand by [F#m]me [D] [E]"
+  },
+  {
+    "id": "s005",
+    "title": "Brown Eyed Girl",
+    "artist": "Van Morrison",
+    "chords": "G C D Em",
+    "key": "G",
+    "bpm": 150,
+    "difficulty": 1,
+    "genre": "Rock",
+    "lyrics": "[G]Hey where did we go\n[C]Days when the rains came\n[D]Down in the hollow\n[Em]Playing a new game\n[G]Laughing and a running hey hey\n[C]Skipping and a jumping\n[D]In the misty morning fog with our\nOur [Em]hearts a thumpin'\n\nAnd you, [C]my brown eyed [G]girl\n[D]You, my brown eyed [G]girl\n[D]Do you remember when\nWe used to sing: [G]sha la la la [C]la la la la\nLa la la la te [D]da [G]"
+  },
+  {
+    "id": "s006",
+    "title": "Sweet Home Alabama",
+    "artist": "Lynyrd Skynyrd",
+    "chords": "D C G",
+    "key": "D",
+    "bpm": 98,
+    "difficulty": 1,
+    "genre": "Southern Rock",
+    "lyrics": "[D]Big wheels keep on turning\n[C]Carry me home to see my [G]kin\n[D]Singing songs about the Southland\n[C]I miss Alabamy once again and I [G]think it's a sin\n\nWell I heard Mr. [D]Young sing about her\nWell I heard ole [C]Neil put her [G]down\nWell I hope Neil [D]Young will remember\nA [C]Southern man don't need him [G]around anyhow\n\n[D]Sweet home Alabama\n[C]Where the skies are so [G]blue\n[D]Sweet home Alabama\n[C]Lord I'm coming home to [G]you"
+  },
+  {
+    "id": "s007",
+    "title": "Blowin' in the Wind",
+    "artist": "Bob Dylan",
+    "chords": "G C D",
+    "key": "G",
+    "bpm": 90,
+    "difficulty": 1,
+    "genre": "Folk",
+    "lyrics": "[G]How many roads must a [C]man walk [G]down\nBefore you [D]call him a [G]man?\nHow many [C]seas must a [G]white dove [C]sail\nBefore she [G]sleeps in the [D]sand?\n\nYes how many [G]times must the [C]cannon balls [G]fly\nBefore they're [D]forever [G]banned?\nThe [G]answer my [C]friend is [G]blowin' in the [D]wind\nThe [G]answer is [C]blowin' in the [D]wind [G]"
+  },
+  {
+    "id": "s008",
+    "title": "Perfect",
+    "artist": "Ed Sheeran",
+    "chords": "G Em C D",
+    "key": "G",
+    "bpm": 95,
+    "difficulty": 1,
+    "genre": "Pop",
+    "lyrics": "[G]I found a love [Em]for me\n[C]Darling just dive right in\nAnd follow my [D]lead\n[G]Well I found a girl [Em]beautiful and sweet\n[C]Oh I never knew you were the someone\nWaiting for [D]me\n\n'Cause we were just [G]kids when we fell in love\nNot knowing [Em]what it was\nI will not [C]give you up this time\nBut darling just [D]kiss me slow\nYour heart is all [G]I own\nAnd in your [Em]eyes you're holding mine\n\n[C]Baby I'm [D]dancing in the [G]dark\nWith [Em]you between my [C]arms\nBarefoot on the [D]grass\n[G]Listening to our [Em]favourite song\nI have [C]faith in what I see\nNow I know I have met an [D]angel in person"
+  },
+  {
+    "id": "s009",
+    "title": "With or Without You",
+    "artist": "U2",
+    "chords": "D A Bm G",
+    "key": "D",
+    "bpm": 110,
+    "difficulty": 1,
+    "genre": "Rock",
+    "lyrics": "[D]See the stone set in your eyes\n[A]See the thorn twist in your side\n[Bm]I'll wait for [G]you\n\n[D]Sleight of hand and twist of fate\n[A]On a bed of nails she makes me wait\n[Bm]And I wait [G]without you\n\n[D]With or without you\n[A]With or without you\n[Bm]Through the storm we reach the [G]shore\n[D]You give it all but I want [A]more\nAnd I'm [Bm]waiting for you [G]\n\n[D]With or without you [A]\n[Bm]With or without [G]you\n[D]I can't live\n[A]With or without you [Bm] [G]"
+  },
+  {
+    "id": "s010",
+    "title": "Zombie",
+    "artist": "The Cranberries",
+    "chords": "Am F C G",
+    "key": "Am",
+    "bpm": 102,
+    "difficulty": 1,
+    "genre": "Alternative",
+    "lyrics": "[Am]Another head hangs lowly\n[F]Child is slowly taken\n[C]And the violence caused such silence\n[G]Who are we mistaken?\n\n[Am]But you see it's not me\n[F]It's not my family\n[C]In your head, in your head\n[G]They are fighting\n\n[Am]In your head [F]in your head\n[C]Zombie [G]zombie\n[Am]In your head [F]in your head\n[C]Zombie zombie zombie-ie-ie [G]\n\n[Am]What's in your head in your head\n[F]Zombie zombie zombie-ie\n[C]In your head [G]in your head\n[Am]Zombie zombie zombie-ie-ie [F] [C] [G]"
+  },
+  {
+    "id": "s011",
+    "title": "Let Her Go",
+    "artist": "Passenger",
+    "chords": "G D Em C",
+    "key": "G",
+    "bpm": 104,
+    "difficulty": 1,
+    "genre": "Pop Folk",
+    "lyrics": "Well you [G]only need the light when it's [D]burning low\nOnly miss the [Em]sun when it starts to [C]snow\nOnly know you [G]love her when you [D]let her go\n\nOnly know you've [Em]been high when you're feeling [C]low\nOnly hate the [G]road when you're missing [D]home\nOnly know you [Em]love her when you [C]let her go\n\nAnd you let her [G]go [D] [Em] [C]\n[G]Staring at the [D]bottom of your glass\n[Em]Hoping one day you'll make a [C]dream last\nBut dreams come [G]slow and they go so [D]fast\n[Em]You see her when you close your [C]eyes\n[G]Maybe one day you'll understand [D]why\n[Em]Everything you touch surely [C]dies"
+  },
+  {
+    "id": "s012",
+    "title": "Time of Your Life",
+    "artist": "Green Day",
+    "chords": "G Cadd9 Dsus4 Em7",
+    "key": "G",
+    "bpm": 88,
+    "difficulty": 1,
+    "genre": "Punk Rock",
+    "lyrics": "[G]Another turning point\nA fork stuck in the [Cadd9]road\n[Dsus4]Time grabs you by the wrist\nDirects you where to [G]go\n\n[G]So make the best of this test\nAnd don't ask [Cadd9]why\n[Dsus4]It's not a question\nBut a lesson learned in [G]time\n\n[Em7]It's something unpredictable\nBut in the [Dsus4]end is right\nI hope you [G]had the time of your life\n\n[G]So take the photographs\nAnd still frames in your [Cadd9]mind\n[Dsus4]Hang it on a shelf in good health\nAnd good [G]time"
+  },
+  {
+    "id": "s013",
+    "title": "Boulevard of Broken Dreams",
+    "artist": "Green Day",
+    "chords": "Em G D A",
+    "key": "Em",
+    "bpm": 168,
+    "difficulty": 1,
+    "genre": "Punk Rock",
+    "lyrics": "[Em]I walk a lonely road\nThe only [G]one that I have ever [D]known\nDon't know where it goes [A]\nBut it's [Em]home to me and I walk alone\n\n[Em]I walk this empty street\nOn the [G]boulevard of broken [D]dreams\nWhere the city [A]sleeps\nAnd I'm the [Em]only one and I walk alone\n\n[Em]My shadow's the only one that [G]walks beside me\n[D]My shallow heart's the only [A]thing that's beating\nSometimes I wish someone out there will [Em]find me\n[G]Till then I walk [D]alone [A]"
+  },
+  {
+    "id": "s014",
+    "title": "Come As You Are",
+    "artist": "Nirvana",
+    "chords": "Em G D Am",
+    "key": "Em",
+    "bpm": 120,
+    "difficulty": 1,
+    "genre": "Grunge",
+    "lyrics": "[Em]Come as you are\nAs you [G]were\nAs I want [D]you to be\nAs a [Am]friend as a friend\nAs an [Em]old enemy\n\nTake your [Em]time\nHurry [G]up\nThe choice is [D]yours\nDon't be [Am]late\nTake a [Em]rest as a friend\nAs a [G]known memory\n\n[Em]Come doused in mud\nSoaked in [G]bleach\nAs I want [D]you to be\nAs a [Am]trend as a friend\nAs an [Em]old memory\n\nAnd I [G]swear that I don't have a [D]gun\nNo I [Am]don't have a gun [Em]"
+  },
+  {
+    "id": "s015",
+    "title": "Fix You",
+    "artist": "Coldplay",
+    "chords": "C Em Am F",
+    "key": "C",
+    "bpm": 138,
+    "difficulty": 1,
+    "genre": "Alternative",
+    "lyrics": "When you try your best but you don't [C]succeed\nWhen you get what you [Em]want but not what you [Am]need\nWhen you feel so tired but you can't [F]sleep\nStuck in [C]reverse [Em] [Am] [F]\n\nWhen the tears come streaming down your [C]face\nWhen you lose something you [Em]can't replace\nWhen you love someone but it goes to [Am]waste\nCould it be [F]worse?\n\n[C]Lights will guide you [Em]home\n[Am]And ignite your [F]bones\n[C]And I will try to [Em]fix [Am]you [F]\n\n[C]High up above or down [Em]below\n[Am]When you're too in love to let it [F]go\nBut if you never try you'll never [C]know\n[Em]Just what you're [Am]worth [F]"
+  },
+  {
+    "id": "s016",
+    "title": "Imagine",
+    "artist": "John Lennon",
+    "chords": "C F G Am Dm",
+    "key": "C",
+    "bpm": 75,
+    "difficulty": 1,
+    "genre": "Pop Rock",
+    "lyrics": "[C]Imagine there's no [F]heaven\n[C]It's easy if you [F]try\n[C]No hell below [F]us\n[C]Above us only [F]sky\n\n[Am]Imagine all the [Dm]people\n[F]Living for to[G]day\n\n[C]Imagine there's no [F]countries\n[C]It isn't hard to [F]do\n[C]Nothing to kill or [F]die for\n[C]And no religion [F]too\n\n[Am]Imagine all the [Dm]people\n[F]Living life in [G]peace\n\nYou may say [C]I'm a [F]dreamer\nBut [C]I'm not the only [G]one\nI hope [C]someday you'll [F]join us\n[C]And the world [G]will be as [C]one [F] [C] [F]"
+  },
+  {
+    "id": "s017",
+    "title": "Wonderful Tonight",
+    "artist": "Eric Clapton",
+    "chords": "G D C Em",
+    "key": "G",
+    "bpm": 95,
+    "difficulty": 1,
+    "genre": "Soft Rock",
+    "lyrics": "[G]It's late in the [D]evening\nShe's wondering what [C]clothes to wear\nShe puts on her [G]make-up\nAnd brushes her [D]long blonde hair\nAnd then she asks [C]me\nDo I look all [D]right?\nAnd I say [G]yes [D] you look [C]wonderful tonight [G] [D]\n\n[G]We go to a [D]party\nAnd everyone turns [C]to see\nThis beautiful [G]lady\nThat's walking around with [D]me\nAnd then she asks [C]me\nDo you feel all [D]right?\nAnd I say [G]yes [D] I feel [C]wonderful tonight [G] [D]"
+  },
+  {
+    "id": "s018",
+    "title": "Shape of You",
+    "artist": "Ed Sheeran",
+    "chords": "Am Dm F G",
+    "key": "Am",
+    "bpm": 96,
+    "difficulty": 1,
+    "genre": "Pop",
+    "lyrics": "[Am]The club isn't the best place\n[Dm]To find a lover\n[F]So the bar is where I go [G]\n\n[Am]Me and my friends at the table\n[Dm]Doing shots\n[F]Drinking fast and then we talk slow [G]\n\n[Am]Come over and start up a conversation\n[Dm]With just me\n[F]And trust me I'll give it a chance now [G]\n\n[Am]Take my hand stop put Van the Man on the jukebox\n[Dm]And then we start to dance\n[F]And now I'm singing like [G]\n\n[Am]Girl you know I want your love [Dm]\nYour love was handmade for somebody like me [F]\nCome on now follow my lead [G]\n[Am]I may be crazy don't mind me [Dm]\nSay boy let's not talk too much [F]\nGrab on my waist and put that body on me [G]"
+  },
+  {
+    "id": "s019",
+    "title": "Losing My Religion",
+    "artist": "R.E.M.",
+    "chords": "Am Em Dm G C F",
+    "key": "Am",
+    "bpm": 128,
+    "difficulty": 2,
+    "genre": "Alternative",
+    "lyrics": "[Am]Oh life [Em]is bigger\n[Dm]It's bigger than you\nAnd you are [Am]not me\nThe [Am]lengths that I will go to [Em]\nThe [Dm]distance in your eyes\nOh no I've [G]said too much\nI [Am]set it up\n\n[Am]That's me in the [Em]corner\n[Dm]That's me in the spotlight\n[Am]Losing my religion\n[Am]Trying to keep up with [Em]you\n[Dm]And I don't know if I can do it\nOh no I've [G]said too much\nI [Am]haven't said enough\n\nI [C]thought that I heard you laughing\nI [C]thought that I heard you [Dm]sing\nI [Am]think I thought I [Em]saw you try\n\n[Am]Every whisper [Em]of every waking hour\n[Dm]I'm choosing my confessions [Am]\nTrying to keep an eye [Em]on you [Dm]\nLike a hurt lost and blinded [G]fool [Am]"
+  },
+  {
+    "id": "s020",
+    "title": "Wish You Were Here",
+    "artist": "Pink Floyd",
+    "chords": "C D Am G Em",
+    "key": "G",
+    "bpm": 60,
+    "difficulty": 1,
+    "genre": "Progressive Rock",
+    "lyrics": "[C]So so you think you can tell\n[D]Heaven from hell\n[Am]Blue skies from pain\nCan you tell a [G]green field\n[C]From a cold steel rail?\n[D]A smile from a veil?\nDo you think you can [Am]tell?\n\n[C]Did they get you to trade\nYour [D]heroes for ghosts?\n[Am]Hot ashes for trees?\n[G]Hot air for a cool breeze?\n[C]Cold comfort for change?\nDid you exchange\nA [D]walk on part in the war\nFor a [Am]lead role in a cage?\n\n[G]How I wish how I [Em]wish you were here\nWe're just [G]two lost souls swimming in a fish bowl\n[D]Year after year\nRunning over the [C]same old ground\nAnd how we [Am]found the same old fears\nWish you were [G]here [Em] [G]"
+  },
+  {
+    "id": "s021",
+    "title": "Wonderwall",
+    "artist": "Oasis",
+    "chords": "Em7 G Dsus4 A7sus4 C",
+    "key": "G",
+    "bpm": 87,
+    "difficulty": 2,
+    "genre": "Britpop",
+    "lyrics": "[Em7]Today is gonna be the day\nThat they're gonna throw it [G]back to you\n[Dsus4]By now you should have somehow\nRealised what you [A7sus4]gotta do\n[Em7]I don't believe that anybody\nFeels the way I do about you [G]now [Dsus4] [A7sus4]\n\n[Em7]Backbeat the word was on the street\nThat the fire in your [G]heart is out\n[Dsus4]I'm sure you've heard it all before\nBut you never really had a [A7sus4]doubt\n[Em7]I don't believe that anybody\nFeels the way I do about you [G]now [Dsus4] [A7sus4]\n\n[C]And all the roads we have to walk are [G]winding\n[C]And all the lights that lead us there are [G]blinding\n[C]There are many things that I would [G]like to say to you\nBut I don't know [A7sus4]how\n\n[Em7]Because maybe [G]\n[Dsus4]You're gonna be the one that [A7sus4]saves me [Em7]\nAnd after [G]all [Dsus4]\nYou're my [A7sus4]wonderwall"
+  },
+  {
+    "id": "s022",
+    "title": "Don't Look Back in Anger",
+    "artist": "Oasis",
+    "chords": "C G Am E F Fm",
+    "key": "C",
+    "bpm": 124,
+    "difficulty": 2,
+    "genre": "Britpop",
+    "lyrics": "[C]Slip inside the eye of your mind\nDon't you know you might find\nA better [G]place to play\n[Am]You said that you'd never been\nBut all the things that you've seen\nWill slowly [G]fade away\n\n[C]So I'll start a revolution from my [G]bed\n'Cause you said the brains I had went to my [Am]head [E]\nStep outside [F]summertime's in bloom\nStand up beside the [Fm]fireplace\nTake that look from off your face [C]\nYou ain't [G]ever gonna burn my [Am]heart [E]out\n\n[C]Don't look back in [G]anger\n[Am]I heard you say [E]\nAt least not to[F]day [Fm] [C] [G] [Am]"
+  },
+  {
+    "id": "s023",
+    "title": "Hotel California",
+    "artist": "Eagles",
+    "chords": "Am E7 G D F C Dm E",
+    "key": "Am",
+    "bpm": 147,
+    "difficulty": 3,
+    "genre": "Rock",
+    "lyrics": "On a [Am]dark desert highway\n[E7]Cool wind in my hair\n[G]Warm smell of colitas\n[D]Rising up through the air\n[F]Up ahead in the distance\n[C]I saw a shimmering light\n[Dm]My head grew heavy and my sight grew dim\n[E]I had to stop for the night\n\n[Am]There she stood in the doorway\n[E7]I heard the mission bell\n[G]And I was thinking to myself\n[D]This could be heaven or this could be hell\n[F]Then she lit up a candle\n[C]And she showed me the way\n[Dm]There were voices down the corridor\n[E]I thought I heard them say\n\nWelcome to the [Am]Hotel California [E7]\nSuch a lovely [G]place such a lovely [D]face\nPlenty of room at the [F]Hotel California [C]\nAny time of [Dm]year you can find it [E]here"
+  },
+  {
+    "id": "s024",
+    "title": "Hallelujah",
+    "artist": "Leonard Cohen",
+    "chords": "C Am F G E",
+    "key": "C",
+    "bpm": 66,
+    "difficulty": 2,
+    "genre": "Folk",
+    "lyrics": "[C]I've heard there was a secret [Am]chord\nThat [C]David played and it pleased the [Am]Lord\nBut [F]you don't really care for music [G]do ya [C] [G]\nIt [C]goes like this the [F]fourth the fifth [Am]\nThe [F]minor fall and the major [G]lift\nThe [Am]baffled king composing [G]Hallelujah\n\n[F]Hallelujah [Am]hallelujah\n[F]Hallelujah halle[G]lujah [C] [G] [C] [G]\n\n[C]Your faith was strong but you [Am]needed proof\n[C]You saw her bathing on the [Am]roof\nHer [F]beauty and the moonlight [G]overthrew you [C] [G]\nShe [C]tied you to a kitchen [F]chair [Am]\nShe [F]broke your throne and she cut your [G]hair\nAnd from [Am]your lips she drew the [G]Hallelujah\n\n[F]Hallelujah [Am]hallelujah\n[F]Hallelujah halle[G]lujah [C] [G] [C] [G]"
+  },
+  {
+    "id": "s025",
+    "title": "House of the Rising Sun",
+    "artist": "The Animals",
+    "chords": "Am C D F E",
+    "key": "Am",
+    "bpm": 116,
+    "difficulty": 2,
+    "genre": "Blues Rock",
+    "lyrics": "[Am]There is a [C]house in [D]New Or[F]leans\nThey [Am]call the [C]Rising [E]Sun\n[Am]And it's [C]been the [D]ruin of [F]many a poor boy\n[Am]And God [E]I know I'm one\n\n[Am]My mother [C]was a [D]tailor [F]\nShe [Am]sewed my [C]new blue [E]jeans\n[Am]My father [C]was a [D]gambling [F]man\n[Am]Down in [E]New Orleans\n\n[Am]Now the [C]only thing [D]a gambler [F]needs\nIs a [Am]suitcase [C]and a [E]trunk\n[Am]And the [C]only time [D]he'll be satis[F]fied\nIs [Am]when he's [E]on a drunk"
+  },
+  {
+    "id": "s026",
+    "title": "Creep",
+    "artist": "Radiohead",
+    "chords": "G B C Cm",
+    "key": "G",
+    "bpm": 92,
+    "difficulty": 2,
+    "genre": "Alternative",
+    "lyrics": "[G]When you were here before\n[B]Couldn't look you in the eye\n[C]You're just like an angel\n[Cm]Your skin makes me cry\n\n[G]You float like a feather\n[B]In a beautiful world\n[C]I wish I was special\n[Cm]You're so fucking special\n\nBut [G]I'm a creep\n[B]I'm a weirdo\n[C]What the hell am I doing here?\n[Cm]I don't belong here\n\n[G]I don't care if it hurts\n[B]I wanna have control\n[C]I want a perfect body\n[Cm]I want a perfect soul\n\n[G]I want you to notice\n[B]When I'm not around\n[C]You're so fucking special\n[Cm]I wish I was special\n\nBut [G]I'm a creep\n[B]I'm a weirdo\n[C]What the hell am I doing here?\n[Cm]I don't belong here"
+  },
+  {
+    "id": "s038",
+    "title": "Use Somebody",
+    "artist": "Kings of Leon",
+    "chords": "C G Am F",
+    "key": "C",
+    "bpm": 136,
+    "difficulty": 1,
+    "genre": "Indie Rock",
+    "lyrics": "[C]I've been roaming around always looking down\nAt all I see [G]\n[Am]Painted faces fill the places I can't reach [F]\n[C]You know that I could use somebody [G]\n[Am]You know that I could use somebody [F]\n[C]Someone like you [G] [Am] [F]\n\n[C]I've been running around always tired and down\nLooking for you [G]\n[Am]Pushed around by time while I'm left behind [F]\n[C]You know that I could use somebody [G]\n[Am]You know that I could use somebody [F]\n[C]Someone like you [G] [Am] [F]\n\n[C]Off in the night while you live it up I'm off to sleep [G]\n[Am]Waging wars to shake the poet and the beat [F]\nI hope it's gonna make you notice [C] someone like [G]me [Am] [F]"
+  },
+  {
+    "id": "r001",
+    "title": "Группа крови",
+    "artist": "Кино",
+    "chords": "Em C G D",
+    "key": "Em",
+    "bpm": 118,
+    "difficulty": 1,
+    "genre": "Рок",
+    "lyrics": "[Em]Тёплое место, но [C]улицы ждут\n[G]Отпечатков наших [D]ног\n[Em]Звёздная пыль на [C]подошвах моих\n[G]Мягкое сердце [D]для мечт\n\n[Em]Группа крови [C]на рукаве\n[G]Мой порядковый [D]номер на рукаве\n[Em]Пожелай мне удачи [C]в бою\n[G]Пожелай мне [D]не остаться в этой траве"
+  },
+  {
+    "id": "r002",
+    "title": "Звезда по имени Солнце",
+    "artist": "Кино",
+    "chords": "Am E Am G",
+    "key": "Am",
+    "bpm": 110,
+    "difficulty": 1,
+    "genre": "Рок",
+    "lyrics": "[Am]Белый снег серый лёд [E]\nНа растрескавшейся [Am]земле\n[G]Одеялом лоскутным [Am]на ней\nГород в дорожной [E]петле [Am]\n\n[Am]А над городом плывут [E]облака\nЗакрывая [Am]небесный свет\n[G]А над городом жёлтый [Am]дым\nГороду две [E]тысячи лет [Am]\n\n[Am]Прожитых под этим [E]солнцем\nСолнце — [Am]звезда по имени Солнце [G] [Am]"
+  },
+  {
+    "id": "r003",
+    "title": "Перемен",
+    "artist": "Кино",
+    "chords": "Am G C F Em",
+    "key": "Am",
+    "bpm": 108,
+    "difficulty": 1,
+    "genre": "Рок",
+    "lyrics": "[Am]Перемен! [G]требуют наши [C]сердца\n[Am]Перемен! [G]требуют наши [F]глаза\n[Em]В нашем смехе и в наших [Am]слезах\nИ в пульсации [G]вен [C]\nПеремен! [G]мы ждём [Am]перемен!\n\n[Am]Электрический свет [G]продолжает наш [C]день\n[Am]И коробка от [G]спичек пуста [F]\n[Em]Но на кухне синим [Am]цветком\nГорит [G]газ [C]\nПеремен! [G]мы ждём [Am]перемен!"
+  },
+  {
+    "id": "r004",
+    "title": "Последний герой",
+    "artist": "Кино",
+    "chords": "Em D C G Am",
+    "key": "Em",
+    "bpm": 95,
+    "difficulty": 1,
+    "genre": "Рок",
+    "lyrics": "[Em]Доброе утро последний [D]герой\nДоброе утро тебе и [C]таким как [G]ты\n[Em]Доброе утро последний [D]герой\nЗдравствуй последний [Am]герой\n\n[Em]Я оглянулся [D]посмотреть\nНе оглянулась ли [C]она [G]\n[Em]Чтоб посмотреть [D]не оглянулся ли я\n[Am]Чтоб посмотреть"
+  },
+  {
+    "id": "r005",
+    "title": "Ты или я",
+    "artist": "Кино",
+    "chords": "Am E Dm G",
+    "key": "Am",
+    "bpm": 112,
+    "difficulty": 1,
+    "genre": "Рок",
+    "lyrics": "[Am]Нам с тобою [E]не везёт\n[Dm]В смысле погоды [G]\n[Am]И ты всё ждёшь [E]и я всё жду\n[Dm]Когда выглянет [G]солнце\n\n[Am]Ты или [E]я — кто займёт [Dm]первым [G]место у окна\n[Am]Ты или [E]я — ты или я [Dm]дотронешься до [G]стекла"
+  }
+] as SongEntry[];

@@ -22,10 +22,10 @@ import { useLocale } from '../context/LocaleContext';
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
 import { SungNoteDetector } from '../utils/sungNoteDetector';
 
-const EMA_ALPHA_FREQ_LOW = 0.14;
+const EMA_ALPHA_FREQ_LOW = 0.20;
 const EMA_ALPHA_CENTS_LOW = 0.22;
-const EMA_ALPHA_FREQ_HIGH = 0.09;
-const EMA_ALPHA_CENTS_HIGH = 0.15;
+const EMA_ALPHA_FREQ_HIGH = 0.16;
+const EMA_ALPHA_CENTS_HIGH = 0.20;
 const HIGH_NOTE_HZ = 280;
 
 function emaAlphaFreq(hz: number) {
@@ -138,6 +138,7 @@ export default function TunerScreen() {
         signal: msg.signal ?? 0,
         cents: dispCents,
         ts,
+        yinConfidence: msg.yinConfidence,
       });
       if (detected) {
         setRegisteredEvents(prev => {
