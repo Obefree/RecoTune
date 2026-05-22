@@ -1,4 +1,5 @@
 import type { SongEntry } from '../data/songDatabase';
+import { normalizeLyricsChords } from './chordLyricsNormalize';
 
 export type ChordProParseResult = {
   title: string;
@@ -42,7 +43,7 @@ export function parseChordProText(raw: string, fallbackTitle = 'Без назв�
     key: key || undefined,
     bpm,
     chords: uniqueChords.slice(0, 12).join(' ') || 'C G Am F',
-    lyrics: lyricsLines.join('\n').trim(),
+    lyrics: normalizeLyricsChords(lyricsLines.join('\n')),
     difficulty: uniqueChords.length <= 3 ? 1 : uniqueChords.length <= 5 ? 2 : 3,
   };
 }

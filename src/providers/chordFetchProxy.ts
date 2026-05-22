@@ -5,9 +5,11 @@ import {
   type ChordCachePayload,
 } from '../db/chordCache';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
+import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 import { combinedArtistTitle } from '../utils/searchNormalize';
 import { resolveChordFetchUrl } from './chordFetchUrl';
-import { getProviderSettings, isProviderEnabled } from './providerSettings';
+import { ensureAutoChordProxySettings } from './autoChordProxy';
+import { getProviderSettings } from './providerSettings';
 import type {
   OnDemandChordProviderId,
   ProviderAttribution,
@@ -112,11 +114,12 @@ function proxyResponseToPayload(
   }
   const parsed = parseChordProText(body, raw.title?.trim() || title);
   const entry = chordProToSongEntry(parsed);
+  const lyrics = entry.lyrics ? normalizeLyricsChords(entry.lyrics) : undefined;
   return {
     title: raw.title?.trim() || entry.title,
     artist: raw.artist?.trim() || entry.artist || artist,
     chords: entry.chords,
-    lyrics: entry.lyrics,
+    lyrics,
     key: entry.key,
     bpm: entry.bpm,
     difficulty: entry.difficulty,
@@ -130,10 +133,7 @@ export async function fetchOnDemandChordSheet(
   title: string,
   attribution: () => ProviderAttribution,
 ): Promise<SongDetail> {
-  if (!(await isProviderEnabled(provider))) {
-    throw new ChordFetchError('Подгрузка табов выключена в ⚙ настройках.');
-  }
-
+  await ensureAutoChordProxySettings();
   const settings = await getProviderSettings();
   const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
   if (!proxyUrl) {

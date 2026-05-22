@@ -89,7 +89,7 @@ async function mergeMetadataHits(
       title: resolved.title,
       artist: resolved.artist,
       provider,
-      score: h.score + (h.linkedSong ? 12 : 0),
+      score: h.score + (h.linkedSong ? 6 : 0),
       matchKind: h.matchKind,
       chords: resolved.chords,
       song: resolved,

@@ -69,7 +69,7 @@ const HTML = `<!DOCTYPE html>
   }
 
   var freqRing = [];
-  var RING = 7;
+  var RING = 9;
   var lastStableF = null;
 
   function medianRing(arr) {
@@ -86,7 +86,7 @@ const HTML = `<!DOCTYPE html>
     if (lastStableF != null) {
       var lo = lastStableF / 1.26;
       var hi = lastStableF * 1.26;
-      if (m < lo || m > hi) m = 0.55 * m + 0.45 * lastStableF;
+      if (m < lo || m > hi) m = 0.42 * m + 0.58 * lastStableF;
     }
     lastStableF = m;
     return m;
@@ -199,5 +199,8 @@ const styles = StyleSheet.create({
     height: 1,
     opacity: 0,
     position: 'absolute',
+    left: -9999,
+    top: 0,
+    zIndex: -1,
   },
 });

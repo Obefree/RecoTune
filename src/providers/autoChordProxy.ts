@@ -28,7 +28,13 @@ export async function ensureAutoChordProxySettings(): Promise<AutoChordProxyResu
   const next: ProviderSettings = {
     ...settings,
     chordFetchProxyUrl: url,
-    enabled: { ...settings.enabled, amdm: true },
+    enabled: {
+      ...settings.enabled,
+      amdm: true,
+      ultimate_guitar: true,
+      lyrics: true,
+      chordpro_url: true,
+    },
     devProxyUrlHintDismissed: true,
   };
   await saveProviderSettings(next);

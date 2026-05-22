@@ -56,6 +56,7 @@ import {
   type ProviderId,
 } from '../providers/types';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
+import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 import {
   shareLibraryBackup,
   importLibraryBackupJson,
@@ -998,7 +999,12 @@ export default function ChordsScreen() {
   async function loadSongForPractice(song: SongEntry): Promise<SongEntry> {
     await initSongLibrary();
     const fromDb = await getSongById(song.id);
-    return resolveSongEntry(fromDb ?? song);
+    const resolved = resolveSongEntry(fromDb ?? song);
+    if (resolved.lyrics?.trim()) {
+      const norm = normalizeLyricsChords(resolved.lyrics);
+      if (norm !== resolved.lyrics) return { ...resolved, lyrics: norm };
+    }
+    return resolved;
   }
 
   async function applyFromLibrarySong(song: SongEntry, provider?: ProviderId) {
@@ -1154,6 +1160,7 @@ export default function ChordsScreen() {
   const [libSearch, setLibSearch]             = useState('');
   const [libSearchHits, setLibSearchHits]     = useState<SongEntry[]>([]);
   const [libProviderMeta, setLibProviderMeta] = useState<Map<string, ProviderId>>(new Map());
+  const [libSearchRank, setLibSearchRank] = useState<Map<string, number>>(new Map());
   const [libSearchBusy, setLibSearchBusy]     = useState(false);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
@@ -1231,12 +1238,14 @@ export default function ChordsScreen() {
       if (libraryInitError) {
         setLibSearchHits([]);
         setLibProviderMeta(new Map());
+        setLibSearchRank(new Map());
         setLibSearchBusy(false);
         return;
       }
       if (!q) {
         setLibSearchHits(librarySongs);
         setLibProviderMeta(new Map());
+        setLibSearchRank(new Map());
         setLibSearchBusy(false);
         return;
       }
@@ -1246,32 +1255,39 @@ export default function ChordsScreen() {
         const results = await searchProviders(q, { limit: 150 });
         if (cancelled) return;
         const meta = new Map<string, ProviderId>();
+        const rank = new Map<string, number>();
         const songs: SongEntry[] = [];
         for (const r of results) {
           const song = searchResultToSongEntry(r);
           if (song) {
+            rank.set(song.id, songs.length);
             songs.push(song);
             meta.set(song.id, r.provider);
           }
         }
         if (songs.length === 0 && librarySongs.length > 0) {
           for (const song of filterSongsQuick(librarySongs, q)) {
+            rank.set(song.id, songs.length);
             songs.push(song);
             meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
           }
         }
         setLibSearchHits(songs);
         setLibProviderMeta(meta);
+        setLibSearchRank(rank);
       } catch (err) {
         if (__DEV__) console.warn('[RecoTune] library search failed', err);
         if (!cancelled) {
           const songs = filterSongsQuick(librarySongs, q);
           const meta = new Map<string, ProviderId>();
-          for (const song of songs) {
+          const rank = new Map<string, number>();
+          songs.forEach((song, i) => {
+            rank.set(song.id, i);
             meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
-          }
+          });
           setLibSearchHits(songs);
           setLibProviderMeta(meta);
+          setLibSearchRank(rank);
         }
       } finally {
         if (!cancelled) setLibSearchBusy(false);
@@ -1286,13 +1302,16 @@ export default function ChordsScreen() {
     if (libGenre)   list = list.filter(s => s.genre === libGenre);
     if (libDiff)    list = list.filter(s => s.difficulty === libDiff);
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
-    if (libSearch.trim() && libSortBy === 'title') {
+    if (libSearch.trim()) {
       list = [...list].sort((a, b) => {
-        const qa = contentQualityScore(resolveSongEntry(a));
-        const qb = contentQualityScore(resolveSongEntry(b));
-        return qb - qa || a.title.localeCompare(b.title);
+        const ra = libSearchRank.get(a.id) ?? 99999;
+        const rb = libSearchRank.get(b.id) ?? 99999;
+        if (ra !== rb) return ra - rb;
+        return a.title.localeCompare(b.title);
       });
-    } else if (libSortBy === 'title')  list = [...list].sort((a,b) => a.title.localeCompare(b.title));
+    } else if (libSortBy === 'title') {
+      list = [...list].sort((a, b) => a.title.localeCompare(b.title));
+    }
     if (libSortBy === 'artist') list = [...list].sort((a,b) => a.artist.localeCompare(b.artist));
     if (libSortBy === 'bpm')    list = [...list].sort((a,b) => (b.bpm ?? 0) - (a.bpm ?? 0));
     return list;
@@ -1359,7 +1378,7 @@ export default function ChordsScreen() {
     }
 
     const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
-    if (proxyUrl && settings.enabled.amdm) {
+    if (proxyUrl) {
       try {
         const detail = await fetchAmdmChordSheet(resolved.artist, resolved.title);
         const persisted = await ensureSongInUserLibrary(detail, 'amdm');
@@ -1956,15 +1975,6 @@ export default function ChordsScreen() {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.practiceBarBtnIcon}
-                onPress={() => { void openProviderSettings(); }}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Источники песен"
-              >
-                <Ionicons name="settings-outline" size={20} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity
                 style={[styles.practiceBarBtnIcon, showPracticePanel && styles.practiceBarBtnIconActive]}
                 onPress={() => setShowPracticePanel(v => !v)}
                 activeOpacity={0.8}
@@ -2314,7 +2324,9 @@ export default function ChordsScreen() {
         </View>
       )}
 
-      {/* ── IDENTIFY MODE ── */}
+      {/* ── IDENTIFY MODE (НАЙТИ) ──
+          Sub-tabs: mic=Запись (default), file=Файл, yt=YouTube, manual=Вручную (lyrics.ovh only).
+          Full chord search → Практика → «База песен» (same modal as practice library). */}
       {mode === 'identify' && (
         <View style={{ flex: 1 }}>
 
@@ -2515,7 +2527,15 @@ export default function ChordsScreen() {
                   </>
                 )}
 
-                <Text style={styles.identFooter}>база офлайн · lyrics.ovh · ChordPro</Text>
+                <TouchableOpacity
+                  style={[styles.identBtnBig, { backgroundColor: '#7c4dff33', borderWidth: 1, borderColor: '#7c4dff66', marginTop: 8 }]}
+                  onPress={() => openPracticeLibrary()}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="library" size={22} color="#7c4dff" />
+                  <Text style={[styles.identBtnBigText, { color: '#7c4dff' }]}>БАЗА ПЕСЕН (ПРАКТИКА)</Text>
+                </TouchableOpacity>
+                <Text style={styles.identFooter}>база офлайн · lyrics.ovh · табы авто</Text>
               </View>
             </>
           )}
@@ -2638,7 +2658,12 @@ export default function ChordsScreen() {
           <View style={styles.libModalChrome}>
           {/* Header */}
           <View style={styles.libHeader}>
-            <View style={styles.libHeaderTitleBlock}>
+            <Pressable
+              style={styles.libHeaderTitleBlock}
+              onLongPress={() => { void openProviderSettings(); }}
+              delayLongPress={500}
+              accessibilityHint="Долгое нажатие — расширенные настройки источников"
+            >
               <Text style={styles.libTitle}>БАЗА ПЕСЕН</Text>
               <Text style={styles.libSubtitle} numberOfLines={1}>
                 {allSongs.length} песен ({userSongCount} своих)
@@ -2648,12 +2673,8 @@ export default function ChordsScreen() {
                   {formatMetadataSyncError(new Error(libraryInitError))}
                 </Text>
               ) : null}
-            </View>
+            </Pressable>
             <View style={styles.libHeaderActions}>
-              <TouchableOpacity onPress={() => { void openProviderSettings(); }} style={styles.libHeaderIconBtn}
-                accessibilityLabel="Источники песен">
-                <Ionicons name="settings-outline" size={22} color="#7c4dff" />
-              </TouchableOpacity>
               <TouchableOpacity onPress={() => { void importChordProFile(true); }} style={styles.libHeaderImportBtn}>
                 <Ionicons name="document-text-outline" size={15} color="#00e676" />
                 <Text style={{ color: '#00e676', fontSize: 10, fontWeight: '700' }}>ИМПОРТ</Text>
@@ -2750,7 +2771,9 @@ export default function ChordsScreen() {
             style={styles.libList}
             data={libResults}
             keyExtractor={item => item.id}
+            nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             contentContainerStyle={libResults.length === 0 ? styles.libListEmptyContent : styles.libListContent}
             ListEmptyComponent={
               libSearch.trim() ? (
@@ -3202,6 +3225,7 @@ export default function ChordsScreen() {
         ref={wvRef}
         source={{ html: ENGINE_HTML, baseUrl: 'https://localhost' }}
         style={styles.hiddenWV}
+        pointerEvents="none"
         onMessage={handleWVMessage}
         onLoadEnd={handleWVLoad}
         mediaPlaybackRequiresUserAction={false}
@@ -3222,13 +3246,12 @@ const styles = StyleSheet.create({
   mainScreenColumn: { flex: 1, minHeight: 0, flexDirection: 'column' },
   header:     { flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 8 },
   title:      { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600' },
-  devBuildLabel: { color: '#00e676', fontSize: 9, fontWeight: '700', marginTop: 2, letterSpacing: 0.5 },
   modePills:  { flexDirection: 'row', gap: 5 },
   pill:       { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: '#333' },
   pillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
   pillText:   { color: '#555', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
   pillTextActive: { color: '#0a0a0f' },
-  hiddenWV:    { position: 'absolute', width: 1, height: 1, opacity: 0 },
+  hiddenWV:    { position: 'absolute', left: -9999, top: 0, width: 1, height: 1, opacity: 0, zIndex: -1 },
   liveErrorCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#ff525211', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#ff525244' },
   liveErrorText: { flex: 1, color: '#ff5252', fontSize: 12, lineHeight: 18 },
 

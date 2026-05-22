@@ -30,12 +30,12 @@ export type TranscriptionResult = {
 const TRANSCRIPTION = {
   minRms: 0.008,
   maxYin: 0.18,
-  stableCents: 50,
-  pitchJumpSemitones: 0.75,
-  minSegmentMs: 90,
-  silenceGapMs: 150,
-  mergeSameMidiGapMs: 70,
-  mergeSameMidiMaxCents: 35,
+  stableCents: 45,
+  pitchJumpSemitones: 0.65,
+  minSegmentMs: 165,
+  silenceGapMs: 185,
+  mergeSameMidiGapMs: 42,
+  mergeSameMidiMaxCents: 28,
 } as const;
 
 function isVoicedFrame(f: PitchFrame): boolean {

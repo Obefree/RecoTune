@@ -22,10 +22,10 @@ import { useLocale } from '../context/LocaleContext';
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
 import { SungNoteDetector } from '../utils/sungNoteDetector';
 
-const EMA_ALPHA_FREQ_LOW = 0.20;
-const EMA_ALPHA_CENTS_LOW = 0.22;
-const EMA_ALPHA_FREQ_HIGH = 0.16;
-const EMA_ALPHA_CENTS_HIGH = 0.20;
+const EMA_ALPHA_FREQ_LOW = 0.14;
+const EMA_ALPHA_CENTS_LOW = 0.16;
+const EMA_ALPHA_FREQ_HIGH = 0.11;
+const EMA_ALPHA_CENTS_HIGH = 0.14;
 const HIGH_NOTE_HZ = 280;
 
 function emaAlphaFreq(hz: number) {

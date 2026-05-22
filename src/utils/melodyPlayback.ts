@@ -62,6 +62,8 @@ export const MELODY_PLAYBACK = {
   MIN_NOTES_WARNING: 3,
   /** Web Audio floor — engine only; payload may be shorter. */
   ENGINE_MIN_DURATION_MS: 40,
+  /** Contour PLAY: audible floor so short segments still sound. */
+  CONTOUR_MIN_DURATION_MS: 200,
   ENGINE_MAX_DURATION_MS: 4000,
   /** Piano legato: release at this fraction of scheduled duration. */
   PIANO_LEGATO_RELEASE_RATIO: 0.92,
@@ -307,6 +309,7 @@ export function buildMelodyPlaybackNotesFromSegments(
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     const rawDur = Math.max(
+      MELODY_PLAYBACK.CONTOUR_MIN_DURATION_MS,
       MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS,
       seg.endMs - seg.startMs - (i < segments.length - 1 ? noteGapMs : 0),
     );

@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-22 | UX batch: 7 пользовательских фиксов | [2026-05-22-ux-fixes-batch.md](./2026-05-22-ux-fixes-batch.md) |
 | 2026-05-22 | Vercel chord API, поиск, НАЙТИ без каталога | [2026-05-22-vercel-chord-api-nav-cleanup.md](./2026-05-22-vercel-chord-api-nav-cleanup.md) |
 | 2026-05-22 | Авто-прокси табов, нейтральный UI | [2026-05-22-auto-chord-proxy-ui.md](./2026-05-22-auto-chord-proxy-ui.md) |
 | 2026-05-22 | Практика: тихая подгрузка аккордов, ⚙ в шапке | [2026-05-22-practice-quiet-chord-load.md](./2026-05-22-practice-quiet-chord-load.md) |

@@ -1,8 +1,8 @@
 /** Текст песен: lyrics.ovh (без сторонних music-ID API). */
 
-export function normalizeLyricsChords(text: string): string {
-  return text.trim().replace(/\(([A-G][#b]?[^)]{0,8})\)\s*/g, '[$1]');
-}
+import { normalizeLyricsChords } from './chordLyricsNormalize';
+
+export { normalizeLyricsChords };
 
 export async function fetchLyricsOvh(artist: string, title: string): Promise<string | null> {
   try {

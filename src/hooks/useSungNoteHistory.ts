@@ -6,7 +6,6 @@ import {
   SungNote,
   SungNoteDetector,
   SungNoteSample,
-  SungNoteDetectorDebug,
   mergeJitterNotes,
 } from '../utils/sungNoteDetector';
 import { frequencyToNote } from '../utils/noteUtils';
@@ -66,8 +65,6 @@ export function useSungNoteHistory() {
   const [pitchHistory, setPitchHistory] = useState<HistoryPoint[]>([]);
   const [pitchFrames, setPitchFrames] = useState<PitchFrame[]>([]);
   const [registeredEvents, setRegisteredEvents] = useState<RegisteredNoteEvent[]>([]);
-  const [detectorDebug, setDetectorDebug] = useState<SungNoteDetectorDebug | null>(null);
-
   const reset = useCallback(() => {
     detectorRef.current.reset();
     pitchFrameRingRef.current = [];
@@ -75,7 +72,6 @@ export function useSungNoteHistory() {
     setPitchHistory([]);
     setPitchFrames([]);
     setRegisteredEvents([]);
-    setDetectorDebug(null);
   }, []);
 
   const loadSnapshot = useCallback((snap: MelodySnapshot) => {
@@ -89,16 +85,16 @@ export function useSungNoteHistory() {
         ? snap.registeredEvents
         : snap.notes.map(toRegisteredEvent),
     );
-    setDetectorDebug(null);
   }, []);
 
   const feed = useCallback((sample: SungNoteFeedSample) => {
     const ts = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const chartFreq = sample.chartFrequency ?? sample.frequency;
+    const contourFreq = chartFreq ?? sample.frequency;
 
     const frame = createPitchFrame({
       t: ts,
-      frequency: sample.frequency,
+      frequency: contourFreq,
       signal: sample.signal,
       cents: sample.cents,
       yinConfidence: sample.yinConfidence,
@@ -124,9 +120,6 @@ export function useSungNoteHistory() {
     }
 
     const detected = detectorRef.current.process({ ...sample, ts });
-    if (__DEV__) {
-      setDetectorDebug(detectorRef.current.getDebugInfo());
-    }
 
     if (detected) {
       setNotes(prev => {
@@ -149,6 +142,5 @@ export function useSungNoteHistory() {
     feed,
     reset,
     loadSnapshot,
-    detectorDebug,
   };
 }

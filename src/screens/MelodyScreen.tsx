@@ -63,7 +63,7 @@ import {
 } from '../utils/melodyStorage';
 
 /** Display/chart smoothing — raw pitch still goes to detector + pitchFrames for contour. */
-const DISPLAY_EMA = 0.20;
+const DISPLAY_EMA = 0.14;
 const CHART_PAD = 32 + 16;
 
 interface NoteState { name: string; octave: number; cents: number; frequency: number }
@@ -109,7 +109,6 @@ export default function MelodyScreen() {
     feed: feedSungNote,
     reset: resetSungNotes,
     loadSnapshot,
-    detectorDebug,
   } = useSungNoteHistory();
 
   const transcription = useMemo(
@@ -615,24 +614,8 @@ export default function MelodyScreen() {
             {' · '}
             ноты {transcription.segments.length}
             {recognitionMode === 'classic' ? '' : ` / классика ${registeredEvents.length}`}
-            {useContourRecognition ? ' · PLAY: контур' : recognitionMode === 'contour' ? ' · PLAY: классика (fallback)' : ' · PLAY: классика'}
+            {useContourRecognition ? ' · PLAY: контур (как на графике)' : recognitionMode === 'contour' ? ' · PLAY: классика (fallback)' : ' · PLAY: классика'}
           </Text>
-        ) : null}
-
-        {__DEV__ && isActive && detectorDebug ? (
-          <View style={styles.detectorDebugChip}>
-            <Text style={styles.detectorDebugText}>
-              YIN {detectorDebug.yinConfidence != null ? detectorDebug.yinConfidence.toFixed(3) : '—'}
-              {' · '}
-              vote {detectorDebug.midiVoteAgree}/{detectorDebug.midiVoteRequired}
-              {' · '}
-              conf {detectorDebug.lastConfidence != null ? detectorDebug.lastConfidence.toFixed(2) : '—'}
-              {detectorDebug.attackFastPath ? ' · ATK' : ''}
-              {detectorDebug.inSlide ? ' · SLD' : ''}
-              {detectorDebug.armedLocked ? ' · ARM' : ''}
-              {` · voc ${Math.round(detectorDebug.voicedMs)}ms`}
-            </Text>
-          </View>
         ) : null}
 
         <MelodyPitchChart

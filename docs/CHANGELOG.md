@@ -6,6 +6,7 @@
 
 ### 2026-05-22
 
+- **UX batch (7 fixes):** dev overlays, search rank, chord brackets, auto tabs, НАЙТИ, pitch smooth, melody contour. См. [docs/features/2026-05-22-ux-fixes-batch.md](./features/2026-05-22-ux-fixes-batch.md).
 - **Chords:** Vercel API табов, починка поиска, НАЙТИ без дубля каталога. См. [docs/features/2026-05-22-vercel-chord-api-nav-cleanup.md](./features/2026-05-22-vercel-chord-api-nav-cleanup.md), [docs/deploy-chord-api-vercel.md](./deploy-chord-api-vercel.md).
 - **Chords:** авто URL прокси из Expo debugger host + UI без AmDm/UG/URL. См. [docs/features/2026-05-22-auto-chord-proxy-ui.md](./features/2026-05-22-auto-chord-proxy-ui.md).
 - **Chords / Практика:** тихая подгрузка таба, ⚙ в шапке, без Alert «Нет источников». См. [docs/features/2026-05-22-practice-quiet-chord-load.md](./features/2026-05-22-practice-quiet-chord-load.md).
