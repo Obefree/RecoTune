@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 2026-05-23
+
+- **Chords / Практика:** надёжный свайп текста — `delayPressIn` на аккордах, View вместо nested ScrollView, стоп авто при касании. См. [docs/features/2026-05-23-practice-lyrics-finger-scroll.md](./features/2026-05-23-practice-lyrics-finger-scroll.md).
+
 ### 2026-05-22
 
 - **Chords / UX:** Android Back — стек оверлеев Chords; табы `history`; упрощена «База песен». См. [docs/features/2026-05-22-back-nav-library-filters.md](./features/2026-05-22-back-nav-library-filters.md).

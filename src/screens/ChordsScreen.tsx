@@ -548,7 +548,12 @@ function ChordLyricsLine({
         {segs.filter(s => s.chord).map((seg, i) => {
           const cs = getChordStyle(seg.chord!);
           return (
-            <TouchableOpacity key={i} onPress={() => onChordTap(seg.chord!)}>
+            <TouchableOpacity
+              delayPressIn={120}
+              activeOpacity={0.7}
+              onPress={() => onChordTap(seg.chord!)}
+              hitSlop={4}
+            >
               <Text style={{
                 color: cs.color, fontSize: 14, fontWeight: '900',
                 backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
@@ -569,7 +574,12 @@ function ChordLyricsLine({
         return (
           <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             {seg.chord && cs ? (
-              <TouchableOpacity onPress={() => onChordTap(seg.chord!)}>
+              <TouchableOpacity
+                delayPressIn={120}
+                activeOpacity={0.7}
+                onPress={() => onChordTap(seg.chord!)}
+                hitSlop={4}
+              >
                 <Text style={{
                   color: cs.color, fontSize: 14, fontWeight: '900', lineHeight: 19, marginBottom: 2,
                   backgroundColor: cs.bg, paddingHorizontal: 2, borderRadius: 3,
@@ -664,12 +674,15 @@ export default function ChordsScreen() {
   const autoScrollIntervalRef             = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollYRef                        = useRef(0);
   const scrollContentHRef                 = useRef(0);
+  /** Finger on lyrics — block auto-scroll interval + mic scrollTo until gesture ends */
+  const lyricsUserScrollRef               = useRef(false);
 
   const startAutoScroll = useCallback((bpm: number, viewH: number) => {
     if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
     setAutoScroll(true);
     const msPerBeat = 60000 / bpm;
     autoScrollIntervalRef.current = setInterval(() => {
+      if (lyricsUserScrollRef.current) return;
       scrollYRef.current += 1.2;
       const maxY = Math.max(0, scrollContentHRef.current - viewH);
       if (scrollYRef.current < maxY) {
@@ -708,9 +721,19 @@ export default function ChordsScreen() {
     }
   }, [practiceBpm, practiceLyricsViewportH, startAutoScroll]);
 
+  const handleLyricsTouchStart = useCallback(() => {
+    lyricsUserScrollRef.current = true;
+    if (autoScrollIntervalRef.current) stopAutoScroll();
+  }, [stopAutoScroll]);
+
+  const handleLyricsScrollEnd = useCallback(() => {
+    lyricsUserScrollRef.current = false;
+  }, []);
+
   const handleLyricsScrollBeginDrag = useCallback(() => {
-    if (autoScroll) stopAutoScroll();
-  }, [autoScroll, stopAutoScroll]);
+    lyricsUserScrollRef.current = true;
+    if (autoScrollIntervalRef.current) stopAutoScroll();
+  }, [stopAutoScroll]);
 
   useEffect(() => () => { stopAutoScroll(); }, [stopAutoScroll]);
 
@@ -871,8 +894,10 @@ export default function ChordsScreen() {
               if (detected === lc.chord || detected.startsWith(lc.chord) || lc.chord.startsWith(detected)) {
                 activeLyricIdxRef.current = i;
                 setActiveLyricIdx(i);
-                const lineY = lineYRef.current[lc.lineIdx] ?? 0;
-                lyricsScrollRef.current?.scrollTo({ y: Math.max(0, lineY - 60), animated: true });
+                if (!lyricsUserScrollRef.current) {
+                  const lineY = lineYRef.current[lc.lineIdx] ?? 0;
+                  lyricsScrollRef.current?.scrollTo({ y: Math.max(0, lineY - 60), animated: true });
+                }
                 break;
               }
             }
@@ -1949,15 +1974,25 @@ export default function ChordsScreen() {
   const lyricsMinHeightRaw = hasLyricsBody
     ? Math.round(practiceBodyApproxH * (showPracticePanel ? 0.7 : 0.92))
     : 0;
-  /** При свёрнутой панели — нижний предел по полному экрану, чтобы зона текста реально росла */
-  const lyricsMinHeight =
-    hasLyricsBody && !showPracticePanel
-      ? Math.max(lyricsMinHeightRaw, Math.round(windowH * 0.76))
-      : lyricsMinHeightRaw;
   /** Верхняя панель не больше ~30% тела практики при тексте — больше места строкам */
   const practiceTopMaxH = hasLyricsBody && showPracticePanel
     ? Math.round(practiceBodyApproxH * (practiceDiagAny ? 0.3 : 0.18))
     : undefined;
+  /** Резерв под бар + панель + шапку текста/BPM — чтобы minHeight не сжимал ScrollView в полоску */
+  const practiceLyricsChromeH =
+    52
+    + (showPracticePanel && practiceTopMaxH != null ? practiceTopMaxH : 0)
+    + 88;
+  const lyricsMinHeightFit = hasLyricsBody
+    ? Math.max(140, practiceBodyApproxH - practiceLyricsChromeH)
+    : 0;
+  /** При свёрнутой панели — нижний предел по полному экрану; при открытой — не больше оставшейся высоты */
+  const lyricsMinHeight =
+    hasLyricsBody && !showPracticePanel
+      ? Math.max(lyricsMinHeightRaw, Math.round(windowH * 0.76), lyricsMinHeightFit)
+      : hasLyricsBody
+        ? Math.min(lyricsMinHeightRaw, lyricsMinHeightFit)
+        : 0;
   /** С текстом песни — компактнее график, чтобы зона текста+аккордов занимала больше экрана */
   const practiceEmbedChartH = hasLyricsBody
     ? (immersiveLyrics ? 44 : 56)
@@ -1984,6 +2019,161 @@ export default function ChordsScreen() {
     const boosted = Math.round(baseline * 1.5);
     return Math.max(300, Math.min(Math.max(280, Math.floor(ceiling)), boosted));
   }, [windowH, insets.top, insets.bottom, tabBarHidden, liveDockHeight]);
+
+  const practiceTopPanelContent = (
+    <View style={styles.practiceTopPanel}>
+      <View style={styles.practicePanelBar}>
+        <Text style={styles.practicePanelBarTitle} numberOfLines={1}>
+          Практика · {currentInstrumentLabel}
+        </Text>
+        <View style={styles.practicePanelToggles}>
+          <TouchableOpacity
+            onPress={() => setShowPracticeFretboard(v => !v)}
+            style={[styles.practicePanelToggle, showPracticeFretboard && styles.practicePanelToggleOn]}
+            accessibilityLabel="Схема грифа"
+          >
+            <Ionicons name="hand-left-outline" size={15} color={showPracticeFretboard ? '#0a0a0f' : '#888'} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowPracticePitchGraph(v => !v)}
+            style={[styles.practicePanelToggle, showPracticePitchGraph && styles.practicePanelToggleOn]}
+            accessibilityLabel="График голоса"
+          >
+            <Ionicons name="pulse" size={15} color={showPracticePitchGraph ? '#0a0a0f' : '#888'} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setShowPracticeNoteMatch(v => !v)}
+            style={[styles.practicePanelToggle, showPracticeNoteMatch && styles.practicePanelToggleOn]}
+            accessibilityLabel="Попадание в ноты"
+          >
+            <Ionicons name="options" size={15} color={showPracticeNoteMatch ? '#0a0a0f' : '#888'} />
+          </TouchableOpacity>
+        </View>
+      </View>
+      {practiceDiagAny ? (
+      <View style={styles.practiceDiagRow}>
+        {showPracticeFretboard ? (
+          <View style={styles.practiceDiagLeft}>
+            <ChordDiagram name={practiceCurrentChord} diagramId={chordDiagramId} size={hasLyricsBody ? 'md' : 'lg'} />
+          </View>
+        ) : null}
+        {showPracticeNoteMatch ? (
+        <View
+          style={
+            showPracticeFretboard && showPracticePitchGraph
+              ? styles.practiceDiagRight
+              : styles.practiceDiagRightGrow
+          }
+        >
+          <TouchableOpacity onPress={() => openPracticeLibrary()} activeOpacity={0.75} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+            <Text style={styles.practiceChordName}>{practiceCurrentChord === '—' ? '← выберите' : practiceCurrentChord}</Text>
+          </TouchableOpacity>
+          <View style={styles.chordTonesRowCompact}>
+            {chordTones.length > 0
+              ? chordTones.map((n, i) => (
+                  <View key={i} style={[styles.chordTonePillSm, n === voiceNoteBase && styles.chordTonePillActive]}>
+                    <Text style={[styles.chordToneTextSm, n === voiceNoteBase && { color: '#00e676' }]}>{n}</Text>
+                  </View>
+                ))
+              : (
+                <TouchableOpacity onPress={() => openPracticeLibrary()} activeOpacity={0.75}>
+                  <Text style={styles.chordTonesEmpty}>БАЗА → выберите песню</Text>
+                </TouchableOpacity>
+              )
+            }
+          </View>
+          <View style={styles.diagVoiceRow}>
+            <Ionicons name="mic" size={10} color={pitchActive ? '#666' : '#2a2a3a'} />
+            <Text style={[styles.diagVoiceNoteSm, {
+              color: !pitchActive ? '#2a2a3a' : voiceNote === '—' ? '#444' : voiceInChord ? '#00e676' : '#ff9800'
+            }]}>
+              {pitchActive ? voiceNote : '—'}
+            </Text>
+            <Text style={styles.diagVoiceHzSm}>{pitchActive && voiceFreq > 0 ? `${voiceFreq}Hz` : ''}</Text>
+            {pitchActive && voiceNote !== '—' && (
+              <Ionicons name={voiceInChord ? 'checkmark-circle' : 'alert-circle'} size={13}
+                color={voiceInChord ? '#00e676' : '#ff9800'} />
+            )}
+          </View>
+          <View style={[styles.centsWrap, styles.centsWrapCompact, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0.15 }]}>
+            <Text style={styles.centsEdgeSm}>−50</Text>
+            <View style={styles.centsTrackSm}>
+              <View style={styles.centsMid} />
+              <View style={[styles.centsThumbSm, { left: `${pitchActive && voiceFreq > 0 ? centsBarPct : 50}%` as any }]} />
+            </View>
+            <Text style={styles.centsEdgeSm}>+50</Text>
+            <Text style={[styles.centsValSm, { color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b' }]}>
+              {voiceCents > 0 ? '+' : ''}{voiceCents}¢
+            </Text>
+          </View>
+        </View>
+        ) : null}
+        {showPracticePitchGraph ? (
+          <View
+            style={styles.practiceChartCol}
+            onLayout={e => {
+              const raw = e.nativeEvent.layout.width - 4;
+              const w = Math.floor(Math.min(360, Math.max(120, raw)));
+              setPracticeVoiceChartW(prev => (Math.abs(prev - w) > 6 ? w : prev));
+            }}
+          >
+            <Text style={styles.practiceChartColTitle}>Голос</Text>
+            <FrequencyChart
+              history={voiceHistory}
+              active={pitchActive}
+              chartPlotWidth={practiceVoiceChartW}
+              chartHeight={practiceEmbedChartH}
+              compact
+            />
+          </View>
+        ) : null}
+      </View>
+      ) : null}
+
+      <View style={styles.practiceChordNavRow}>
+        <TouchableOpacity onPress={practicePrev} style={styles.practiceChordNavArrow} disabled={practiceChordIdx <= 0}>
+          <Ionicons name="chevron-back" size={18} color={practiceChordIdx > 0 ? '#ccc' : '#222'} />
+        </TouchableOpacity>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.practiceChordPillsScroll}
+          contentContainerStyle={styles.practiceChordPillsRow}>
+          {practiceChords.map((c, i) => (
+            <TouchableOpacity key={i}
+              style={[styles.practiceChordPill, i === practiceChordIdx && styles.practiceChordPillActive]}
+              onPress={() => setPracticeChordIdx(i)}>
+              <Text style={[
+                styles.practiceChordPillText,
+                i === practiceChordIdx && styles.practiceChordPillTextActive,
+              ]}>{c}</Text>
+            </TouchableOpacity>
+          ))}
+          {practiceChords.length === 0 && (
+            <Text style={{ color: '#2a2a3a', fontSize: 9, alignSelf: 'center', paddingHorizontal: 6 }}>нет аккордов — БАЗА</Text>
+          )}
+        </ScrollView>
+        <TouchableOpacity onPress={practiceNext} style={styles.practiceChordNavArrow}
+          disabled={practiceChordIdx >= practiceChords.length - 1}>
+          <Ionicons name="chevron-forward" size={18}
+            color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
+        </TouchableOpacity>
+      </View>
+      {practiceFetchHint ? (
+        <Text style={styles.practiceFetchHint} numberOfLines={2}>
+          {practiceFetchHint}
+        </Text>
+      ) : null}
+      {chordFetchLoading && !practiceLyrics ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 }}>
+          <ActivityIndicator size="small" color="#7c4dff" />
+          <Text style={{ color: '#666', fontSize: 10 }}>Подбор текста и таба…</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const practiceTopPanelWrapStyle = [
+    { flexShrink: 0 },
+    practiceTopMaxH != null && { maxHeight: practiceTopMaxH },
+  ];
 
   return (
     <View style={styles.screenFill}>
@@ -2155,167 +2345,22 @@ export default function ChordsScreen() {
               </TouchableOpacity>
             </View>
 
-            {showPracticePanel && (
+            {showPracticePanel && (hasLyricsBody ? (
+              <View style={practiceTopPanelWrapStyle}>
+              {practiceTopPanelContent}
+              </View>
+            ) : (
               <ScrollView
-                style={[
-                  { flexShrink: 0 },
-                  practiceTopMaxH != null && { maxHeight: practiceTopMaxH },
-                ]}
-                scrollEnabled={!hasLyricsBody}
-                nestedScrollEnabled={!hasLyricsBody}
-                showsVerticalScrollIndicator={!hasLyricsBody}
+                style={practiceTopPanelWrapStyle}
+                scrollEnabled
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
                 keyboardShouldPersistTaps="handled"
                 bounces={false}
               >
-              <View style={styles.practiceTopPanel}>
-                <View style={styles.practicePanelBar}>
-                  <Text style={styles.practicePanelBarTitle} numberOfLines={1}>
-                    Практика · {currentInstrumentLabel}
-                  </Text>
-                  <View style={styles.practicePanelToggles}>
-                    <TouchableOpacity
-                      onPress={() => setShowPracticeFretboard(v => !v)}
-                      style={[styles.practicePanelToggle, showPracticeFretboard && styles.practicePanelToggleOn]}
-                      accessibilityLabel="Схема грифа"
-                    >
-                      <Ionicons name="hand-left-outline" size={15} color={showPracticeFretboard ? '#0a0a0f' : '#888'} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setShowPracticePitchGraph(v => !v)}
-                      style={[styles.practicePanelToggle, showPracticePitchGraph && styles.practicePanelToggleOn]}
-                      accessibilityLabel="График голоса"
-                    >
-                      <Ionicons name="pulse" size={15} color={showPracticePitchGraph ? '#0a0a0f' : '#888'} />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setShowPracticeNoteMatch(v => !v)}
-                      style={[styles.practicePanelToggle, showPracticeNoteMatch && styles.practicePanelToggleOn]}
-                      accessibilityLabel="Попадание в ноты"
-                    >
-                      <Ionicons name="options" size={15} color={showPracticeNoteMatch ? '#0a0a0f' : '#888'} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                {practiceDiagAny ? (
-                <View style={styles.practiceDiagRow}>
-                  {showPracticeFretboard ? (
-                    <View style={styles.practiceDiagLeft}>
-                      <ChordDiagram name={practiceCurrentChord} diagramId={chordDiagramId} size={hasLyricsBody ? 'md' : 'lg'} />
-                    </View>
-                  ) : null}
-                  {showPracticeNoteMatch ? (
-                  <View
-                    style={
-                      showPracticeFretboard && showPracticePitchGraph
-                        ? styles.practiceDiagRight
-                        : styles.practiceDiagRightGrow
-                    }
-                  >
-                    <TouchableOpacity onPress={() => openPracticeLibrary()} activeOpacity={0.75} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
-                      <Text style={styles.practiceChordName}>{practiceCurrentChord === '—' ? '← выберите' : practiceCurrentChord}</Text>
-                    </TouchableOpacity>
-                    <View style={styles.chordTonesRowCompact}>
-                      {chordTones.length > 0
-                        ? chordTones.map((n, i) => (
-                            <View key={i} style={[styles.chordTonePillSm, n === voiceNoteBase && styles.chordTonePillActive]}>
-                              <Text style={[styles.chordToneTextSm, n === voiceNoteBase && { color: '#00e676' }]}>{n}</Text>
-                            </View>
-                          ))
-                        : (
-                          <TouchableOpacity onPress={() => openPracticeLibrary()} activeOpacity={0.75}>
-                            <Text style={styles.chordTonesEmpty}>БАЗА → выберите песню</Text>
-                          </TouchableOpacity>
-                        )
-                      }
-                    </View>
-                    <View style={styles.diagVoiceRow}>
-                      <Ionicons name="mic" size={10} color={pitchActive ? '#666' : '#2a2a3a'} />
-                      <Text style={[styles.diagVoiceNoteSm, {
-                        color: !pitchActive ? '#2a2a3a' : voiceNote === '—' ? '#444' : voiceInChord ? '#00e676' : '#ff9800'
-                      }]}>
-                        {pitchActive ? voiceNote : '—'}
-                      </Text>
-                      <Text style={styles.diagVoiceHzSm}>{pitchActive && voiceFreq > 0 ? `${voiceFreq}Hz` : ''}</Text>
-                      {pitchActive && voiceNote !== '—' && (
-                        <Ionicons name={voiceInChord ? 'checkmark-circle' : 'alert-circle'} size={13}
-                          color={voiceInChord ? '#00e676' : '#ff9800'} />
-                      )}
-                    </View>
-                    <View style={[styles.centsWrap, styles.centsWrapCompact, { opacity: pitchActive && voiceFreq > 0 ? 1 : 0.15 }]}>
-                      <Text style={styles.centsEdgeSm}>−50</Text>
-                      <View style={styles.centsTrackSm}>
-                        <View style={styles.centsMid} />
-                        <View style={[styles.centsThumbSm, { left: `${pitchActive && voiceFreq > 0 ? centsBarPct : 50}%` as any }]} />
-                      </View>
-                      <Text style={styles.centsEdgeSm}>+50</Text>
-                      <Text style={[styles.centsValSm, { color: Math.abs(voiceCents) < 10 ? '#00e676' : '#ffeb3b' }]}>
-                        {voiceCents > 0 ? '+' : ''}{voiceCents}¢
-                      </Text>
-                    </View>
-                  </View>
-                  ) : null}
-                  {showPracticePitchGraph ? (
-                    <View
-                      style={styles.practiceChartCol}
-                      onLayout={e => {
-                        const raw = e.nativeEvent.layout.width - 4;
-                        const w = Math.floor(Math.min(360, Math.max(120, raw)));
-                        setPracticeVoiceChartW(prev => (Math.abs(prev - w) > 6 ? w : prev));
-                      }}
-                    >
-                      <Text style={styles.practiceChartColTitle}>Голос</Text>
-                      <FrequencyChart
-                        history={voiceHistory}
-                        active={pitchActive}
-                        chartPlotWidth={practiceVoiceChartW}
-                        chartHeight={practiceEmbedChartH}
-                        compact
-                      />
-                    </View>
-                  ) : null}
-                </View>
-                ) : null}
-
-                <View style={styles.practiceChordNavRow}>
-                  <TouchableOpacity onPress={practicePrev} style={styles.practiceChordNavArrow} disabled={practiceChordIdx <= 0}>
-                    <Ionicons name="chevron-back" size={18} color={practiceChordIdx > 0 ? '#ccc' : '#222'} />
-                  </TouchableOpacity>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.practiceChordPillsScroll}
-                    contentContainerStyle={styles.practiceChordPillsRow}>
-                    {practiceChords.map((c, i) => (
-                      <TouchableOpacity key={i}
-                        style={[styles.practiceChordPill, i === practiceChordIdx && styles.practiceChordPillActive]}
-                        onPress={() => setPracticeChordIdx(i)}>
-                        <Text style={[
-                          styles.practiceChordPillText,
-                          i === practiceChordIdx && styles.practiceChordPillTextActive,
-                        ]}>{c}</Text>
-                      </TouchableOpacity>
-                    ))}
-                    {practiceChords.length === 0 && (
-                      <Text style={{ color: '#2a2a3a', fontSize: 9, alignSelf: 'center', paddingHorizontal: 6 }}>нет аккордов — БАЗА</Text>
-                    )}
-                  </ScrollView>
-                  <TouchableOpacity onPress={practiceNext} style={styles.practiceChordNavArrow}
-                    disabled={practiceChordIdx >= practiceChords.length - 1}>
-                    <Ionicons name="chevron-forward" size={18}
-                      color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
-                  </TouchableOpacity>
-                </View>
-                {practiceFetchHint ? (
-                  <Text style={styles.practiceFetchHint} numberOfLines={2}>
-                    {practiceFetchHint}
-                  </Text>
-                ) : null}
-                {chordFetchLoading && !practiceLyrics ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 }}>
-                    <ActivityIndicator size="small" color="#7c4dff" />
-                    <Text style={{ color: '#666', fontSize: 10 }}>Подбор текста и таба…</Text>
-                  </View>
-                ) : null}
-              </View>
+              {practiceTopPanelContent}
               </ScrollView>
-            )}
+            ))}
           </View>
 
           <View
@@ -2401,6 +2446,9 @@ export default function ChordsScreen() {
 
             <View
               style={{ flex: 1, minHeight: 0, flexBasis: 0, flexGrow: 1 }}
+              onTouchStart={handleLyricsTouchStart}
+              onTouchEnd={handleLyricsScrollEnd}
+              onTouchCancel={handleLyricsScrollEnd}
               onLayout={e => {
                 const h = e.nativeEvent.layout.height;
                 if (h > 40) setPracticeLyricsViewportH(h);
@@ -2424,14 +2472,18 @@ export default function ChordsScreen() {
             <ScrollView
               ref={lyricsScrollRef}
               style={[styles.lyricsScroll, { flex: 1 }]}
-              contentContainerStyle={{ padding: 10, paddingBottom: 12 }}
+              contentContainerStyle={{ padding: 10, paddingBottom: Math.max(16, practiceDockHeight + 8) }}
               showsVerticalScrollIndicator
-              nestedScrollEnabled
+              scrollEnabled
+              nestedScrollEnabled={Platform.OS === 'android'}
+              overScrollMode="always"
               keyboardShouldPersistTaps="handled"
               scrollEventThrottle={16}
               onScroll={e => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
               onScrollBeginDrag={handleLyricsScrollBeginDrag}
               onMomentumScrollBegin={handleLyricsScrollBeginDrag}
+              onScrollEndDrag={handleLyricsScrollEnd}
+              onMomentumScrollEnd={handleLyricsScrollEnd}
               onContentSizeChange={(_, h) => { scrollContentHRef.current = h; }}>
               {practiceLyricsDisplay.split('\n').map((line, li) => {
                 const activeLyricEntry = activeLyricIdx >= 0 ? lyricChordList[activeLyricIdx] : null;
@@ -2446,7 +2498,7 @@ export default function ChordsScreen() {
                       lineIdx={li}
                       activeChordPos={activeChordPos}
                       onChordTap={(c) => {
-                        if (autoScroll) stopAutoScroll();
+                        if (autoScrollIntervalRef.current) stopAutoScroll();
                         const idx = practiceChords.indexOf(c);
                         if (idx >= 0) setPracticeChordIdx(idx);
                       }}

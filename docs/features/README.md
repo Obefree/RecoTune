@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-23 | Практика: свайп текста пальцем | [2026-05-23-practice-lyrics-finger-scroll.md](./2026-05-23-practice-lyrics-finger-scroll.md) |
 | 2026-05-22 | Android Back + фильтры «База песен» | [2026-05-22-back-nav-library-filters.md](./2026-05-22-back-nav-library-filters.md) |
 | 2026-05-22 | Практика: скролл текста и автопрокрутка | [2026-05-22-practice-lyrics-scroll-ux.md](./2026-05-22-practice-lyrics-scroll-ux.md) |
 | 2026-05-22 | Creep: runtime normalize (апостроф, SQLite) | [2026-05-22-creep-chorus-runtime-normalize.md](./2026-05-22-creep-chorus-runtime-normalize.md) |
