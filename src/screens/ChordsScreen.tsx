@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, TextInput, Platform, Modal, FlatList, SectionList,
-  useWindowDimensions, Pressable,
+  useWindowDimensions, Pressable, BackHandler,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
@@ -1204,10 +1204,8 @@ export default function ChordsScreen() {
   const [libSearchBusy, setLibSearchBusy]     = useState(false);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
-  const [libGenre, setLibGenre]               = useState('');
-  const [libDiff, setLibDiff]                 = useState<0|1|2|3>(0);
   const [libFavOnly, setLibFavOnly]           = useState(false);
-  const [libSortBy, setLibSortBy]             = useState<'title'|'artist'|'bpm'>('title');
+  const [libSortAz, setLibSortAz]             = useState(true);
 
   /* ── Song library (SQLite) ── */
   const [librarySongs, setLibrarySongs]       = useState<SongEntry[]>([]);
@@ -1270,7 +1268,6 @@ export default function ChordsScreen() {
 
   const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
-  const GENRES_ALL = ['', ...Array.from(new Set(allSongs.map(s => s.genre))).sort()];
 
   useEffect(() => {
     let cancelled = false;
@@ -1340,8 +1337,6 @@ export default function ChordsScreen() {
 
   const libResults = (() => {
     let list = libSearch.trim() ? libSearchHits : allSongs;
-    if (libGenre)   list = list.filter(s => s.genre === libGenre);
-    if (libDiff)    list = list.filter(s => s.difficulty === libDiff);
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
     if (libSearch.trim()) {
       list = [...list].sort((a, b) => {
@@ -1350,11 +1345,9 @@ export default function ChordsScreen() {
         if (ra !== rb) return ra - rb;
         return a.title.localeCompare(b.title);
       });
-    } else if (libSortBy === 'title') {
+    } else if (libSortAz) {
       list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     }
-    if (libSortBy === 'artist') list = [...list].sort((a,b) => a.artist.localeCompare(b.artist));
-    if (libSortBy === 'bpm')    list = [...list].sort((a,b) => (b.bpm ?? 0) - (a.bpm ?? 0));
     return list;
   })();
 
@@ -1796,6 +1789,133 @@ export default function ChordsScreen() {
       setLiveActive(true);
     }
   }
+
+  function clearPracticeSelection() {
+    setPracticeSong(null);
+    setPracticeInput('');
+    setPracticeChords([]);
+    setPracticeChordIdx(0);
+    setPracticeLyrics('');
+    setPracticeContentHint(null);
+    setPracticeFetchHint(null);
+    setOnDemandAttribution(null);
+    setAutoChordFetchDone(false);
+    setLyricsEditMode(false);
+    stopAutoScroll();
+  }
+
+  const onHardwareBack = useCallback((): boolean => {
+    if (showAddSong) {
+      setShowAddSong(false);
+      return true;
+    }
+    if (showProviderSettings) {
+      setShowProviderSettings(false);
+      return true;
+    }
+    if (showBasicChordsModal) {
+      setShowBasicChordsModal(false);
+      return true;
+    }
+    if (showInstrumentModal) {
+      setShowInstrumentModal(false);
+      return true;
+    }
+    if (showLibrary) {
+      setShowLibrary(false);
+      return true;
+    }
+    if (lyricsEditMode) {
+      setLyricsEditMode(false);
+      return true;
+    }
+    if (tabBarHidden) {
+      lyricsImmersiveRef.current = false;
+      setTabBarHidden(false);
+      setShowPracticePanel(true);
+      return true;
+    }
+    if (mode === 'practice' && practiceLyrics.trim().length > 0 && !showPracticePanel) {
+      setShowPracticePanel(true);
+      return true;
+    }
+    if (mode === 'practice' && (practiceSong || practiceInput.trim())) {
+      clearPracticeSelection();
+      return true;
+    }
+    if (mode === 'identify') {
+      if (isRecognizing) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        void stopRec();
+        setIsRecognizing(false);
+        setRecSecs(0);
+        return true;
+      }
+      if (
+        songResult
+        || lyrics
+        || libraryMatch
+        || ytUrl.trim()
+        || manualArtist.trim()
+        || manualTitle.trim()
+        || fileLoading
+        || ytLoading
+      ) {
+        clearIdentifyResult();
+        setYtUrl('');
+        setManualArtist('');
+        setManualTitle('');
+        setFileLoading(false);
+        setYtLoading(false);
+        return true;
+      }
+      if (identSource !== 'mic') {
+        setIdentSource('mic');
+        return true;
+      }
+      switchMode('practice');
+      return true;
+    }
+    if (mode === 'live' && liveActive) {
+      stopLive();
+      return true;
+    }
+    if (mode === 'live') {
+      switchMode('practice');
+      return true;
+    }
+    return false;
+  }, [
+    showAddSong,
+    showProviderSettings,
+    showBasicChordsModal,
+    showInstrumentModal,
+    showLibrary,
+    lyricsEditMode,
+    tabBarHidden,
+    setTabBarHidden,
+    mode,
+    practiceLyrics,
+    showPracticePanel,
+    practiceSong,
+    practiceInput,
+    isRecognizing,
+    songResult,
+    lyrics,
+    libraryMatch,
+    ytUrl,
+    manualArtist,
+    manualTitle,
+    fileLoading,
+    ytLoading,
+    identSource,
+  ]);
+
+  useFocusEffect(useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => sub.remove();
+  }, [onHardwareBack]));
 
   /* ── Practice: voice vs manually-selected chord ── */
   const practiceCurrentChord = practiceChords[practiceChordIdx] ?? '—';
@@ -2771,55 +2891,16 @@ export default function ChordsScreen() {
             ) : null}
           </View>
 
-          {/* Filter chips row */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}
-            style={styles.libGenreScroll} contentContainerStyle={{ gap: 6, paddingHorizontal: 14, paddingVertical: 5 }}>
-
-            {/* Favourites toggle */}
+          {/* Favorites + A→Z (search ranking unchanged when query set) */}
+          <View style={styles.libFilterRow}>
             <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
-              style={[styles.libGenrePill, libFavOnly && { backgroundColor: '#ff9800', borderColor: '#ff9800' }]}>
-              <Text style={[styles.libGenreText, libFavOnly && { color: '#000' }]}>⭐ Избранное</Text>
+              style={[styles.libFilterPill, libFavOnly && styles.libFilterPillActive]}>
+              <Text style={[styles.libFilterPillText, libFavOnly && styles.libFilterPillTextActive]}>⭐ Избранное</Text>
             </TouchableOpacity>
-
-            {/* Difficulty */}
-            {([0,1,2,3] as const).map(d => {
-              const labels = ['● Все', '● Легко', '● Средне', '● Сложно'];
-              const colors = ['#555','#00e676','#ffeb3b','#ff5252'];
-              return (
-                <TouchableOpacity key={d} onPress={() => setLibDiff(d)}
-                  style={[styles.libGenrePill, libDiff === d && { backgroundColor: colors[d], borderColor: colors[d] }]}>
-                  <Text style={[styles.libGenreText, libDiff === d && { color: '#0a0a0f', fontWeight: '800' }]}>{labels[d]}</Text>
-                </TouchableOpacity>
-              );
-            })}
-
-            {/* Genre separator */}
-            <View style={{ width: 1, backgroundColor: '#1e1e28', marginVertical: 4 }} />
-
-            {/* Genre pills */}
-            {GENRES_ALL.map(g => (
-              <TouchableOpacity key={g} onPress={() => setLibGenre(g)}
-                style={[styles.libGenrePill, libGenre === g && styles.libGenrePillActive]}>
-                <Text style={[styles.libGenreText, libGenre === g && { color: '#0a0a0f' }]}>
-                  {g || 'Все жанры'}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* Sort + count row */}
-          <View style={styles.libLegend}>
-            <View style={{ flexDirection: 'row', gap: 4 }}>
-              {(['title','artist','bpm'] as const).map(s => (
-                <TouchableOpacity key={s} onPress={() => setLibSortBy(s)}
-                  style={[{ paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: '#1e1e28' },
-                    libSortBy === s && { borderColor: '#7c4dff44', backgroundColor: '#7c4dff15' }]}>
-                  <Text style={{ color: libSortBy === s ? '#7c4dff' : '#444', fontSize: 10, fontWeight: '700' }}>
-                    {s === 'title' ? 'А→Я' : s === 'artist' ? 'Автор' : 'BPM'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <TouchableOpacity onPress={() => setLibSortAz(v => !v)}
+              style={[styles.libFilterPill, libSortAz && styles.libFilterPillSortActive]}>
+              <Text style={[styles.libFilterPillText, libSortAz && { color: '#7c4dff' }]}>А→Я</Text>
+            </TouchableOpacity>
             <Text style={styles.libCount}>{libResults.length} из {allSongs.length}</Text>
           </View>
           </View>
@@ -2838,7 +2919,7 @@ export default function ChordsScreen() {
                 <Text style={styles.identEmptyHint}>
                   {allSongs.length === 0
                     ? 'Каталог ещё загружается… Подождите секунду и повторите.'
-                    : 'Ничего не найдено по запросу. Проверьте написание или фильтры.'}
+                    : 'Ничего не найдено по запросу. Проверьте написание.'}
                 </Text>
               ) : null
             }
@@ -3984,6 +4065,12 @@ const styles = StyleSheet.create({
   libGenrePill:  { paddingHorizontal: 12, paddingVertical: 5, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
   libGenrePillActive: { backgroundColor: '#7c4dff', borderColor: '#7c4dff' },
   libGenreText:  { color: '#555', fontSize: 11, fontWeight: '600' },
+  libFilterRow:  { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 6 },
+  libFilterPill: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
+  libFilterPillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
+  libFilterPillSortActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff15' },
+  libFilterPillText: { color: '#555', fontSize: 11, fontWeight: '600' },
+  libFilterPillTextActive: { color: '#0a0a0f', fontWeight: '800' },
 
   libLegend:   { flexShrink: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 4 },
   libList:     { flex: 1, minHeight: 0 },
@@ -3992,7 +4079,7 @@ const styles = StyleSheet.create({
   libFormScroll: { flex: 1, minHeight: 0 },
   libDot:      { fontSize: 10 },
   libLegText:  { color: '#444', fontSize: 10, marginRight: 6 },
-  libCount:    { color: '#333', fontSize: 10 },
+  libCount:    { color: '#444', fontSize: 11, marginLeft: 'auto' },
 
   libItem:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderColor: '#111118' },
   libItemDot:   { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },

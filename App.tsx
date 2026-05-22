@@ -71,6 +71,8 @@ function AppInner() {
         }}
       >
         <Tab.Navigator
+          /* Android Back: previous tab, not always Tuner (overlays handled in screens) */
+          backBehavior="history"
           /* Сцена не должна дублировать нижний safe area — его даёт tabBarStyle.paddingBottom */
           safeAreaInsets={tabSafeInsets}
           screenOptions={({ route }) => ({
