@@ -1146,8 +1146,8 @@ export default function ChordsScreen() {
   }
 
   /* ── Practice chord progression ── */
-  const [practiceInput, setPracticeInput]     = useState('Am F C G');
-  const [practiceChords, setPracticeChords]   = useState<string[]>(['Am','F','C','G']);
+  const [practiceInput, setPracticeInput]     = useState('');
+  const [practiceChords, setPracticeChords]   = useState<string[]>([]);
   const [practiceChordIdx, setPracticeChordIdx] = useState(0);
   const [practiceSong, setPracticeSong]       = useState<SongEntry | null>(null);
   const [chordFetchLoading, setChordFetchLoading] = useState(false);
@@ -1225,6 +1225,7 @@ export default function ChordsScreen() {
 
   useFocusEffect(useCallback(() => {
     reloadLibrary().catch(() => {});
+    setShowLibrary(true);
   }, []));
 
   const allSongs = librarySongs;
@@ -2289,7 +2290,9 @@ export default function ChordsScreen() {
               </Text>
               <Text style={styles.lyricsEmptyHint} numberOfLines={4}>
                 {practiceContentHint ?? (
-                  'Выберите песню из БАЗЫ или вставьте текст (ред.).\nФормат: [Am]Слово [F]другое'
+                  practiceSong
+                    ? 'Выберите песню из БАЗЫ или вставьте текст (ред.).\nФормат: [Am]Слово [F]другое'
+                    : 'Выберите песню из базы (кнопка «База песен» вверху).'
                 )}
               </Text>
               {onDemandAttribution ? (

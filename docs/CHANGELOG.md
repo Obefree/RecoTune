@@ -6,7 +6,7 @@
 
 ### 2026-05-22
 
-- **Chords:** fix over-bracketing lyrics (`chordLyricsNormalize` — only whole chord tokens, not letters inside words). `npm run verify-chord-normalize`.
+- **Chords:** v2 нормализации текста (`stripSpuriousChordBrackets`, merge по числу слов) + база песен при фокусе вкладки. См. [docs/features/2026-05-22-chord-brackets-library-tab.md](./features/2026-05-22-chord-brackets-library-tab.md). `npm run verify-chord-normalize`.
 - **UX batch (7 fixes):** dev overlays, search rank, chord brackets, auto tabs, НАЙТИ, pitch smooth, melody contour. См. [docs/features/2026-05-22-ux-fixes-batch.md](./features/2026-05-22-ux-fixes-batch.md).
 - **Chords:** Vercel API табов, починка поиска, НАЙТИ без дубля каталога. См. [docs/features/2026-05-22-vercel-chord-api-nav-cleanup.md](./features/2026-05-22-vercel-chord-api-nav-cleanup.md), [docs/deploy-chord-api-vercel.md](./deploy-chord-api-vercel.md).
 - **Chords:** авто URL прокси из Expo debugger host + UI без AmDm/UG/URL. См. [docs/features/2026-05-22-auto-chord-proxy-ui.md](./features/2026-05-22-auto-chord-proxy-ui.md).

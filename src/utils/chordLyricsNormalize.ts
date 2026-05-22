@@ -5,7 +5,7 @@
  * - "When you were here before\nG\nCouldn't look you in the eye"
  *   → must NOT contain [e] inside When; G merges or becomes [G]
  * - "(Am) over you" → "[Am] over you"
- * - "G B C Cm" chord line above lyrics → chords merged, not letters bracketed
+ * - "G B C Cm" + lyric line → no [a] on articles; keep [G], [Am], [Cm]
  */
 
 const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
@@ -18,8 +18,36 @@ const CHORD_SLASH = `(?:\\/${ROOT})?`;
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
 
+/** Articles / pronouns that look like note names but are lyrics. */
+const COMMON_WORD_CHORD_FALSE_POS = new Set(['a', 'A', 'i', 'I']);
+
 function isChordToken(token: string): boolean {
   return VALID_CHORD_TOKEN_RE.test(token);
+}
+
+/** Bracket only real chord symbols in prose — not single-letter articles. */
+function isBareWordChordToken(token: string): boolean {
+  if (!isChordToken(token) || COMMON_WORD_CHORD_FALSE_POS.has(token)) return false;
+  if (token.length === 1) {
+    return /^[GBCDEF]$/i.test(token);
+  }
+  return true;
+}
+
+/** Keep [G]/[Am]; unwrap spurious [a], [e], [r], [A], [I]. */
+export function stripSpuriousChordBrackets(text: string): string {
+  return text.replace(/\[([^\]\n]+)\]/g, (match, inner: string) => {
+    const ch = inner.trim();
+    if (!ch) return match;
+    if (COMMON_WORD_CHORD_FALSE_POS.has(ch)) return ch;
+    if (ch.length === 1 && !isBareWordChordToken(ch)) return ch;
+    if (!isChordToken(ch)) return ch;
+    return match;
+  });
+}
+
+function lineHasSpuriousChordBrackets(line: string): boolean {
+  return /\[[^\]\n]+\]/.test(line) && stripSpuriousChordBrackets(line) !== line;
 }
 
 /** Split "word," into { lead, core, trail } punctuation around a token. */
@@ -39,24 +67,24 @@ function splitTokenPunctuation(token: string): {
 function parenToBrackets(text: string): string {
   return text.replace(/\(\s*([^)\n]+?)\s*\)/g, (match, inner: string) => {
     const ch = inner.trim();
-    return isChordToken(ch) ? `[${ch}]` : match;
+    return isBareWordChordToken(ch) ? `[${ch}]` : match;
   });
 }
 
 /** Bare chord tokens (whole words only) not already in [brackets] → [Chord] */
 function bracketBareChords(line: string): string {
-  if (!line.trim() || CHORD_MARKER_RE.test(line)) {
+  if (!line.trim() || CHORD_MARKER_RE.test(line) || lineHasSpuriousChordBrackets(line)) {
     return line;
   }
   return line.replace(/\S+/g, token => {
     if (token.includes('[')) return token;
     const { lead, core, trail } = splitTokenPunctuation(token);
-    if (!core || !isChordToken(core)) return token;
+    if (!core || !isBareWordChordToken(core)) return token;
     return `${lead}[${core}]${trail}`;
   });
 }
 
-/** Chord-only line (above lyrics in ChordPro) merged into next lyric line. */
+/** Chord-only line (above lyrics in ChordPro) merged into next lyric line when counts align. */
 function mergeChordLineAboveLyric(lines: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -71,14 +99,31 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
       tokens.length > 0 && tokens.every(t => isChordToken(t));
     if (allChords && i + 1 < lines.length && lines[i + 1].trim()) {
       const next = lines[i + 1];
-      const chords = tokens.map(c => `[${c}]`);
       const words = next.trim().split(/\s+/);
-      const merged = words
-        .map((w, wi) => `${chords[wi] ?? chords[chords.length - 1] ?? ''}${w}`)
-        .join(' ')
-        .replace(/\[\]/g, '');
-      out.push(merged);
-      i += 1;
+      if (tokens.length === 1) {
+        out.push(`[${tokens[0]}]${next.trim()}`);
+        i += 1;
+        continue;
+      }
+      if (tokens.length === words.length) {
+        const chords = tokens.map(c => `[${c}]`);
+        const merged = words
+          .map((w, wi) => `${chords[wi]}${w}`)
+          .join(' ')
+          .replace(/\[\]/g, '');
+        out.push(merged);
+        i += 1;
+        continue;
+      }
+      if (tokens.length > words.length && words.length > 0) {
+        const merged = words
+          .map((w, wi) => `${wi < tokens.length ? `[${tokens[wi]}]` : ''}${w}`)
+          .join(' ');
+        out.push(merged);
+        i += 1;
+        continue;
+      }
+      out.push(line);
       continue;
     }
     out.push(line);
@@ -91,6 +136,7 @@ export function normalizeLyricsChords(text: string): string {
   if (!text?.trim()) return text?.trim() ?? '';
 
   let normalized = text.replace(/\r\n/g, '\n').trim();
+  normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
 
   const lines = mergeChordLineAboveLyric(normalized.split('\n'));
@@ -98,5 +144,5 @@ export function normalizeLyricsChords(text: string): string {
     .map(line => bracketBareChords(parenToBrackets(line)))
     .join('\n');
 
-  return normalized.trim();
+  return stripSpuriousChordBrackets(normalized).trim();
 }
