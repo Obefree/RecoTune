@@ -1,5 +1,10 @@
 /** Query/field normalization for smart song search (typos, mixed RU/EN layout). */
 
+import {
+  swapKeyboardLayoutEnToRu,
+  swapKeyboardLayoutRuToEn,
+} from './keyboardLayoutSwap';
+
 const CYR_TO_LAT: Record<string, string> = {
   а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
   и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
@@ -37,13 +42,31 @@ export function combinedArtistTitle(artist: string, title: string): string {
   return normalizeSearchText(`${artist} ${title}`);
 }
 
+/** Alternate spellings: wrong keyboard layout, translit. */
+export function searchQueryVariants(query: string): string[] {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const out = new Set<string>([trimmed]);
+  const hasCyr = /[а-яё]/i.test(trimmed);
+  const hasLat = /[a-z]/i.test(trimmed);
+  if (hasLat && !hasCyr) out.add(swapKeyboardLayoutEnToRu(trimmed));
+  if (hasCyr) out.add(swapKeyboardLayoutRuToEn(trimmed));
+  return [...out].filter(v => v.trim().length > 0);
+}
+
 /** Latin (translit) + Cyrillic forms for cross-script substring match. */
 export function searchQueryForms(query: string): { latin: string; native: string } {
   const trimmed = query.trim();
-  return {
-    latin: normalizeSearchText(trimmed, true),
-    native: normalizeSearchText(trimmed, false),
-  };
+  const forms = searchQueryVariants(trimmed).flatMap(v => [
+    normalizeSearchText(v, true),
+    normalizeSearchText(v, false),
+  ]);
+  const latin = forms.filter(Boolean).sort((a, b) => b.length - a.length)[0] ?? '';
+  const native = searchQueryVariants(trimmed)
+    .map(v => normalizeSearchText(v, false))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)[0] ?? normalizeSearchText(trimmed, false);
+  return { latin, native };
 }
 
 export function blobMatchesQuery(blob: string, forms: { latin: string; native: string }): boolean {

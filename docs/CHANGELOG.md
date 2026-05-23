@@ -6,6 +6,7 @@
 
 ### 2026-05-23
 
+- **Chords:** поиск (раскладка RU/EN, metadata) и подгрузка табов — без stub-заглушек, подсказки proxy/Vercel, AmDm multi-query. См. [docs/features/2026-05-23-chord-search-fetch-reliability.md](./features/2026-05-23-chord-search-fetch-reliability.md).
 - **Chords / Практика:** надёжный свайп текста — `delayPressIn` на аккордах, View вместо nested ScrollView, стоп авто при касании. См. [docs/features/2026-05-23-practice-lyrics-finger-scroll.md](./features/2026-05-23-practice-lyrics-finger-scroll.md).
 
 ### 2026-05-22

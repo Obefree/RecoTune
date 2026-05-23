@@ -78,7 +78,7 @@ async function mergeMetadataHits(
   query: string,
   limit: number,
 ): Promise<void> {
-  const metaHits = await searchMetadataCatalog(query, { limit: Math.min(limit, 50) });
+  const metaHits = await searchMetadataCatalog(query, { limit: Math.min(limit, 80) });
   for (const h of metaHits) {
     const song = await metadataTrackToSongEntry(h);
     const resolved = resolveSongEntry(song);

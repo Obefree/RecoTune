@@ -106,67 +106,78 @@ function pickAmdmSongUrl(searchHtml, artist, title) {
   return uniq.sort((a, b) => scoreAmdmLink(b, artist, title) - scoreAmdmLink(a, artist, title))[0];
 }
 
-/** Fetch one song from amdm.ru → ChordPro text. */
-export async function fetchAmdmChordPro(artist, title) {
-  const searchUrl = `https://amdm.ru/search/?q=${encodeURIComponent(`${artist} ${title}`.trim())}`;
-
-  let searchHtml;
-  try {
-    const { res, text } = await fetchText(searchUrl);
-    if (!res.ok) {
-      return stubChordPro(artist, title, `Поиск: HTTP ${res.status}`, searchUrl);
-    }
-    searchHtml = text;
-  } catch (e) {
-    return stubChordPro(
-      artist,
-      title,
-      `Нет связи с amdm.ru (${e?.message ?? 'network'})`,
-      searchUrl,
-    );
+/** Search query variants for AmDm (artist/title order, title-only, artist-only). */
+export function buildAmdmSearchQueries(artist, title) {
+  const a = String(artist ?? '').trim();
+  const t = String(title ?? '').trim();
+  const out = [];
+  const add = (q) => {
+    const s = q.replace(/\s+/g, ' ').trim();
+    if (s.length >= 2 && !out.includes(s)) out.push(s);
+  };
+  if (a && t) {
+    add(`${a} ${t}`);
+    add(`${t} ${a}`);
   }
+  if (t) add(t);
+  if (a) add(a);
+  return out;
+}
 
+async function fetchAmdmFromSearchHtml(searchHtml, artist, title, searchUrl) {
   const songUrl = pickAmdmSongUrl(searchHtml, artist, title);
   if (!songUrl) {
-    return stubChordPro(artist, title, 'На странице поиска нет ссылок на табы', searchUrl);
+    return { ok: false, stub: stubChordPro(artist, title, 'На странице поиска нет ссылок на табы', searchUrl) };
   }
 
   let songHtml;
   try {
     const { res, text } = await fetchText(songUrl);
     if (!res.ok) {
-      return stubChordPro(artist, title, `Страница таба: HTTP ${res.status}`, songUrl);
+      return {
+        ok: false,
+        stub: stubChordPro(artist, title, `Страница таба: HTTP ${res.status}`, songUrl),
+      };
     }
     songHtml = text;
   } catch (e) {
-    return stubChordPro(
-      artist,
-      title,
-      `Не удалось открыть таб (${e?.message ?? 'network'})`,
-      songUrl,
-    );
+    return {
+      ok: false,
+      stub: stubChordPro(
+        artist,
+        title,
+        `Не удалось открыть таб (${e?.message ?? 'network'})`,
+        songUrl,
+      ),
+    };
   }
 
   const $ = cheerio.load(songHtml);
   const ogTitle = $('meta[property="og:title"]').attr('content')?.trim();
   const preHtml = $('pre').first().html()?.trim();
   if (!preHtml) {
-    return stubChordPro(
-      artist,
-      title,
-      'На странице нет блока с аккордами (возможна защита)',
-      songUrl,
-    );
+    return {
+      ok: false,
+      stub: stubChordPro(
+        artist,
+        title,
+        'На странице нет блока с аккордами (возможна защита)',
+        songUrl,
+      ),
+    };
   }
 
   const lines = amdmPreHtmlToChordProLines(preHtml);
   if (lines.length < 2) {
-    return stubChordPro(
-      artist,
-      title,
-      'Парсер нашёл слишком мало строк — проверьте исполнителя',
-      songUrl,
-    );
+    return {
+      ok: false,
+      stub: stubChordPro(
+        artist,
+        title,
+        'Парсер нашёл слишком мало строк — проверьте исполнителя',
+        songUrl,
+      ),
+    };
   }
 
   let parsedArtist = artist;
@@ -186,7 +197,58 @@ export async function fetchAmdmChordPro(artist, title) {
     sourceUrl: songUrl,
   });
 
-  return { chordPro, sourceUrl: songUrl, title: parsedTitle, artist: parsedArtist };
+  return {
+    ok: true,
+    chordPro,
+    sourceUrl: songUrl,
+    title: parsedTitle,
+    artist: parsedArtist,
+  };
+}
+
+/** Fetch one song from amdm.ru → ChordPro text (tries several search queries). */
+export async function fetchAmdmChordPro(artist, title) {
+  const queries = buildAmdmSearchQueries(artist, title);
+  let lastStub = null;
+  let lastSearchUrl = `https://amdm.ru/search/?q=${encodeURIComponent(`${artist} ${title}`.trim())}`;
+
+  for (const q of queries) {
+    const searchUrl = `https://amdm.ru/search/?q=${encodeURIComponent(q)}`;
+    lastSearchUrl = searchUrl;
+    let searchHtml;
+    try {
+      const { res, text } = await fetchText(searchUrl);
+      if (!res.ok) {
+        lastStub = stubChordPro(artist, title, `Поиск: HTTP ${res.status}`, searchUrl);
+        continue;
+      }
+      searchHtml = text;
+    } catch (e) {
+      lastStub = stubChordPro(
+        artist,
+        title,
+        `Нет связи с amdm.ru (${e?.message ?? 'network'})`,
+        searchUrl,
+      );
+      continue;
+    }
+
+    const picked = await fetchAmdmFromSearchHtml(searchHtml, artist, title, searchUrl);
+    if (picked.ok) {
+      return {
+        chordPro: picked.chordPro,
+        sourceUrl: picked.sourceUrl,
+        title: picked.title,
+        artist: picked.artist,
+      };
+    }
+    lastStub = picked.stub ?? lastStub;
+  }
+
+  return (
+    lastStub ??
+    stubChordPro(artist, title, 'Таб не найден на AmDm — проверьте название', lastSearchUrl)
+  );
 }
 
 export async function handleChordFetchRequest(body) {
@@ -210,5 +272,14 @@ export async function handleChordFetchRequest(body) {
   }
 
   const result = await fetchAmdmChordPro(artist, title);
+  if (result.stub) {
+    const reason =
+      result.chordPro?.match(/\{comment:\s*([^}]+)\}/i)?.[1]?.trim() ??
+      'Таб не найден на AmDm';
+    return { status: 404, payload: { error: reason, stub: true, sourceUrl: result.sourceUrl } };
+  }
+  if (!result.chordPro?.trim()) {
+    return { status: 404, payload: { error: 'Пустой ответ AmDm' } };
+  }
   return { status: 200, payload: result };
 }

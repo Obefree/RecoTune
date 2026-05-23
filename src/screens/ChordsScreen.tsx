@@ -41,7 +41,6 @@ import {
 } from '../metadata/metadataSync';
 import { ChordFetchError } from '../providers/chordFetchProxy';
 import { fetchAmdmChordSheet } from '../providers/amdmProvider';
-import { fetchUltimateGuitarChordSheet } from '../providers/ultimateGuitarProvider';
 import type { OnDemandChordProviderId, ProviderAttribution } from '../providers/types';
 import { searchProviders, searchResultToSongEntry } from '../providers/registry';
 import { ensureAutoChordProxySettings } from '../providers/autoChordProxy';
@@ -1389,10 +1388,26 @@ export default function ChordsScreen() {
 
   function practiceFetchHintForSettings(settings: ProviderSettings): string | null {
     const hasUrl = !!(settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl());
-    if (!hasUrl || !settings.enabled.amdm) {
-      return 'Табы онлайн подгрузятся при настроенном сервере или dev-proxy';
+    if (!hasUrl) {
+      return 'Табы онлайн: EXPO_PUBLIC_CHORD_FETCH_URL, Vercel /api/fetch-chords или dev-proxy :8787';
+    }
+    if (!settings.enabled.amdm) {
+      return 'Включите AmDm в ⚙ Источники песен';
     }
     return null;
+  }
+
+  function chordFetchErrorHint(e: unknown): string {
+    const msg = e instanceof ChordFetchError ? e.message : 'Подгрузка таба не удалась';
+    return msg.length > 120 ? `${msg.slice(0, 120)}…` : msg;
+  }
+
+  function librarySearchEmptyHint(): string {
+    const hasProxy = !!(providerSettings?.chordFetchProxyUrl.trim() || resolveChordFetchUrl());
+    const base =
+      'Ничего не найдено — проверьте написание (латиница/кириллица, раскладка). В каталоге ~32 песни с аккордами и тысячи названий из метаданных.';
+    if (hasProxy) return `${base} Полный таб — после выбора песни.`;
+    return `${base} Онлайн-табы: Vercel или dev-proxy на ПК (⚙ Источники).`;
   }
 
   async function enrichSongForPractice(base: SongEntry): Promise<{
@@ -1450,7 +1465,14 @@ export default function ChordsScreen() {
         }
         working = full;
       } catch (e) {
-        if (__DEV__) console.warn('[RecoTune] silent online tab fetch', e);
+        if (__DEV__) console.warn('[RecoTune] online tab fetch', e);
+        const fetchErr = chordFetchErrorHint(e);
+        return {
+          song: working,
+          lyrics: working.lyrics?.trim() ? working.lyrics : undefined,
+          hint: fetchErr,
+          stillNeedsFetch: true,
+        };
       }
     }
 
@@ -1694,18 +1716,15 @@ export default function ChordsScreen() {
   }
 
   async function runOnDemandChordFetch(
-    provider: OnDemandChordProviderId,
+    _provider: OnDemandChordProviderId = 'amdm',
     options?: { silent?: boolean },
   ) {
     const base = practiceSong;
     if (!base || chordFetchLoading) return;
     setChordFetchLoading(true);
     try {
-      const detail =
-        provider === 'amdm'
-          ? await fetchAmdmChordSheet(base.artist, base.title)
-          : await fetchUltimateGuitarChordSheet(base.artist, base.title);
-      const persisted = await ensureSongInUserLibrary(detail, provider);
+      const detail = await fetchAmdmChordSheet(base.artist, base.title);
+      const persisted = await ensureSongInUserLibrary(detail, 'amdm');
       await upsertUserSong(persisted);
       await reloadLibrary();
       setOnDemandAttribution(detail.attribution ?? null);
@@ -1726,10 +1745,7 @@ export default function ChordsScreen() {
     } catch (e) {
       if (__DEV__) console.warn('[RecoTune] on-demand chord fetch', e);
       if (!options?.silent) {
-        const msg = e instanceof ChordFetchError
-          ? e.message
-          : 'Не удалось загрузить аккорды';
-        setPracticeFetchHint(msg.length > 72 ? `${msg.slice(0, 72)}…` : msg);
+        setPracticeFetchHint(chordFetchErrorHint(e));
       }
     } finally {
       setChordFetchLoading(false);
@@ -1741,27 +1757,12 @@ export default function ChordsScreen() {
     void (async () => {
       const settings = await getProviderSettings();
       const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
-      const providers: OnDemandChordProviderId[] = [];
-      if (settings.enabled.amdm && proxyUrl) providers.push('amdm');
-      if (settings.enabled.ultimate_guitar && proxyUrl) providers.push('ultimate_guitar');
-      if (providers.length === 0) {
+      if (!settings.enabled.amdm || !proxyUrl) {
         setPracticeFetchHint(practiceFetchHintForSettings(settings) ?? 'Табы онлайн: укажите сервер в .env или dev-proxy');
         void openProviderSettings();
         return;
       }
-      if (providers.length === 1) {
-        void runOnDemandChordFetch(providers[0]);
-        return;
-      }
-      Alert.alert(
-        'Подгрузить таб',
-        `${practiceSong.artist} — ${practiceSong.title}`,
-        [
-          { text: 'Таб из интернета', onPress: () => void runOnDemandChordFetch('amdm') },
-          { text: 'Доп. источник (скоро)', onPress: () => void runOnDemandChordFetch('ultimate_guitar') },
-          { text: 'Отмена', style: 'cancel' },
-        ],
-      );
+      void runOnDemandChordFetch('amdm');
     })();
   }
 
@@ -2971,7 +2972,7 @@ export default function ChordsScreen() {
                 <Text style={styles.identEmptyHint}>
                   {allSongs.length === 0
                     ? 'Каталог ещё загружается… Подождите секунду и повторите.'
-                    : 'Ничего не найдено по запросу. Проверьте написание.'}
+                    : librarySearchEmptyHint()}
                 </Text>
               ) : null
             }

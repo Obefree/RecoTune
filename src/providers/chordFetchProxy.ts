@@ -29,7 +29,18 @@ export type ChordProxyResponse = {
   title?: string;
   artist?: string;
   sourceUrl?: string;
+  stub?: boolean;
+  error?: string;
 };
+
+/** Server-side placeholder when AmDm is unreachable or parse failed — must not be shown as a real tab. */
+export function isChordProStubBody(body: string): boolean {
+  const t = body.trim();
+  if (!t) return true;
+  if (/\{comment:\s*stub/i.test(t)) return true;
+  if (/Тестовая заглушка/i.test(t)) return true;
+  return false;
+}
 
 function stableOnDemandUserId(provider: OnDemandChordProviderId, title: string, artist: string): string {
   const prefix = provider === 'amdm' ? 'custom_amdm_' : 'custom_ug_';
@@ -90,8 +101,15 @@ export async function postChordFetchProxy(
   const contentType = res.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
     const data = (await res.json()) as ChordProxyResponse;
-    if (!data.chordPro?.trim() && !data.text?.trim()) {
+    if (data.stub || data.error?.trim()) {
+      throw new ChordFetchError(data.error?.trim() || 'Таб не найден на сайте.');
+    }
+    const body = (data.chordPro ?? data.text ?? '').trim();
+    if (!body) {
       throw new ChordFetchError('Пустой ответ при подгрузке таба.');
+    }
+    if (isChordProStubBody(body)) {
+      throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
     }
     return data;
   }
@@ -99,6 +117,9 @@ export async function postChordFetchProxy(
   const text = (await res.text()).trim();
   if (!text) {
     throw new ChordFetchError('Пустой ответ при подгрузке таба.');
+  }
+  if (isChordProStubBody(text)) {
+    throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
   }
   return { chordPro: text, title, artist };
 }
@@ -111,6 +132,9 @@ function proxyResponseToPayload(
   const body = (raw.chordPro ?? raw.text ?? '').trim();
   if (!body) {
     throw new ChordFetchError('Пустой текст таба.');
+  }
+  if (isChordProStubBody(body)) {
+    throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
   }
   const parsed = parseChordProText(body, raw.title?.trim() || title);
   const entry = chordProToSongEntry(parsed);
@@ -125,6 +149,25 @@ function proxyResponseToPayload(
     difficulty: entry.difficulty,
     sourceUrl: raw.sourceUrl,
   };
+}
+
+function artistTitleFetchVariants(artist: string, title: string): { artist: string; title: string }[] {
+  const a = artist.trim();
+  const t = title.trim();
+  const variants: { artist: string; title: string }[] = [];
+  const key = (x: { artist: string; title: string }) => `${x.artist}\0${x.title}`;
+  const seen = new Set<string>();
+  const add = (x: { artist: string; title: string }) => {
+    if (!x.title.trim()) return;
+    const k = key(x);
+    if (seen.has(k)) return;
+    seen.add(k);
+    variants.push({ artist: x.artist.trim(), title: x.title.trim() });
+  };
+  add({ artist: a, title: t });
+  if (a && t) add({ artist: t, title: a });
+  if (t) add({ artist: a || t, title: t });
+  return variants;
 }
 
 export async function fetchOnDemandChordSheet(
@@ -142,18 +185,44 @@ export async function fetchOnDemandChordSheet(
     );
   }
 
+  if (provider === 'ultimate_guitar') {
+    throw new ChordFetchError(
+      'Ultimate Guitar пока недоступен — используйте «Таб из интернета» (AmDm).',
+    );
+  }
+
   const id = stableOnDemandUserId(provider, title, artist);
   const cached = await getChordCache(provider, artist, title);
   if (cached) {
-    return chordCacheToSongDetail(cached, provider, id, attribution());
+    const lyrics = cached.lyrics?.trim() ?? '';
+    if (!lyrics || !isChordProStubBody(lyrics)) {
+      return chordCacheToSongDetail(cached, provider, id, attribution());
+    }
   }
 
-  const raw = await postChordFetchProxy(provider, artist, title, proxyUrl);
-  const payload = proxyResponseToPayload(raw, artist, title);
-  await setChordCache(provider, artist, title, payload);
+  const variants = artistTitleFetchVariants(artist, title);
+  let lastError: ChordFetchError | null = null;
 
-  return chordCacheToSongDetail(payload, provider, id, {
-    ...attribution(),
-    url: payload.sourceUrl ?? attribution().url,
-  });
+  for (const v of variants) {
+    try {
+      const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl);
+      const payload = proxyResponseToPayload(raw, v.artist, v.title);
+      if (payload.lyrics && isChordProStubBody(payload.lyrics)) {
+        throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
+      }
+      await setChordCache(provider, artist, title, payload);
+      return chordCacheToSongDetail(payload, provider, id, {
+        ...attribution(),
+        url: payload.sourceUrl ?? attribution().url,
+      });
+    } catch (e) {
+      if (e instanceof ChordFetchError) lastError = e;
+      else lastError = new ChordFetchError('Подгрузка таба не удалась.');
+    }
+  }
+
+  throw (
+    lastError ??
+    new ChordFetchError('Таб не найден. Проверьте интернет, proxy/Vercel и написание песни.')
+  );
 }

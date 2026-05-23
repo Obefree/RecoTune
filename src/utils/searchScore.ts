@@ -1,4 +1,4 @@
-import { normalizeSearchText, tokenizeQuery } from './searchNormalize';
+import { normalizeSearchText, searchQueryVariants, tokenizeQuery } from './searchNormalize';
 
 export type MatchKind = 'exact' | 'prefix' | 'contains' | 'fuzzy' | 'none';
 
@@ -63,7 +63,7 @@ function fieldScore(queryNorm: string, fieldNorm: string, tokens: string[]): { s
   return { score: 0, kind: 'none' };
 }
 
-export function scoreSongAgainstQuery(
+function scoreSongAgainstQueryOnce(
   query: string,
   title: string,
   artist: string,
@@ -87,6 +87,23 @@ export function scoreSongAgainstQuery(
   let best: { score: number; kind: MatchKind } = { score: 0, kind: 'none' };
   const kindRank: Record<MatchKind, number> = { exact: 4, prefix: 3, contains: 2, fuzzy: 1, none: 0 };
   for (const s of scores) {
+    if (s.score > best.score || (s.score === best.score && kindRank[s.kind] > kindRank[best.kind])) {
+      best = s;
+    }
+  }
+  return best;
+}
+
+export function scoreSongAgainstQuery(
+  query: string,
+  title: string,
+  artist: string,
+): { score: number; kind: MatchKind } {
+  const variants = searchQueryVariants(query);
+  let best: { score: number; kind: MatchKind } = { score: 0, kind: 'none' };
+  const kindRank: Record<MatchKind, number> = { exact: 4, prefix: 3, contains: 2, fuzzy: 1, none: 0 };
+  for (const v of variants) {
+    const s = scoreSongAgainstQueryOnce(v, title, artist);
     if (s.score > best.score || (s.score === best.score && kindRank[s.kind] > kindRank[best.kind])) {
       best = s;
     }
