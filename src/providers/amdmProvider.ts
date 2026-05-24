@@ -5,7 +5,7 @@ export function amdmAttribution(): ProviderAttribution {
   return {
     label: 'Таб из интернета',
     url: 'https://amdm.ru/',
-    licenseNote: 'Подгрузка по запросу через ваш сервер или dev-proxy.',
+    licenseNote: 'Подгрузка с AmDm через прокси на ПК (npm run dev-proxy).',
   };
 }
 

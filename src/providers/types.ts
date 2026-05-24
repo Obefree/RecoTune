@@ -123,7 +123,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
 
   lyrics: 'Текст',
 
-  amdm: 'Табы онлайн',
+  amdm: 'Табы с AmDm',
 
   ultimate_guitar: 'Доп. источник (скоро)',
 

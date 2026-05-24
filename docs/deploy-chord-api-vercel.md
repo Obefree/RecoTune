@@ -1,6 +1,8 @@
-# Deploy chord-fetch API на Vercel (5 шагов)
+# Опционально: chord-fetch API на Vercel
 
-RecoTune подгружает табы через **ваш** serverless endpoint — без постоянного ПК.
+> **Основной способ для разработки:** [chord-fetch-local-proxy.md](./chord-fetch-local-proxy.md) — `npm run dev-proxy` на ПК, Expo Go в той же Wi‑Fi.
+
+Развёртывание на Vercel нужно только если хотите подгружать табы **без** запущенного прокси на компьютере (например, телефон вне домашней сети).
 
 ## 1. Репозиторий на GitHub
 
@@ -14,56 +16,38 @@ RecoTune подгружает табы через **ваш** serverless endpoint
 
 ## 3. Deploy
 
-Нажмите **Deploy**. После сборки скопируйте URL проекта, например:
-
-`https://recotune-xxxx.vercel.app`
-
-Проверка в браузере или curl:
+После сборки скопируйте URL, например `https://recotune-xxxx.vercel.app`.
 
 ```bash
-curl -X POST "https://ВАШ-ПРОЕКТ.vercel.app/api/fetch-chords" \
-  -H "Content-Type: application/json" \
-  -d "{\"artist\":\"Кино\",\"title\":\"Группа крови\",\"provider\":\"amdm\"}"
+node tools/chord-fetch/test-endpoint.mjs https://ВАШ-ПРОЕКТ.vercel.app/api/fetch-chords
 ```
-
-В ответе — JSON с полями `chordPro` и `sourceUrl`.
 
 ## 4. URL в приложении
 
-**Вариант A (рекомендуется)** — файл `.env` в корне RecoTune:
+**Вариант A** — `.env` в корне RecoTune:
 
 ```env
 EXPO_PUBLIC_CHORD_FETCH_URL=https://ВАШ-ПРОЕКТ.vercel.app/api/fetch-chords
 ```
 
-Перезапустите Expo: `npx expo start -c`.
+**Вариант B** — ⚙ → **Свой URL (опционально, Vercel)** → вставить URL → сохранить.
 
-**Вариант B** — `app.json` → `expo.extra.chordFetchApiUrl`:
+**Вариант C** — `app.json` → `expo.extra.chordFetchApiUrl` (низкий приоритет; Metro :8787 важнее).
 
-```json
-"extra": {
-  "chordFetchApiUrl": "https://ВАШ-ПРОЕКТ.vercel.app/api/fetch-chords"
-}
-```
+Приоритет при подгрузке: сохранённый URL (если вы явно задали Vercel) → `EXPO_PUBLIC_*` → Metro `:8787/fetch` → `app.json`.
 
-Приоритет: `EXPO_PUBLIC_CHORD_FETCH_URL` → Metro `:8787/fetch` (dev-proxy) → `chordFetchApiUrl`.
+## 5. Включить «Табы с AmDm»
 
-## 5. Включить «Табы онлайн»
+Практика → **⚙** → включить **Табы с AmDm**.
 
-В приложении: **Практика** → **⚙** → включить **Табы онлайн** (или автоматически после первого запуска с URL).
-
-Локально без Vercel:
-
-```bash
-cd tools/chord-fetch && npm install && npm run dev-proxy
-```
-
-Телефон и ПК в одной Wi‑Fi, Expo Go — URL подставится на `http://<IP-ПК>:8787/fetch`.
-
-## Локальная проверка API
+## Локальная проверка handler
 
 ```bash
 npx vercel dev
 ```
 
-POST на `http://localhost:3000/api/fetch-chords` с тем же телом JSON.
+POST на `http://localhost:3000/api/fetch-chords` с телом:
+
+```json
+{ "provider": "amdm", "artist": "Radiohead", "title": "Creep" }
+```

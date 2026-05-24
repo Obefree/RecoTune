@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-24 | Chords: прокси на ПК по умолчанию (без Vercel) | [2026-05-24-chord-fetch-pc-proxy-default.md](./2026-05-24-chord-fetch-pc-proxy-default.md) |
 | 2026-05-24 | Chords: URL API табов, диагностика | [2026-05-24-chord-fetch-url-ux.md](./2026-05-24-chord-fetch-url-ux.md) |
 | 2026-05-24 | Pitch-графики: parity Tuner / Chords / Melody | [2026-05-24-pitch-chart-parity-tuner-chords.md](./2026-05-24-pitch-chart-parity-tuner-chords.md) |
 | 2026-05-24 | Melody: ось времени на графике (без разгона) | [2026-05-24-melody-chart-time-axis.md](./2026-05-24-melody-chart-time-axis.md) |

@@ -46,11 +46,14 @@ import type { OnDemandChordProviderId, ProviderAttribution } from '../providers/
 import { searchProviders, searchResultToSongEntry } from '../providers/registry';
 import { ensureAutoChordProxySettings } from '../providers/autoChordProxy';
 import {
+  CHORD_FETCH_DEV_PROXY_CMD,
   chordFetchSetupHint,
   getEffectiveChordFetchUrl,
   normalizeChordFetchUrl,
   resolveChordFetchUrl,
   resolveChordFetchUrlDetailed,
+  resolveChordFetchUrlForAutoFill,
+  resolveChordFetchUrlForAutoFillDetailed,
 } from '../providers/chordFetchUrl';
 import {
   getProviderSettings,
@@ -1334,6 +1337,7 @@ export default function ChordsScreen() {
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [chordFetchProbeStatus, setChordFetchProbeStatus] = useState<string | null>(null);
   const [chordFetchProbeBusy, setChordFetchProbeBusy] = useState(false);
+  const [showAdvancedChordFetchUrl, setShowAdvancedChordFetchUrl] = useState(false);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [libFavOnly, setLibFavOnly]           = useState(false);
   const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
@@ -1507,7 +1511,9 @@ export default function ChordsScreen() {
   }
 
   function effectiveChordFetchUrl(settings?: ProviderSettings | null): string {
-    return getEffectiveChordFetchUrl(settings?.chordFetchProxyUrl);
+    return getEffectiveChordFetchUrl(settings?.chordFetchProxyUrl, {
+      userExplicit: settings?.chordFetchProxyUserSet === true,
+    });
   }
 
   function practiceFetchHintForSettings(settings: ProviderSettings): string | null {
@@ -1516,7 +1522,7 @@ export default function ChordsScreen() {
       return chordFetchSetupHint();
     }
     if (!settings.enabled.amdm) {
-      return 'Включите «Табы онлайн» в ⚙ Источники песен';
+      return 'Включите «Табы с AmDm» в ⚙ Источники песен';
     }
     return null;
   }
@@ -1531,7 +1537,7 @@ export default function ChordsScreen() {
     const base =
       'Ничего не найдено — проверьте написание (латиница/кириллица, раскладка). В каталоге ~32 песни с аккордами и тысячи названий из метаданных.';
     if (hasProxy) return `${base} Полный таб — после выбора песни.`;
-    return `${base} Онлайн-табы: Vercel или dev-proxy на ПК (⚙ Источники).`;
+    return `${base} Полный таб — прокси на ПК (${CHORD_FETCH_DEV_PROXY_CMD}, ⚙ Источники).`;
   }
 
   async function enrichSongForPractice(base: SongEntry): Promise<{
@@ -3244,7 +3250,7 @@ export default function ChordsScreen() {
               showsVerticalScrollIndicator
             >
             <Text style={{ color: '#666', fontSize: 11, marginBottom: 10 }}>
-              Каталог и «Мои» — офлайн. Полный таб — «Табы онлайн» (ваш Vercel API или dev-proxy на ПК).
+              Каталог и «Мои» — офлайн. Полный таб с AmDm — прокси на компьютере (телефон и ПК в одной Wi‑Fi).
             </Text>
             {providerSettings && (
               <>
@@ -3263,91 +3269,135 @@ export default function ChordsScreen() {
                     size={22}
                     color={PROVIDER_BADGE_COLORS.amdm}
                   />
-                  <Text style={{ color: '#ddd', marginLeft: 10, flex: 1 }}>Табы онлайн</Text>
-                </TouchableOpacity>
-                <Text style={{ color: '#888', fontSize: 11, marginTop: 12, marginBottom: 6 }}>
-                  URL подгрузки табов (Vercel …/api/fetch-chords или dev-proxy …:8787/fetch)
-                </Text>
-                <TextInput
-                  style={[styles.urlInput, { marginBottom: 6 }]}
-                  placeholder="https://ваш-проект.vercel.app/api/fetch-chords"
-                  placeholderTextColor="#333"
-                  value={providerSettings.chordFetchProxyUrl}
-                  onChangeText={v => {
-                    setChordFetchProbeStatus(null);
-                    setProviderSettings(s =>
-                      s ? { ...s, chordFetchProxyUrl: v } : s,
-                    );
-                  }}
-                  onEndEditing={() => {
-                    if (!providerSettings) return;
-                    const normalized = normalizeChordFetchUrl(providerSettings.chordFetchProxyUrl);
-                    if (normalized !== providerSettings.chordFetchProxyUrl) {
-                      setProviderSettings(s => (s ? { ...s, chordFetchProxyUrl: normalized } : s));
-                    }
-                  }}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <Text style={{ color: '#555', fontSize: 10, marginBottom: 8 }}>
-                  Авто: {resolveChordFetchUrlDetailed().sourceLabel}
-                  {resolveChordFetchUrl() ? ` → ${resolveChordFetchUrl()}` : ' (не найден)'}
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                  <TouchableOpacity
-                    style={[styles.identBtnBig, { flex: 1, backgroundColor: '#1565c044' }]}
-                    onPress={() => {
-                      const detected = normalizeChordFetchUrl(resolveChordFetchUrl());
-                      if (!detected) {
-                        Alert.alert(
-                          'URL не найден',
-                          chordFetchSetupHint(),
-                        );
-                        return;
-                      }
-                      const next = {
-                        ...providerSettings,
-                        chordFetchProxyUrl: detected,
-                        devProxyUrlHintDismissed: true,
-                      };
-                      void persistProviderSettings(next);
-                      setChordFetchProbeStatus(null);
-                    }}
-                  >
-                    <Text style={styles.identBtnBigText}>Подставить авто</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.identBtnBig, { flex: 1, backgroundColor: '#00e67633' }]}
-                    disabled={chordFetchProbeBusy}
-                    onPress={() => {
-                      const url = effectiveChordFetchUrl(providerSettings);
-                      if (!url) {
-                        Alert.alert('Нет URL', chordFetchSetupHint());
-                        return;
-                      }
-                      setChordFetchProbeBusy(true);
-                      setChordFetchProbeStatus('Проверка Creep…');
-                      void probeChordFetchEndpoint(url)
-                        .then(msg => setChordFetchProbeStatus(msg))
-                        .finally(() => setChordFetchProbeBusy(false));
-                    }}
-                  >
-                    <Text style={styles.identBtnBigText}>
-                      {chordFetchProbeBusy ? '…' : 'Проверить'}
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={{ color: '#ddd' }}>Табы с AmDm</Text>
+                    <Text style={{ color: '#666', fontSize: 10, marginTop: 2 }}>
+                      через прокси на компьютере
                     </Text>
-                  </TouchableOpacity>
-                </View>
-                {chordFetchProbeStatus ? (
-                  <Text
-                    style={{
-                      color: chordFetchProbeStatus.startsWith('OK') ? '#00e676' : '#ff9800',
-                      fontSize: 11,
-                      marginBottom: 10,
-                    }}
-                    numberOfLines={4}
-                  >
-                    {chordFetchProbeStatus}
+                  </View>
+                </TouchableOpacity>
+                <View
+                  style={{
+                    backgroundColor: '#1a1a28',
+                    borderRadius: 10,
+                    padding: 12,
+                    marginTop: 10,
+                    marginBottom: 10,
+                  }}
+                >
+                  <Text style={{ color: '#bbb', fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
+                    Прокси на ПК
                   </Text>
+                  <Text style={{ color: '#888', fontSize: 11, lineHeight: 16, marginBottom: 6 }}>
+                    1. В терминале на компьютере (папка RecoTune):{'\n'}
+                    <Text style={{ color: '#9cf' }}>{CHORD_FETCH_DEV_PROXY_CMD}</Text>
+                    {'\n'}2. Телефон и ПК в одной Wi‑Fi, приложение через Expo Go{'\n'}
+                    3. Нажмите «Подставить авто» — подставится http://IP-ПК:8787/fetch
+                  </Text>
+                  <Text style={{ color: '#555', fontSize: 10, marginBottom: 8 }}>
+                    Сейчас: {effectiveChordFetchUrl(providerSettings) || 'не задан'} ·{' '}
+                    {resolveChordFetchUrlForAutoFillDetailed().sourceLabel}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.identBtnBig, { flex: 1, backgroundColor: '#1565c044' }]}
+                      onPress={() => {
+                        const detected = normalizeChordFetchUrl(resolveChordFetchUrlForAutoFill());
+                        if (!detected) {
+                          Alert.alert('Прокси не найден', chordFetchSetupHint());
+                          return;
+                        }
+                        const next: ProviderSettings = {
+                          ...providerSettings,
+                          chordFetchProxyUrl: detected,
+                          chordFetchProxyUserSet: false,
+                          devProxyUrlHintDismissed: true,
+                        };
+                        void persistProviderSettings(next);
+                        setChordFetchProbeStatus(null);
+                      }}
+                    >
+                      <Text style={styles.identBtnBigText}>Подставить авто</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.identBtnBig, { flex: 1, backgroundColor: '#00e67633' }]}
+                      disabled={chordFetchProbeBusy}
+                      onPress={() => {
+                        const url = effectiveChordFetchUrl(providerSettings);
+                        if (!url) {
+                          Alert.alert('Нет URL', chordFetchSetupHint());
+                          return;
+                        }
+                        setChordFetchProbeBusy(true);
+                        setChordFetchProbeStatus('Проверка Creep…');
+                        void probeChordFetchEndpoint(url)
+                          .then(msg => setChordFetchProbeStatus(msg))
+                          .finally(() => setChordFetchProbeBusy(false));
+                      }}
+                    >
+                      <Text style={styles.identBtnBigText}>
+                        {chordFetchProbeBusy ? '…' : 'Проверить'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  {chordFetchProbeStatus ? (
+                    <Text
+                      style={{
+                        color: chordFetchProbeStatus.startsWith('OK') ? '#00e676' : '#ff9800',
+                        fontSize: 11,
+                        marginTop: 8,
+                      }}
+                      numberOfLines={4}
+                    >
+                      {chordFetchProbeStatus}
+                    </Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowAdvancedChordFetchUrl(v => !v)}
+                  style={{ marginBottom: 6 }}
+                >
+                  <Text style={{ color: '#666', fontSize: 11 }}>
+                    {showAdvancedChordFetchUrl ? '▼' : '▶'} Свой URL (опционально, Vercel)
+                  </Text>
+                </TouchableOpacity>
+                {showAdvancedChordFetchUrl ? (
+                  <>
+                    <Text style={{ color: '#666', fontSize: 10, marginBottom: 6 }}>
+                      Только если развернули api/fetch-chords на своём сервере. По умолчанию — прокси на ПК.
+                    </Text>
+                    <TextInput
+                      style={[styles.urlInput, { marginBottom: 6 }]}
+                      placeholder="https://…/api/fetch-chords"
+                      placeholderTextColor="#333"
+                      value={providerSettings.chordFetchProxyUrl}
+                      onChangeText={v => {
+                        setChordFetchProbeStatus(null);
+                        setProviderSettings(s =>
+                          s ? { ...s, chordFetchProxyUrl: v } : s,
+                        );
+                      }}
+                      onEndEditing={() => {
+                        if (!providerSettings) return;
+                        const normalized = normalizeChordFetchUrl(providerSettings.chordFetchProxyUrl);
+                        setProviderSettings(s =>
+                          s
+                            ? {
+                                ...s,
+                                chordFetchProxyUrl: normalized,
+                                chordFetchProxyUserSet: !!normalized.trim(),
+                              }
+                            : s,
+                        );
+                      }}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    <Text style={{ color: '#555', fontSize: 10, marginBottom: 8 }}>
+                      Полный авто: {resolveChordFetchUrlDetailed().sourceLabel}
+                      {resolveChordFetchUrl() ? ` → ${resolveChordFetchUrl()}` : ''}
+                    </Text>
+                  </>
                 ) : null}
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28', opacity: 0.45 }}

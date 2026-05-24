@@ -12,6 +12,8 @@ export type ProviderSettings = {
    * No HTML scraper in the app — proxy runs on your machine / private server.
    */
   chordFetchProxyUrl: string;
+  /** User typed/saved chordFetchProxyUrl in ⚙ (keeps Vercel over Metro auto). */
+  chordFetchProxyUserSet?: boolean;
   /** Optional GET …/metadata/batch?offset=&limit= for large catalog sync */
   metadataSyncBaseUrl: string;
   /** Import all bundled metadata into SQLite in background (power users / offline FTS). */
@@ -56,6 +58,7 @@ export async function getProviderSettings(): Promise<ProviderSettings> {
     enabled: { ...DEFAULTS.enabled, ...raw.enabled },
     chordProUrl: raw.chordProUrl ?? '',
     chordFetchProxyUrl: raw.chordFetchProxyUrl ?? '',
+    chordFetchProxyUserSet: raw.chordFetchProxyUserSet === true,
     metadataSyncBaseUrl: raw.metadataSyncBaseUrl ?? '',
     metadataFullIndexOffline: raw.metadataFullIndexOffline === true,
     legacyArchiveImported: raw.legacyArchiveImported === true,

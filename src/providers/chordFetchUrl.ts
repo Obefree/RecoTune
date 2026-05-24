@@ -11,6 +11,14 @@ export type ResolvedChordFetchUrl = {
   sourceLabel: string;
 };
 
+/** One-liner for errors / alerts — copy-friendly. */
+export const CHORD_FETCH_DEV_PROXY_CMD = 'npm run dev-proxy';
+
+export type EffectiveChordFetchOptions = {
+  /** User manually saved URL in ⚙ (do not override Vercel with Metro). */
+  userExplicit?: boolean;
+};
+
 /** Host from Expo debugger string `192.168.x.x:8081` or hostname. */
 export function parseHostFromDebuggerHost(debuggerHost: string): string | null {
   const raw = debuggerHost.trim();
@@ -25,8 +33,34 @@ export function buildChordFetchProxyUrl(host: string): string {
   return `http://${host}:${CHORD_FETCH_PROXY_PORT}/fetch`;
 }
 
-/** Placeholder — replace after deploying RecoTune to your Vercel project. */
+/** Vercel serverless path (optional deploy — not the default path). */
 export const CHORD_FETCH_API_PATH = '/api/fetch-chords';
+
+export function isLocalChordFetchProxyUrl(url: string): boolean {
+  const t = url.trim();
+  if (!t) return false;
+  try {
+    const u = new URL(t);
+    if (u.port === String(CHORD_FETCH_PROXY_PORT)) return true;
+    if (u.pathname.replace(/\/+$/, '').endsWith('/fetch')) return true;
+  } catch {
+    return /:8787\b/.test(t) || /\/fetch\/?$/i.test(t);
+  }
+  return false;
+}
+
+export function isVercelChordFetchUrl(url: string): boolean {
+  const t = url.trim();
+  if (!t) return false;
+  try {
+    const u = new URL(t);
+    if (/\.vercel\.app$/i.test(u.hostname)) return true;
+    if (u.pathname.includes('fetch-chords')) return true;
+  } catch {
+    return /vercel\.app/i.test(t);
+  }
+  return false;
+}
 
 /**
  * Ensure POST target ends with `/fetch` (dev-proxy) or `/api/fetch-chords` (Vercel).
@@ -64,25 +98,35 @@ export function normalizeChordFetchUrl(raw: string): string {
 }
 
 /**
- * Saved settings URL wins, then env → Metro :8787 → app.json extra (all normalized).
+ * Saved URL (with Metro-priority rules), else auto: env → Metro :8787 → app.json extra.
  */
-export function getEffectiveChordFetchUrl(savedProxyUrl?: string): string {
-  const fromSettings = normalizeChordFetchUrl(savedProxyUrl ?? '');
-  if (fromSettings) return fromSettings;
-  return resolveChordFetchUrl();
+export function getEffectiveChordFetchUrl(
+  savedProxyUrl?: string,
+  options?: EffectiveChordFetchOptions,
+): string {
+  const saved = normalizeChordFetchUrl(savedProxyUrl ?? '');
+  const auto = resolveChordFetchUrlDetailed();
+
+  if (options?.userExplicit && saved) return saved;
+
+  if (auto.source === 'metro' && auto.url) {
+    if (!saved || isVercelChordFetchUrl(saved)) return auto.url;
+    if (isLocalChordFetchProxyUrl(saved)) return saved;
+    return auto.url;
+  }
+
+  if (saved) return saved;
+  return auto.url;
 }
 
 /**
- * Priority (first non-empty wins for auto-fill):
- * 1. EXPO_PUBLIC_CHORD_FETCH_URL
- * 2. Expo Metro debugger host → http://host:8787/fetch (dev-proxy)
- * 3. app.json `expo.extra.chordFetchApiUrl` (your deployed Vercel URL)
+ * Auto-fill / «Подставить авто» — env and Metro only (no bundled Vercel URL).
  */
-export function resolveChordFetchUrl(): string {
-  return resolveChordFetchUrlDetailed().url;
+export function resolveChordFetchUrlForAutoFill(): string {
+  return resolveChordFetchUrlForAutoFillDetailed().url;
 }
 
-export function resolveChordFetchUrlDetailed(): ResolvedChordFetchUrl {
+export function resolveChordFetchUrlForAutoFillDetailed(): ResolvedChordFetchUrl {
   const fromEnv = process.env.EXPO_PUBLIC_CHORD_FETCH_URL?.trim();
   if (fromEnv) {
     return {
@@ -97,16 +141,27 @@ export function resolveChordFetchUrlDetailed(): ResolvedChordFetchUrl {
     return {
       url: buildChordFetchProxyUrl(host),
       source: 'metro',
-      sourceLabel: `Metro (${host}:8787)`,
+      sourceLabel: `Прокси на ПК (${host}:8787)`,
     };
   }
+
+  return { url: '', source: 'none', sourceLabel: 'не найден' };
+}
+
+export function resolveChordFetchUrl(): string {
+  return resolveChordFetchUrlDetailed().url;
+}
+
+export function resolveChordFetchUrlDetailed(): ResolvedChordFetchUrl {
+  const auto = resolveChordFetchUrlForAutoFillDetailed();
+  if (auto.url) return auto;
 
   const fromExtra = Constants.expoConfig?.extra?.chordFetchApiUrl;
   if (typeof fromExtra === 'string' && fromExtra.trim()) {
     return {
       url: normalizeChordFetchUrl(fromExtra.trim()),
       source: 'app_extra',
-      sourceLabel: 'app.json chordFetchApiUrl',
+      sourceLabel: 'app.json (опционально)',
     };
   }
 
@@ -159,11 +214,16 @@ function readExpoDebuggerHost(): string | null {
   return null;
 }
 
-/** Short hint when no chord-fetch endpoint is reachable from auto-detection. */
+/** Short hint when chord-fetch endpoint is not configured. */
 export function chordFetchSetupHint(): string {
   return (
-    'Нет API табов. Варианты:\n' +
-    '• Vercel: https://<проект>.vercel.app/api/fetch-chords — вставьте в ⚙ ниже или EXPO_PUBLIC_CHORD_FETCH_URL\n' +
-    '• Dev: на ПК `npm run dev-proxy`, телефон и ПК в одной Wi‑Fi (Expo Go подставит :8787)'
+    'Табы с AmDm — через прокси на компьютере.\n' +
+    `1. На ПК в папке RecoTune: ${CHORD_FETCH_DEV_PROXY_CMD}\n` +
+    '2. Телефон и ПК в одной Wi‑Fi, приложение через Expo Go\n' +
+    '3. ⚙ → Подставить авто (http://IP-ПК:8787/fetch)'
   );
+}
+
+export function chordFetchDevProxyErrorSuffix(): string {
+  return `Запустите на ПК: ${CHORD_FETCH_DEV_PROXY_CMD}`;
 }

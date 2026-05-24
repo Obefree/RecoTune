@@ -7,7 +7,11 @@ import {
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
 import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 import { combinedArtistTitle } from '../utils/searchNormalize';
-import { getEffectiveChordFetchUrl } from './chordFetchUrl';
+import {
+  chordFetchDevProxyErrorSuffix,
+  chordFetchSetupHint,
+  getEffectiveChordFetchUrl,
+} from './chordFetchUrl';
 import { ensureAutoChordProxySettings } from './autoChordProxy';
 import { getProviderSettings } from './providerSettings';
 import type {
@@ -37,7 +41,7 @@ async function fetchWithTimeout(
   } catch (e) {
     if (controller.signal.aborted) {
       throw new ChordFetchError(
-        `Превышено время ожидания (${Math.round(timeoutMs / 1000)} с). Проверьте Vercel /api/fetch-chords или dev-proxy :8787.`,
+        `Превышено время ожидания (${Math.round(timeoutMs / 1000)} с). ${chordFetchDevProxyErrorSuffix()}`,
       );
     }
     throw e;
@@ -101,10 +105,10 @@ export async function postChordFetchProxy(
     const msg = e instanceof Error ? e.message : '';
     const cleartextHint =
       proxyUrl.startsWith('http://') && /Network request failed|cleartext/i.test(msg)
-        ? ' Android блокирует http:// — используйте https:// Vercel или Expo Go + dev-proxy.'
+        ? ' Проверьте Expo Go и usesCleartextTraffic в сборке.'
         : '';
     throw new ChordFetchError(
-      `Не удалось подгрузить таб.${cleartextHint} Проверьте интернет, dev-proxy (:8787) или Vercel /api/fetch-chords.`,
+      `Не удалось подгрузить таб.${cleartextHint} ${chordFetchDevProxyErrorSuffix()}`,
     );
   }
 
@@ -121,7 +125,7 @@ export async function postChordFetchProxy(
         ? ' Этот источник пока недоступен — используйте «Табы онлайн».'
         : res.status === 429
           ? ' Слишком много запросов — повторите позже.'
-          : ' Проверьте EXPO_PUBLIC_CHORD_FETCH_URL или dev-proxy на ПК.';
+          : ` ${chordFetchDevProxyErrorSuffix()}`;
     throw new ChordFetchError(
       detail || `Подгрузка таба не удалась (HTTP ${res.status}).${hint}`,
     );
@@ -221,11 +225,11 @@ export async function fetchOnDemandChordSheet(
 ): Promise<SongDetail> {
   await ensureAutoChordProxySettings();
   const settings = await getProviderSettings();
-  const proxyUrl = getEffectiveChordFetchUrl(settings.chordFetchProxyUrl);
+  const proxyUrl = getEffectiveChordFetchUrl(settings.chordFetchProxyUrl, {
+    userExplicit: settings.chordFetchProxyUserSet === true,
+  });
   if (!proxyUrl) {
-    throw new ChordFetchError(
-      'Подгрузка табов недоступна. Укажите URL в ⚙ Источники, EXPO_PUBLIC_CHORD_FETCH_URL, Vercel /api/fetch-chords или dev-proxy на ПК.',
-    );
+    throw new ChordFetchError(`Подгрузка табов недоступна. ${chordFetchSetupHint()}`);
   }
 
   if (provider === 'ultimate_guitar') {
@@ -274,7 +278,9 @@ export async function fetchOnDemandChordSheet(
         | undefined;
       throw (
         chordErr ??
-        new ChordFetchError('Таб не найден. Проверьте интернет, proxy/Vercel и написание песни.')
+        new ChordFetchError(
+          `Таб не найден. Проверьте написание и ${chordFetchDevProxyErrorSuffix()}.`,
+        )
       );
     }
     if (e instanceof ChordFetchError) throw e;
