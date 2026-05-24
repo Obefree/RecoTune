@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+﻿import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, TextInput, Platform, Modal, FlatList, SectionList,
@@ -1338,7 +1338,6 @@ export default function ChordsScreen() {
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [libFavOnly, setLibFavOnly]           = useState(true);
   const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
-  const [libSortAz, setLibSortAz]             = useState(true);
 
   /* ── Song library (SQLite) ── */
   const [librarySongs, setLibrarySongs]       = useState<SongEntry[]>([]);
@@ -1395,9 +1394,13 @@ export default function ChordsScreen() {
   }
 
   useFocusEffect(useCallback(() => {
-    reloadLibrary().catch(() => {});
-    setShowLibrary(true);
-  }, []));
+    void reloadLibrary();
+    if (practiceSong) {
+      setShowLibrary(false);
+    } else {
+      setShowLibrary(true);
+    }
+  }, [practiceSong]));
 
   const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
@@ -1498,7 +1501,7 @@ export default function ChordsScreen() {
         if (ra !== rb) return ra - rb;
         return a.title.localeCompare(b.title);
       });
-    } else if (libSortAz) {
+    } else {
       list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
@@ -3130,7 +3133,7 @@ export default function ChordsScreen() {
             ) : null}
           </View>
 
-          {/* Favorites + A→Z (empty list = favorites; search = ranked catalog) */}
+          {/* Избранное / табы; без поиска — сортировка А→Я по умолчанию (без отдельного чипа) */}
           <View style={styles.libFilterRow}>
             <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
               style={[styles.libFilterPill, libFavOnly && styles.libFilterPillActive]}>
@@ -3138,11 +3141,7 @@ export default function ChordsScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setLibFullTabsOnly(v => !v)}
               style={[styles.libFilterPill, libFullTabsOnly && styles.libFilterPillTabsActive]}>
-              <Text style={[styles.libFilterPillText, libFullTabsOnly && { color: '#00e676' }]}>Ð¢ÐÐ‘Ð«</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setLibSortAz(v => !v)}
-              style={[styles.libFilterPill, libSortAz && styles.libFilterPillSortActive]}>
-              <Text style={[styles.libFilterPillText, libSortAz && { color: '#7c4dff' }]}>А→Я</Text>
+              <Text style={[styles.libFilterPillText, libFullTabsOnly && { color: '#00e676' }]}>ТАБЫ</Text>
             </TouchableOpacity>
             <Text style={styles.libCount}>{libCountLabel}</Text>
           </View>
@@ -4471,7 +4470,6 @@ const styles = StyleSheet.create({
   libFilterPill: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
   libFilterPillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
   libFilterPillTabsActive: { borderColor: '#00e67655', backgroundColor: '#00e67612' },
-  libFilterPillSortActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff15' },
   libFilterPillText: { color: '#555', fontSize: 11, fontWeight: '600' },
   libFilterPillTextActive: { color: '#0a0a0f', fontWeight: '800' },
 

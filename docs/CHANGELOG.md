@@ -6,6 +6,7 @@
 
 ### 2026-05-24
 
+- **Chords / База песен:** без «двойного» предвыбора чипов, модал только без песни в практике, подпись ТАБЫ. См. [docs/features/2026-05-24-library-preselection-ux.md](./features/2026-05-24-library-preselection-ux.md).
 - **Chords / База песен:** по умолчанию только избранное; поиск по каталогу без подмешивания несовпавших builtin. См. [docs/features/2026-05-24-library-favorites-default-search.md](./features/2026-05-24-library-favorites-default-search.md).
 - **Chords / Практика:** только проверенный ChordPro (builtin ~32 + AmDm); без склейки прогрессии на текст, без `LYRICS_DB` в практике. См. [docs/features/2026-05-24-verified-chordpro-practice.md](./features/2026-05-24-verified-chordpro-practice.md).
 - **Chords / табы AmDm:** по умолчанию прокси на ПК (`npm run dev-proxy`), Vercel опционален; Metro :8787 важнее app.json. См. [docs/chord-fetch-local-proxy.md](./chord-fetch-local-proxy.md), [docs/features/2026-05-24-chord-fetch-pc-proxy-default.md](./features/2026-05-24-chord-fetch-pc-proxy-default.md).
