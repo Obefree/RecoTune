@@ -1,7 +1,6 @@
 import { listSongs } from './songLibrary';
-import { LYRICS_DB } from '../data/lyricsDatabase';
 import type { SongEntry } from '../data/songDatabase';
-import { contentQualityScore } from '../utils/songContent';
+import { contentQualityScore, hasVerifiedPracticeLyrics } from '../utils/songContent';
 import {
   extractChordSequence,
   looksLikeChordQuery,
@@ -18,7 +17,8 @@ export type SmartSearchHit = SongEntry & {
 const LYRICS_SNIPPET_LEN = 480;
 
 function lyricsSnippet(song: SongEntry): string {
-  const raw = song.lyrics ?? LYRICS_DB[song.id];
+  if (!hasVerifiedPracticeLyrics(song)) return '';
+  const raw = song.lyrics;
   return raw ? raw.slice(0, LYRICS_SNIPPET_LEN) : '';
 }
 

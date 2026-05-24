@@ -217,15 +217,39 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
   return out;
 }
 
+export type NormalizeLyricsOptions = {
+  /** Merge chord-only line above lyric (ChordPro export). Off by default — site tabs stay as fetched. */
+  allowMerge?: boolean;
+};
+
+/** True when text has chord-only line(s) immediately above lyric lines (AmDm / ChordPro export). */
+export function hasChordLineAboveLyricFormat(text: string): boolean {
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length - 1; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    const tokens = trimmed.split(/\s+/).filter(Boolean);
+    const allChords = tokens.length > 0 && tokens.every(t => isChordToken(t));
+    if (allChords && lines[i + 1]?.trim()) return true;
+  }
+  return false;
+}
+
+/** Inline ChordPro cleanup without merging chord lines (builtin / already inline). */
+export function cleanupVerifiedChordPro(text: string): string {
+  return normalizeLyricsChords(text, { allowMerge: false });
+}
+
 /** Full normalization pipeline for stored / fetched lyrics. */
-export function normalizeLyricsChords(text: string): string {
+export function normalizeLyricsChords(text: string, opts?: NormalizeLyricsOptions): string {
   if (!text?.trim()) return text?.trim() ?? '';
 
   let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
 
-  const lines = mergeChordLineAboveLyric(normalized.split('\n'));
+  const split = normalized.split('\n');
+  const lines = opts?.allowMerge === true ? mergeChordLineAboveLyric(split) : split;
   normalized = lines
     .map(line =>
       repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))),

@@ -1,14 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
 import { SONGS, type SongEntry } from '../data/songDatabase';
-import { LYRICS_DB } from '../data/lyricsDatabase';
 import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent';
 import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 
 const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
-export const BUILTIN_SEED_VERSION = '2026-05-22-5-creep-apostrophe';
+export const BUILTIN_SEED_VERSION = '2026-05-24-verified-chordpro-only';
 /** Dev-only bundle marker; not shown in production Chords UI. */
 export const CHORD_LIBRARY_BUILD = 'chord-v3';
 
@@ -198,8 +197,9 @@ async function setMeta(database: SQLite.SQLiteDatabase, key: string, value: stri
 }
 
 function bundleBuiltinEntry(song: SongEntry): SongEntry {
-  const lyrics = resolveLyricsText(song);
-  return { ...song, lyrics };
+  const verified: SongEntry = { ...song, chordProVerified: true };
+  const lyrics = resolveLyricsText(verified);
+  return { ...verified, lyrics };
 }
 
 async function seedBuiltinIfEmpty(database: SQLite.SQLiteDatabase): Promise<void> {
@@ -302,6 +302,29 @@ async function purgeStaleBuiltinRows(database: SQLite.SQLiteDatabase): Promise<v
   );
 }
 
+/** Drop lyrics that look like auto-glued tabs but were never verified (AmDm / builtin). */
+async function purgeUnverifiedMergedLyrics(database: SQLite.SQLiteDatabase): Promise<void> {
+  const keepBuiltin = new Set(SONGS.map(s => s.id));
+  const rows = await database.getAllAsync<{ id: string; lyrics: string | null; source: SongSource }>(
+    "SELECT id, lyrics, source FROM songs WHERE lyrics IS NOT NULL AND trim(lyrics) != ''",
+  );
+  const ts = nowIso();
+  for (const row of rows) {
+    const lyrics = row.lyrics ?? '';
+    if (!/\[[A-G][#b\d]/i.test(lyrics)) continue;
+    const verified =
+      keepBuiltin.has(row.id) ||
+      row.id.startsWith('custom_amdm_') ||
+      row.id.startsWith('custom_chordpro_');
+    if (verified) continue;
+    await database.runAsync(
+      'UPDATE songs SET lyrics = NULL, updated_at = ? WHERE id = ?',
+      ts,
+      row.id,
+    );
+  }
+}
+
 /** Rewrite cached builtin lyrics through normalizeLyricsChords (fixes stale SQLite rows). */
 async function repairBuiltinLyricsInDb(database: SQLite.SQLiteDatabase): Promise<void> {
   const rows = await database.getAllAsync<{ id: string; lyrics: string | null }>(
@@ -392,6 +415,7 @@ export async function initSongLibrary(): Promise<BuiltinCatalogUpgradeResult> {
       await purgeStaleBuiltinRows(database);
       const upgrade = await upgradeBuiltinCatalog(database);
       await repairBuiltinLyricsInDb(database);
+      await purgeUnverifiedMergedLyrics(database);
       await migrateLegacyJson(database);
       db = database;
       return upgrade;

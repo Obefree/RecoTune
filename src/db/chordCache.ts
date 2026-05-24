@@ -88,6 +88,7 @@ export function chordCacheToSongDetail(
     difficulty: payload.difficulty,
     genre: 'Таб из интернета',
     lyrics: payload.lyrics,
+    chordProVerified: true,
     provider,
     attribution,
   };

@@ -187,12 +187,13 @@ function mergeChordLineAboveLyric(lines) {
   return out;
 }
 
-function normalizeLyricsChords(text) {
+function normalizeLyricsChords(text, opts) {
   if (!text?.trim()) return text?.trim() ?? '';
   let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
-  const lines = mergeChordLineAboveLyric(normalized.split('\n'));
+  const split = normalized.split('\n');
+  const lines = opts?.allowMerge === true ? mergeChordLineAboveLyric(split) : split;
   normalized = lines
     .map(line => repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))))
     .join('\n');
@@ -201,18 +202,19 @@ function normalizeLyricsChords(text) {
 
 const creep =
   "When you were here before\nG\nCouldn't look you in the eye";
-const creepOut = normalizeLyricsChords(creep);
+const creepOut = normalizeLyricsChords(creep, { allowMerge: true });
 
 const creepFeather = normalizeLyricsChords(
   'G B C Cm\nYou float like a feather\nIn a beautiful world',
+  { allowMerge: true },
 );
 const creepChorus = normalizeLyricsChords("But I'm a creep");
-const creepChorusMerge = normalizeLyricsChords("G\nBut I'm a creep");
+const creepChorusMerge = normalizeLyricsChords("G\nBut I'm a creep", { allowMerge: true });
 const creepChorusBad = normalizeLyricsChords("But [G]I'm a creep");
 const creepChorusCurly = normalizeLyricsChords('But [G]I\u2019m a creep');
-const creepMergeBad = normalizeLyricsChords("G\nBut [G]I'm a creep");
-const csharpLine = normalizeLyricsChords('C#\nHello world');
-const bbLine = normalizeLyricsChords('Bb\nShe loves you');
+const creepMergeBad = normalizeLyricsChords("G\nBut [G]I'm a creep", { allowMerge: true });
+const csharpLine = normalizeLyricsChords('C#\nHello world', { allowMerge: true });
+const bbLine = normalizeLyricsChords('Bb\nShe loves you', { allowMerge: true });
 
 const tests = [
   ['creep no [e]', !/\[e\]/i.test(creepOut)],
@@ -222,7 +224,7 @@ const tests = [
   [
     'chord line',
     (() => {
-      const o = normalizeLyricsChords('G B C\nHello world');
+      const o = normalizeLyricsChords('G B C\nHello world', { allowMerge: true });
       return o.includes('[G]Hello') && !/\[e\]/.test(o);
     })(),
   ],

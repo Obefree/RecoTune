@@ -6,6 +6,7 @@
 
 ### 2026-05-24
 
+- **Chords / Практика:** только проверенный ChordPro (builtin ~32 + AmDm); без склейки прогрессии на текст, без `LYRICS_DB` в практике. См. [docs/features/2026-05-24-verified-chordpro-practice.md](./features/2026-05-24-verified-chordpro-practice.md).
 - **Chords / табы AmDm:** по умолчанию прокси на ПК (`npm run dev-proxy`), Vercel опционален; Metro :8787 важнее app.json. См. [docs/chord-fetch-local-proxy.md](./chord-fetch-local-proxy.md), [docs/features/2026-05-24-chord-fetch-pc-proxy-default.md](./features/2026-05-24-chord-fetch-pc-proxy-default.md).
 - **Chords / табы онлайн:** поле URL в ⚙, проверка Creep, ошибки в пустом экране, нормализация Vercel/dev-proxy, Android cleartext. См. [docs/features/2026-05-24-chord-fetch-url-ux.md](./features/2026-05-24-chord-fetch-url-ux.md).
 - **Pitch-графики (Tuner / Chords):** parity с Melody — `timeAxis`, voiced throttle 100 ms, playhead. См. [docs/features/2026-05-24-pitch-chart-parity-tuner-chords.md](./features/2026-05-24-pitch-chart-parity-tuner-chords.md).

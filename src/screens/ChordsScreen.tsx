@@ -10,7 +10,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTabBarVisibility } from '../context/TabBarVisibility';
 import { type SongEntry } from '../data/songDatabase';
-import { LYRICS_DB } from '../data/lyricsDatabase';
 import {
   initSongLibrary,
   listSongs,
@@ -26,11 +25,13 @@ import {
 import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
   contentQualityScore,
-  hasAnnotatedLyrics,
+  hasVerifiedPracticeLyrics,
   needsOnDemandChordFetch,
   PROGRESSION_ONLY_HINT,
   resolveLyricsText,
   resolveSongEntry,
+  songContentBadge,
+  songContentBadgeLabel,
 } from '../utils/songContent';
 import { getMetadataTrackCount } from '../metadata/metadataDb';
 import {
@@ -66,7 +67,6 @@ import {
 } from '../providers/types';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
 import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
-import { projectChordsOntoLyrics } from '../utils/chordProgression';
 import {
   createPitchFrame,
   pushPitchFrameRing,
@@ -895,10 +895,7 @@ export default function ChordsScreen() {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsSource, setLyricsSource] = useState<'ovh' | 'library' | null>(null);
   const [libraryMatch, setLibraryMatch] = useState<SongEntry | null>(null);
-  const identifyChordedLyrics = useMemo(
-    () => (lyrics?.trim() ? projectChordsOntoLyrics(lyrics, libraryMatch?.chords) : ''),
-    [lyrics, libraryMatch?.chords],
-  );
+  const identifyChordedLyrics = useMemo(() => lyrics?.trim() ?? '', [lyrics]);
   const [manualArtist, setManualArtist] = useState('');
   const [manualTitle, setManualTitle]   = useState('');
   const [metadataTrackCount, setMetadataTrackCount] = useState(0);
@@ -1167,7 +1164,6 @@ export default function ChordsScreen() {
     const { text, source } = await fetchLyricsForTrack(artist, title);
     if (text) {
       setLyrics(text);
-      setPracticeLyrics(projectChordsOntoLyrics(text, practiceInput));
       setLyricsSource(source);
     }
     setLyricsLoading(false);
@@ -1202,9 +1198,8 @@ export default function ChordsScreen() {
       setPracticeInput(match.chords);
       parsePracticeInput(match.chords);
       const libLyrics = resolveLyricsText(match);
-      if (libLyrics) {
+      if (libLyrics && hasVerifiedPracticeLyrics(match)) {
         setLyrics(libLyrics);
-        setPracticeLyrics(projectChordsOntoLyrics(libLyrics, match.chords));
         setLyricsSource('library');
       }
     }
@@ -1213,10 +1208,9 @@ export default function ChordsScreen() {
     if (!skipRemoteLyrics) {
       setLyricsLoading(true);
       const { text, source } = await fetchLyricsForTrack(r.artist, r.title);
-      const libText = match ? resolveLyricsText(match) : undefined;
+      const libText = match && hasVerifiedPracticeLyrics(match) ? resolveLyricsText(match) : undefined;
       if (text && !libText) {
         setLyrics(text);
-        setPracticeLyrics(projectChordsOntoLyrics(text, match?.chords ?? practiceInput));
         setLyricsSource(source);
       }
       setLyricsLoading(false);
@@ -1258,7 +1252,6 @@ export default function ChordsScreen() {
       return;
     }
     switchMode('practice');
-    if (identifyChordedLyrics) setPracticeLyrics(identifyChordedLyrics);
   }
 
   function clearIdentifyResult() {
@@ -1485,7 +1478,7 @@ export default function ChordsScreen() {
   const libResults = (() => {
     let list = libSearch.trim() ? libSearchHits : allSongs;
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
-    if (libFullTabsOnly) list = list.filter(s => hasAnnotatedLyrics(resolveLyricsText(s)));
+    if (libFullTabsOnly) list = list.filter(s => hasVerifiedPracticeLyrics(resolveSongEntry(s)));
     if (libSearch.trim()) {
       list = [...list].sort((a, b) => {
         const ra = libSearchRank.get(a.id) ?? 99999;
@@ -1547,18 +1540,15 @@ export default function ChordsScreen() {
     stillNeedsFetch: boolean;
   }> {
     const resolved = resolveSongEntry(base);
-    if (hasAnnotatedLyrics(resolved.lyrics)) {
+    if (hasVerifiedPracticeLyrics(resolved)) {
       return { song: resolved, lyrics: resolved.lyrics!, hint: null, stillNeedsFetch: false };
     }
 
     const catalogMatch = findBestSongMatch(resolved.artist, resolved.title, allSongsRef.current);
     if (catalogMatch && catalogMatch.id !== resolved.id) {
       const fromDb = await loadSongForPractice(catalogMatch);
-      if (hasAnnotatedLyrics(fromDb.lyrics)) {
+      if (hasVerifiedPracticeLyrics(fromDb)) {
         return { song: fromDb, lyrics: fromDb.lyrics!, hint: null, stillNeedsFetch: false };
-      }
-      if (fromDb.lyrics?.trim() && !needsOnDemandChordFetch(fromDb)) {
-        return { song: fromDb, lyrics: fromDb.lyrics, hint: null, stillNeedsFetch: false };
       }
     }
 
@@ -1576,7 +1566,7 @@ export default function ChordsScreen() {
         await reloadLibrary();
         const full = await loadSongForPractice(persisted);
         setOnDemandAttribution(detail.attribution ?? null);
-        if (hasAnnotatedLyrics(full.lyrics)) {
+        if (hasVerifiedPracticeLyrics(full)) {
           return { song: full, lyrics: full.lyrics!, hint: null, stillNeedsFetch: false };
         }
         working = full;
@@ -1586,33 +1576,13 @@ export default function ChordsScreen() {
       }
     }
 
-    if (settings.enabled.lyrics !== false && !hasAnnotatedLyrics(working.lyrics)) {
-      try {
-        const lyricsRace = await Promise.race([
-          fetchLyricsForTrack(resolved.artist, resolved.title),
-          new Promise<{ text: null; source: null }>(resolve => {
-            setTimeout(() => resolve({ text: null, source: null }), 6000);
-          }),
-        ]);
-        if (lyricsRace.text?.trim()) {
-          working = { ...working, lyrics: lyricsRace.text };
-        }
-      } catch (e) {
-        if (__DEV__) console.warn('[RecoTune] lyrics.ovh silent', e);
-      }
-    }
-
-    if (hasAnnotatedLyrics(working.lyrics)) {
-      return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
-    }
-
     const stillNeedsFetch = needsOnDemandChordFetch(working);
     const hint = stillNeedsFetch
       ? onlineFetchErr ?? practiceFetchHintForSettings(settings)
       : null;
     return {
       song: working,
-      lyrics: working.lyrics?.trim() ? working.lyrics : undefined,
+      lyrics: hasVerifiedPracticeLyrics(working) ? working.lyrics : undefined,
       hint,
       stillNeedsFetch,
     };
@@ -1800,6 +1770,9 @@ export default function ChordsScreen() {
       difficulty: Number(addForm.difficulty) as 1|2|3,
       chords: addForm.chords.trim(),
       lyrics: addForm.lyrics.trim() || undefined,
+      chordProVerified: addForm.lyrics.trim()
+        ? /\[[A-G][#b\d]/i.test(addForm.lyrics)
+        : undefined,
     };
     await saveCustomSong(song);
     setShowAddSong(false);
@@ -1831,20 +1804,16 @@ export default function ChordsScreen() {
     setPracticeChordIdx(0);
     setLyricsEditMode(false);
     setShowLibrary(false);
-    if (hasAnnotatedLyrics(resolved.lyrics)) {
+    if (hasVerifiedPracticeLyrics(resolved)) {
       setPracticeLyrics(resolved.lyrics!);
       setAutoChordFetchDone(true);
     } else if (needsOnDemandChordFetch(resolved)) {
       setPracticeLyrics('');
       setPracticeContentHint(PROGRESSION_ONLY_HINT);
       void runAutoChordEnrichment(resolved);
-    } else if (resolved.lyrics?.trim()) {
-      setPracticeLyrics(resolved.lyrics);
-      setAutoChordFetchDone(true);
     } else {
       setPracticeLyrics('');
       setAutoChordFetchDone(true);
-      void fetchLyrics(resolved.artist, resolved.title);
     }
   }
 
@@ -1866,7 +1835,7 @@ export default function ChordsScreen() {
       setPracticeInput(full.chords?.trim() || 'C G Am F');
       parsePracticeInput(full.chords?.trim() || 'C G Am F');
       setPracticeChordIdx(0);
-      if (hasAnnotatedLyrics(full.lyrics)) {
+      if (hasVerifiedPracticeLyrics(full)) {
         setPracticeLyrics(full.lyrics!);
         setPracticeContentHint(null);
         setPracticeFetchHint(null);
@@ -2721,7 +2690,7 @@ export default function ChordsScreen() {
                   ) : (
                     <Ionicons name="cloud-download-outline" size={16} color="#fff" />
                   )}
-                  <Text style={styles.lyricsEmptyBtnText}>Подгрузить таб</Text>
+                  <Text style={styles.lyricsEmptyBtnText}>Подгрузить таб с AmDm</Text>
                 </TouchableOpacity>
               ) : null}
               <TouchableOpacity style={styles.lyricsEmptyBtn} onPress={() => setLyricsEditMode(true)}>
@@ -3191,9 +3160,14 @@ export default function ChordsScreen() {
                     <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
                   </View>
                   <View style={styles.libItemRight}>
-                    {hasAnnotatedLyrics(resolved.lyrics) || resolved.lyrics?.trim() ? (
-                      <Text style={styles.libItemHasLyrics}>♪ текст</Text>
-                    ) : null}
+                    <Text
+                      style={[
+                        styles.libItemHasLyrics,
+                        songContentBadge(resolved) === 'chords' && { color: '#00e676' },
+                      ]}
+                    >
+                      {songContentBadgeLabel(songContentBadge(resolved))}
+                    </Text>
                     <Text style={styles.libItemGenre}>{item.genre}</Text>
                     {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
                     {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}

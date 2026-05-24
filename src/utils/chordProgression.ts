@@ -75,6 +75,10 @@ function insertChordBeforeWord(words: string[], index: number, chord: string): v
   }
 }
 
+/**
+ * @deprecated Do not use for practice UI — glues progression onto plain lyrics.
+ * Kept for legacy search helpers only.
+ */
 export function projectChordsOntoLyrics(lyrics?: string | null, chords?: string | null): string {
   const normalized = normalizeLyricsChords(lyrics?.trim() ?? '');
   if (!normalized) return '';

@@ -15,6 +15,8 @@ export interface SongEntry {
   genre: string;
   /** Optional annotated lyrics. Format: [Chord]word or plain text. Each line is a new line. */
   lyrics?: string;
+  /** True when lyrics are site/bundle ChordPro — not heuristic progression glue. */
+  chordProVerified?: boolean;
 }
 
 /** Default builtin rows seeded into SQLite (not the 536 legacy archive). */

@@ -1,5 +1,5 @@
 import type { SongEntry } from '../data/songDatabase';
-import { normalizeLyricsChords } from './chordLyricsNormalize';
+import { isVerifiedChordProLyrics, normalizeLyricsChords } from './chordLyricsNormalize';
 
 export type ChordProParseResult = {
   title: string;
@@ -37,18 +37,24 @@ export function parseChordProText(raw: string, fallbackTitle = 'Без назв�
   const chordMatches = raw.match(/\[([A-G][^\]]*)\]/g) ?? [];
   const uniqueChords = [...new Set(chordMatches.map(c => c.replace(/[\[\]]/g, '')))];
 
+  const body = lyricsLines.join('\n');
+  const lyrics = hasChordLineAboveLyricFormat(body)
+    ? normalizeLyricsChords(body, { allowMerge: true })
+    : cleanupVerifiedChordPro(body);
+
   return {
     title,
     artist,
     key: key || undefined,
     bpm,
     chords: uniqueChords.slice(0, 12).join(' ') || 'C G Am F',
-    lyrics: normalizeLyricsChords(lyricsLines.join('\n')),
+    lyrics,
     difficulty: uniqueChords.length <= 3 ? 1 : uniqueChords.length <= 5 ? 2 : 3,
   };
 }
 
 export function chordProToSongEntry(parsed: ChordProParseResult, id?: string): SongEntry {
+  const lyrics = parsed.lyrics || undefined;
   return {
     id: id ?? `custom_${Date.now()}`,
     title: parsed.title,
@@ -58,6 +64,7 @@ export function chordProToSongEntry(parsed: ChordProParseResult, id?: string): S
     bpm: parsed.bpm,
     difficulty: parsed.difficulty,
     genre: 'Импорт',
-    lyrics: parsed.lyrics || undefined,
+    lyrics,
+    chordProVerified: lyrics && isVerifiedChordProLyrics(lyrics) ? true : undefined,
   };
 }
