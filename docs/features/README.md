@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-24 | Практика: свайп текста (Android gesture) | [2026-05-24-practice-lyrics-scroll-gesture-fix.md](./2026-05-24-practice-lyrics-scroll-gesture-fix.md) |
 | 2026-05-24 | Melody: playhead, нота не убегает вперёд | [2026-05-24-melody-chart-playhead-regression-fix.md](./2026-05-24-melody-chart-playhead-regression-fix.md) |
 | 2026-05-24 | AI Lab: вокал, минус, playback дорожек | [2026-05-24-ailab-stems-playback-layout.md](./2026-05-24-ailab-stems-playback-layout.md) |
 | 2026-05-24 | Melody график + Chords подгрузка | [2026-05-24-melody-chart-chords-ux.md](./2026-05-24-melody-chart-chords-ux.md) |

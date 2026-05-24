@@ -547,18 +547,18 @@ function ChordLyricsLine({
         {segs.filter(s => s.chord).map((seg, i) => {
           const cs = getChordStyle(seg.chord!);
           return (
-            <TouchableOpacity
-              delayPressIn={120}
-              activeOpacity={0.7}
+            <Pressable
+              delayPressIn={200}
               onPress={() => onChordTap(seg.chord!)}
               hitSlop={4}
+              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
             >
               <Text style={{
                 color: cs.color, fontSize: 14, fontWeight: '900',
                 backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
                 paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
               }}>{seg.chord}</Text>
-            </TouchableOpacity>
+            </Pressable>
           );
         })}
       </View>
@@ -573,17 +573,17 @@ function ChordLyricsLine({
         return (
           <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             {seg.chord && cs ? (
-              <TouchableOpacity
-                delayPressIn={120}
-                activeOpacity={0.7}
+              <Pressable
+                delayPressIn={200}
                 onPress={() => onChordTap(seg.chord!)}
                 hitSlop={4}
+                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
               >
                 <Text style={{
                   color: cs.color, fontSize: 14, fontWeight: '900', lineHeight: 19, marginBottom: 2,
                   backgroundColor: cs.bg, paddingHorizontal: 2, borderRadius: 3,
                 }}>{seg.chord}</Text>
-              </TouchableOpacity>
+              </Pressable>
             ) : <View style={{ height: 21 }} />}
             <Text style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
           </View>
@@ -673,57 +673,61 @@ export default function ChordsScreen() {
   const autoScrollIntervalRef             = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollYRef                        = useRef(0);
   const scrollContentHRef                 = useRef(0);
+  const practiceLyricsViewportHRef        = useRef(260);
   /** Finger on lyrics — block auto-scroll interval + mic scrollTo until gesture ends */
   const lyricsUserScrollRef               = useRef(false);
 
-  const startAutoScroll = useCallback((bpm: number, viewH: number) => {
-    if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
-    setAutoScroll(true);
-    const msPerBeat = 60000 / bpm;
-    autoScrollIntervalRef.current = setInterval(() => {
-      if (lyricsUserScrollRef.current) return;
-      scrollYRef.current += 1.2;
-      const maxY = Math.max(0, scrollContentHRef.current - viewH);
-      if (scrollYRef.current < maxY) {
-        lyricsScrollRef.current?.scrollTo({ y: scrollYRef.current, animated: false });
-      } else {
-        if (autoScrollIntervalRef.current) clearInterval(autoScrollIntervalRef.current);
-        autoScrollIntervalRef.current = null;
-        setAutoScroll(false);
-      }
-    }, msPerBeat / 8);
-  }, []);
-
-  const stopAutoScroll = useCallback(() => {
+  const pauseAutoScrollInterval = useCallback(() => {
     if (autoScrollIntervalRef.current) {
       clearInterval(autoScrollIntervalRef.current);
       autoScrollIntervalRef.current = null;
     }
-    setAutoScroll(false);
   }, []);
+
+  const startAutoScroll = useCallback((bpm: number, viewH: number) => {
+    pauseAutoScrollInterval();
+    setAutoScroll(true);
+    const msPerBeat = 60000 / bpm;
+    autoScrollIntervalRef.current = setInterval(() => {
+      if (lyricsUserScrollRef.current) return;
+      const maxY = Math.max(0, scrollContentHRef.current - viewH);
+      const nextY = Math.min(maxY, scrollYRef.current + 1.2);
+      scrollYRef.current = nextY;
+      if (nextY < maxY) {
+        lyricsScrollRef.current?.scrollTo({ y: nextY, animated: false });
+      } else {
+        pauseAutoScrollInterval();
+        setAutoScroll(false);
+      }
+    }, msPerBeat / 8);
+  }, [pauseAutoScrollInterval]);
+
+  const stopAutoScroll = useCallback(() => {
+    pauseAutoScrollInterval();
+    setAutoScroll(false);
+  }, [pauseAutoScrollInterval]);
 
   const toggleAutoScroll = useCallback(() => {
     if (autoScroll) {
       stopAutoScroll();
       return;
     }
-    scrollYRef.current = 0;
-    lyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
-    startAutoScroll(practiceBpm, Math.max(80, practiceLyricsViewportH));
-  }, [autoScroll, practiceBpm, practiceLyricsViewportH, startAutoScroll, stopAutoScroll]);
+    const viewH = Math.max(80, practiceLyricsViewportHRef.current);
+    const maxY = Math.max(0, scrollContentHRef.current - viewH);
+    if (scrollYRef.current >= maxY - 2) {
+      scrollYRef.current = 0;
+      lyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+    }
+    startAutoScroll(practiceBpm, viewH);
+  }, [autoScroll, practiceBpm, startAutoScroll, stopAutoScroll]);
 
   const bumpPracticeBpm = useCallback((delta: number) => {
     const next = Math.min(240, Math.max(30, practiceBpm + delta));
     setPracticeBpm(next);
     if (autoScrollIntervalRef.current) {
-      startAutoScroll(next, Math.max(80, practiceLyricsViewportH));
+      startAutoScroll(next, Math.max(80, practiceLyricsViewportHRef.current));
     }
-  }, [practiceBpm, practiceLyricsViewportH, startAutoScroll]);
-
-  const handleLyricsTouchStart = useCallback(() => {
-    lyricsUserScrollRef.current = true;
-    if (autoScrollIntervalRef.current) stopAutoScroll();
-  }, [stopAutoScroll]);
+  }, [practiceBpm, startAutoScroll]);
 
   const handleLyricsScrollEnd = useCallback(() => {
     lyricsUserScrollRef.current = false;
@@ -731,8 +735,18 @@ export default function ChordsScreen() {
 
   const handleLyricsScrollBeginDrag = useCallback(() => {
     lyricsUserScrollRef.current = true;
-    if (autoScrollIntervalRef.current) stopAutoScroll();
-  }, [stopAutoScroll]);
+    pauseAutoScrollInterval();
+    setAutoScroll(false);
+  }, [pauseAutoScrollInterval]);
+
+  const restoreLyricsScrollAfterLayout = useCallback(() => {
+    if (lyricsUserScrollRef.current) return;
+    const y = scrollYRef.current;
+    if (y <= 0) return;
+    requestAnimationFrame(() => {
+      lyricsScrollRef.current?.scrollTo({ y, animated: false });
+    });
+  }, []);
 
   useEffect(() => () => { stopAutoScroll(); }, [stopAutoScroll]);
 
@@ -1996,6 +2010,11 @@ export default function ChordsScreen() {
       : hasLyricsBody
         ? Math.min(lyricsMinHeightRaw, lyricsMinHeightFit)
         : 0;
+
+  useEffect(() => {
+    restoreLyricsScrollAfterLayout();
+  }, [lyricsMinHeight, showPracticePanel, restoreLyricsScrollAfterLayout]);
+
   /** С текстом песни — компактнее график, чтобы зона текста+аккордов занимала больше экрана */
   const practiceEmbedChartH = hasLyricsBody
     ? (immersiveLyrics ? 44 : 56)
@@ -2456,12 +2475,12 @@ export default function ChordsScreen() {
 
             <View
               style={{ flex: 1, minHeight: 0, flexBasis: 0, flexGrow: 1 }}
-              onTouchStart={handleLyricsTouchStart}
-              onTouchEnd={handleLyricsScrollEnd}
-              onTouchCancel={handleLyricsScrollEnd}
               onLayout={e => {
                 const h = e.nativeEvent.layout.height;
-                if (h > 40) setPracticeLyricsViewportH(h);
+                if (h > 40 && Math.abs(h - practiceLyricsViewportHRef.current) > 6) {
+                  practiceLyricsViewportHRef.current = h;
+                  setPracticeLyricsViewportH(h);
+                }
               }}
             >
           {lyricsEditMode ? (
@@ -2485,13 +2504,12 @@ export default function ChordsScreen() {
               contentContainerStyle={{ padding: 10, paddingBottom: Math.max(16, practiceDockHeight + 8) }}
               showsVerticalScrollIndicator
               scrollEnabled
-              nestedScrollEnabled={Platform.OS === 'android'}
+              nestedScrollEnabled
               overScrollMode="always"
               keyboardShouldPersistTaps="handled"
               scrollEventThrottle={16}
               onScroll={e => { scrollYRef.current = e.nativeEvent.contentOffset.y; }}
               onScrollBeginDrag={handleLyricsScrollBeginDrag}
-              onMomentumScrollBegin={handleLyricsScrollBeginDrag}
               onScrollEndDrag={handleLyricsScrollEnd}
               onMomentumScrollEnd={handleLyricsScrollEnd}
               onContentSizeChange={(_, h) => { scrollContentHRef.current = h; }}>
