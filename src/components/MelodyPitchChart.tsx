@@ -40,6 +40,7 @@ export default function MelodyPitchChart({
         chartPlotWidth={chartPlotWidth}
         maxHistoryPoints={120}
         defaultHZoom={2}
+        timeAxis
         registeredMarkers={markers}
       />
       <Text style={styles.legend}>{t('chartScrollHistoryHint')}</Text>

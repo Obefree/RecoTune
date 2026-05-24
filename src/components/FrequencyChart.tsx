@@ -9,6 +9,8 @@ const DEFAULT_CHART_H = 220;
 const DEFAULT_MAX_POINTS = 80;
 /** Minimum px between history points / marker columns when timestamps cluster */
 const MIN_CELL_W = 14;
+/** Matches `CHART_MIN_INTERVAL_MS` in useSungNoteHistory — wall-clock X scale for Melody */
+const CHART_SAMPLE_INTERVAL_MS = 100;
 /** Avg gap below this → treat history as time-clustered and spread by index */
 const CLUSTER_AVG_GAP_MS = 55;
 const MARKER_STAGGER_PX = 16;
@@ -67,6 +69,8 @@ interface Props {
   maxHistoryPoints?: number;
   /** Initial horizontal zoom (Melody chart uses 2× so history is not squashed). */
   defaultHZoom?: number;
+  /** Wall-clock X axis (px/ms) — Melody live chart; avoids index-based speed-up. */
+  timeAxis?: boolean;
 }
 
 function nearestHistoryIndex(pts: HistoryPoint[], ts: number): number | null {
@@ -113,6 +117,8 @@ function buildTimeLayout(
   markers: RegisteredMarker[],
   chartW: number,
   cellW: number,
+  timeAxis: boolean,
+  scrollRightPad: number,
 ): ChartTimeLayout {
   const effectiveCell = Math.max(cellW, MIN_CELL_W);
   const n = pts.length;
@@ -127,6 +133,43 @@ function buildTimeLayout(
       maxScroll: Math.max(0, emptyW - chartW),
       xOfIndex: () => 0,
       markerX: mi => mi * effectiveCell,
+    };
+  }
+
+  if (timeAxis) {
+    const pxPerMs = effectiveCell / CHART_SAMPLE_INTERVAL_MS;
+    const t0 = pts[0].ts;
+    const xOfIndex = (i: number) => Math.max(0, (pts[i].ts - t0) * pxPerMs);
+
+    const idxGroups = new Map<number, number[]>();
+    markers.forEach((mk, mi) => {
+      const idx = nearestHistoryIndex(pts, mk.ts) ?? 0;
+      if (!idxGroups.has(idx)) idxGroups.set(idx, []);
+      idxGroups.get(idx)!.push(mi);
+    });
+    const maxStagger = Math.max(
+      0,
+      ...Array.from(idxGroups.values()).map(g => (g.length - 1) * MARKER_STAGGER_PX),
+    );
+
+    const lastX = n > 0 ? xOfIndex(n - 1) : 0;
+    const totalW = Math.max(chartW, lastX + scrollRightPad + maxStagger + 8);
+
+    const markerX = (mi: number, ts: number) => {
+      const idx = nearestHistoryIndex(pts, ts) ?? 0;
+      const base = xOfIndex(idx);
+      const group = idxGroups.get(idx) ?? [mi];
+      const rank = group.indexOf(mi);
+      return base + rank * MARKER_STAGGER_PX;
+    };
+
+    return {
+      clustered: false,
+      effectiveCell,
+      totalW,
+      maxScroll: Math.max(0, totalW - chartW),
+      xOfIndex,
+      markerX,
     };
   }
 
@@ -268,6 +311,7 @@ export default function FrequencyChart({
   chartHeight,
   maxHistoryPoints,
   defaultHZoom = 1,
+  timeAxis = false,
 }: Props) {
   const { t } = useLocale();
   const plotH = Math.max(72, Math.min(300, chartHeight ?? DEFAULT_CHART_H));
@@ -275,6 +319,7 @@ export default function FrequencyChart({
   const padLeft    = compact ? 30 : PADDING_LEFT;
   const CHART_W    = chartPlotWidth ?? (width - 32 - 16 - PADDING_LEFT - 6);
   const ANCHOR_X   = CHART_W * PLAYHEAD_X_RATIO;
+  const scrollRightPad = CHART_W - ANCHOR_X + 8;
   const maxPts = Math.max(20, maxHistoryPoints ?? DEFAULT_MAX_POINTS);
   const BASE_CELL  = useMemo(() => CHART_W / Math.max(1, maxPts - 1), [CHART_W, maxPts]);
 
@@ -304,8 +349,8 @@ export default function FrequencyChart({
   const cellW = BASE_CELL * hZoom;
 
   const timeLayout = useMemo(
-    () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW),
-    [pts, registeredMarkers, CHART_W, cellW],
+    () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad),
+    [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad],
   );
   const { totalW, maxScroll, xOfIndex, markerX } = timeLayout;
   const xOf = xOfIndex;
@@ -319,17 +364,14 @@ export default function FrequencyChart({
     }
   }, [history.length, defaultHZoom]);
 
-  useEffect(() => {
-    setHScroll(s => clamp3(s, 0, maxScroll));
-  }, [maxScroll]);
-
   const lastTs = pts[pts.length - 1]?.ts ?? 0;
   const lastEndX = pts.length > 0 ? xOfIndex(pts.length - 1) : 0;
 
   useEffect(() => {
     if (pts.length === 0) return;
     setHScroll(prev => {
-      if (!followEndRef.current) return clamp3(prev, 0, maxScroll);
+      const clamped = clamp3(prev, 0, maxScroll);
+      if (!followEndRef.current) return clamped;
       return clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
     });
   }, [lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
@@ -353,10 +395,10 @@ export default function FrequencyChart({
     hzRef.current = z;
     setHZoom(z);
     setHScroll(s => clamp3(s, 0, maxHScrollFromTotal(
-      buildTimeLayout(pts, registeredMarkers, CHART_W, BASE_CELL * z).totalW,
+      buildTimeLayout(pts, registeredMarkers, CHART_W, BASE_CELL * z, timeAxis, scrollRightPad).totalW,
       CHART_W,
     )));
-  }, [pts, registeredMarkers, BASE_CELL, CHART_W]);
+  }, [pts, registeredMarkers, BASE_CELL, CHART_W, timeAxis, scrollRightPad]);
 
   const scrollToStart = useCallback(() => {
     followEndRef.current = false;
