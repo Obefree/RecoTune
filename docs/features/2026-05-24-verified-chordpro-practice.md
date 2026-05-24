@@ -16,10 +16,12 @@
 
 ## Файлы
 
-- `src/utils/songContent.ts` — `isChordProVerified`, `hasVerifiedPracticeLyrics`
-- `src/utils/chordLyricsNormalize.ts` — `allowMerge` default false
-- `src/screens/ChordsScreen.tsx` — `pickSong`, бейджи, без `projectChordsOntoLyrics`
-- `src/db/songLibrary.ts` — purge, seed version bump
+- `src/utils/songContent.ts` — `isChordProVerified`, `hasVerifiedPracticeLyrics`, бейдж **текст ✓**
+- `src/utils/chordLyricsNormalize.ts` — `isVerifiedChordProLyrics`, `cleanupVerifiedChordPro`, merge только при `allowMerge` / chord-line
+- `tools/chord-fetch/amdmFetch.mjs` — полный ChordPro из `<pre>` (построчные `[Am]` с сайта)
+- `src/providers/chordFetchProxy.ts` — кэш `fetch-amdm`, отказ от stub / короткого таба
+- `src/screens/ChordsScreen.tsx` — `pickSong`, без lyrics.ovh в практике
+- `src/db/songLibrary.ts` — `purgeUnverifiedMergedLyrics`, seed `2026-05-24-verified-chordpro-only`
 - `src/data/songDatabase.ts` — поле `chordProVerified`
 
 ## Прокси для новых песен

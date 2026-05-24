@@ -2,7 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent';
-import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
+import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
 
 const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
@@ -302,21 +302,15 @@ async function purgeStaleBuiltinRows(database: SQLite.SQLiteDatabase): Promise<v
   );
 }
 
-/** Drop lyrics that look like auto-glued tabs but were never verified (AmDm / builtin). */
+/** Drop lyrics that fail verified ChordPro heuristic (progression glue, lyrics.ovh, stale merge). */
 async function purgeUnverifiedMergedLyrics(database: SQLite.SQLiteDatabase): Promise<void> {
-  const keepBuiltin = new Set(SONGS.map(s => s.id));
-  const rows = await database.getAllAsync<{ id: string; lyrics: string | null; source: SongSource }>(
-    "SELECT id, lyrics, source FROM songs WHERE lyrics IS NOT NULL AND trim(lyrics) != ''",
+  const rows = await database.getAllAsync<{ id: string; lyrics: string | null }>(
+    "SELECT id, lyrics FROM songs WHERE lyrics IS NOT NULL AND trim(lyrics) != ''",
   );
   const ts = nowIso();
   for (const row of rows) {
     const lyrics = row.lyrics ?? '';
-    if (!/\[[A-G][#b\d]/i.test(lyrics)) continue;
-    const verified =
-      keepBuiltin.has(row.id) ||
-      row.id.startsWith('custom_amdm_') ||
-      row.id.startsWith('custom_chordpro_');
-    if (verified) continue;
+    if (isVerifiedChordProLyrics(lyrics)) continue;
     await database.runAsync(
       'UPDATE songs SET lyrics = NULL, updated_at = ? WHERE id = ?',
       ts,
@@ -325,23 +319,17 @@ async function purgeUnverifiedMergedLyrics(database: SQLite.SQLiteDatabase): Pro
   }
 }
 
-/** Rewrite cached builtin lyrics through normalizeLyricsChords (fixes stale SQLite rows). */
+/** Sync builtin SQLite lyrics from bundled seed (verified ChordPro only). */
 async function repairBuiltinLyricsInDb(database: SQLite.SQLiteDatabase): Promise<void> {
-  const rows = await database.getAllAsync<{ id: string; lyrics: string | null }>(
-    "SELECT id, lyrics FROM songs WHERE source = 'builtin' AND lyrics IS NOT NULL AND trim(lyrics) != ''",
-  );
   const ts = nowIso();
-  for (const row of rows) {
-    const raw = row.lyrics ?? '';
-    const norm = normalizeLyricsChords(raw);
-    if (norm !== raw) {
-      await database.runAsync(
-        "UPDATE songs SET lyrics = ?, updated_at = ? WHERE id = ? AND source = 'builtin'",
-        norm,
-        ts,
-        row.id,
-      );
-    }
+  for (const song of SONGS) {
+    const bundled = bundleBuiltinEntry(song);
+    await database.runAsync(
+      "UPDATE songs SET lyrics = ?, updated_at = ? WHERE id = ? AND source = 'builtin'",
+      bundled.lyrics ?? null,
+      ts,
+      song.id,
+    );
   }
 }
 

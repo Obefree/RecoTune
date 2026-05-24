@@ -35,7 +35,7 @@ export async function ensureSongInUserLibrary(
       song.genre && song.genre !== 'Импорт'
         ? song.genre
         : provider === 'amdm'
-          ? 'Таб из интернета'
+          ? 'fetch-amdm'
           : provider === 'ultimate_guitar'
             ? 'Таб из интернета'
             : 'ChordPro',

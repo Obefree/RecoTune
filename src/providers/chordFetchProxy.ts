@@ -5,7 +5,7 @@ import {
   type ChordCachePayload,
 } from '../db/chordCache';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
-import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
+import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
 import { combinedArtistTitle } from '../utils/searchNormalize';
 import {
   chordFetchDevProxyErrorSuffix,
@@ -170,17 +170,19 @@ function proxyResponseToPayload(
     throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
   }
   const parsed = parseChordProText(body, raw.title?.trim() || title);
-  const entry = chordProToSongEntry(parsed);
-  const lyrics = entry.lyrics ? normalizeLyricsChords(entry.lyrics) : undefined;
+  if (!parsed.lyrics?.trim() || !isVerifiedChordProLyrics(parsed.lyrics)) {
+    throw new ChordFetchError('Таб слишком короткий или без построчных аккордов — проверьте название.');
+  }
   return {
-    title: raw.title?.trim() || entry.title,
-    artist: raw.artist?.trim() || entry.artist || artist,
-    chords: entry.chords,
-    lyrics,
-    key: entry.key,
-    bpm: entry.bpm,
-    difficulty: entry.difficulty,
+    title: raw.title?.trim() || parsed.title,
+    artist: raw.artist?.trim() || parsed.artist || artist,
+    chords: parsed.chords,
+    lyrics: parsed.lyrics,
+    key: parsed.key,
+    bpm: parsed.bpm,
+    difficulty: parsed.difficulty,
     sourceUrl: raw.sourceUrl,
+    lyricsSource: 'fetch-amdm',
   };
 }
 
@@ -242,7 +244,7 @@ export async function fetchOnDemandChordSheet(
   const cached = await getChordCache(provider, artist, title);
   if (cached) {
     const lyrics = cached.lyrics?.trim() ?? '';
-    if (!lyrics || !isChordProStubBody(lyrics)) {
+    if (lyrics && isVerifiedChordProLyrics(lyrics) && !isChordProStubBody(lyrics)) {
       return chordCacheToSongDetail(cached, provider, id, attribution());
     }
   }

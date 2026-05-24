@@ -694,8 +694,12 @@ export default function ChordsScreen() {
   /** Always normalized for display/scroll (edit mode keeps raw practiceLyrics). */
   const practiceLyricsDisplay = useMemo(() => {
     const t = practiceLyrics.trim();
-    return t ? normalizeLyricsChords(practiceLyrics) : '';
-  }, [practiceLyrics]);
+    if (!t) return '';
+    if (practiceSong) {
+      return resolveLyricsText({ ...practiceSong, lyrics: t }) ?? t;
+    }
+    return normalizeLyricsChords(t);
+  }, [practiceLyrics, practiceSong]);
   const [practiceContentHint, setPracticeContentHint] = useState<string | null>(null);
   const [practiceFetchHint, setPracticeFetchHint] = useState<string | null>(null);
   const [autoChordFetchDone, setAutoChordFetchDone] = useState(false);

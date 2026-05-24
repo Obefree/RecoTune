@@ -235,9 +235,53 @@ export function hasChordLineAboveLyricFormat(text: string): boolean {
   return false;
 }
 
-/** Inline ChordPro cleanup without merging chord lines (builtin / already inline). */
+function lineIsChordOnly(line: string): boolean {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.every(t => {
+    const bare = t.replace(/^\[|\]$/g, '');
+    return isChordToken(bare);
+  });
+}
+
+/** Multi-line ChordPro with inline [Am] markers (AmDm parser / builtin seed). */
+export function isVerifiedChordProLyrics(text?: string | null): boolean {
+  if (!text?.trim()) return false;
+  const lines = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return false;
+
+  let linesWithChordMarkers = 0;
+  let linesWithLyricWords = 0;
+
+  for (const line of lines) {
+    if (CHORD_MARKER_RE.test(line)) linesWithChordMarkers++;
+    const prose = line.replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ');
+    if (/[a-zA-Zа-яА-ЯёЁ]{2,}/.test(prose)) linesWithLyricWords++;
+  }
+
+  if (linesWithChordMarkers < 2) return false;
+  if (linesWithLyricWords < 2) return false;
+  if (lines.every(lineIsChordOnly)) return false;
+
+  return true;
+}
+
+/** Inline ChordPro cleanup without merging chord lines (builtin / AmDm inline). */
 export function cleanupVerifiedChordPro(text: string): string {
-  return normalizeLyricsChords(text, { allowMerge: false });
+  if (!text?.trim()) return text?.trim() ?? '';
+
+  let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
+  normalized = stripSpuriousChordBrackets(normalized);
+  normalized = parenToBrackets(normalized);
+  normalized = normalized
+    .split('\n')
+    .map(line => repositionMisplacedInlineChords(stripSpuriousChordBrackets(parenToBrackets(line))))
+    .join('\n');
+  return stripSpuriousChordBrackets(normalized).trim();
 }
 
 /** Full normalization pipeline for stored / fetched lyrics. */
@@ -248,13 +292,15 @@ export function normalizeLyricsChords(text: string, opts?: NormalizeLyricsOption
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
 
-  const split = normalized.split('\n');
-  const lines = opts?.allowMerge === true ? mergeChordLineAboveLyric(split) : split;
-  normalized = lines
-    .map(line =>
-      repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))),
-    )
-    .join('\n');
+  if (opts?.allowMerge === true) {
+    const lines = mergeChordLineAboveLyric(normalized.split('\n'));
+    normalized = lines
+      .map(line =>
+        repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))),
+      )
+      .join('\n');
+    return stripSpuriousChordBrackets(normalized).trim();
+  }
 
-  return stripSpuriousChordBrackets(normalized).trim();
+  return cleanupVerifiedChordPro(normalized);
 }

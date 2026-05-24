@@ -13,6 +13,8 @@ export type ChordCachePayload = {
   bpm?: number;
   difficulty: 1 | 2 | 3;
   sourceUrl?: string;
+  /** Marker for SQLite / practice: AmDm fetch succeeded with verified ChordPro. */
+  lyricsSource?: 'fetch-amdm';
 };
 
 function cacheKey(provider: OnDemandChordProviderId, artist: string, title: string): string {
@@ -86,7 +88,7 @@ export function chordCacheToSongDetail(
     key: payload.key,
     bpm: payload.bpm,
     difficulty: payload.difficulty,
-    genre: 'Таб из интернета',
+    genre: payload.lyricsSource === 'fetch-amdm' ? 'fetch-amdm' : 'Таб из интернета',
     lyrics: payload.lyrics,
     chordProVerified: true,
     provider,

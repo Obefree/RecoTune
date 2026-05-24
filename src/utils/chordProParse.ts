@@ -1,5 +1,10 @@
 import type { SongEntry } from '../data/songDatabase';
-import { isVerifiedChordProLyrics, normalizeLyricsChords } from './chordLyricsNormalize';
+import {
+  cleanupVerifiedChordPro,
+  hasChordLineAboveLyricFormat,
+  isVerifiedChordProLyrics,
+  normalizeLyricsChords,
+} from './chordLyricsNormalize';
 
 export type ChordProParseResult = {
   title: string;
