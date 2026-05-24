@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-24 | Практика: свайп без авто + аккорд A | [2026-05-24-practice-scroll-chord-a.md](./2026-05-24-practice-scroll-chord-a.md) |
 | 2026-05-24 | База песен: без фантомного предвыбора чипов / модала | [2026-05-24-library-preselection-ux.md](./2026-05-24-library-preselection-ux.md) |
 | 2026-05-24 | База песен: избранное по умолчанию, поиск без filler | [2026-05-24-library-favorites-default-search.md](./2026-05-24-library-favorites-default-search.md) |
 | 2026-05-24 | Chords: практика — только verified ChordPro | [2026-05-24-verified-chordpro-practice.md](./2026-05-24-verified-chordpro-practice.md) |

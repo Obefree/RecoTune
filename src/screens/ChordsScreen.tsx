@@ -508,14 +508,33 @@ function normalizeLine(raw: string): string {
 
 // Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
 // activeChordPos: if provided and matches a chord in this line, that chord glows green
+function chordChipTextStyle(chord: string, cs: { color: string; bg: string }, compact?: boolean) {
+  const singleRoot = chord.length === 1 && /^[A-G]$/i.test(chord);
+  return {
+    color: cs.color,
+    fontSize: compact ? 14 : 14,
+    fontWeight: '900' as const,
+    lineHeight: compact ? 19 : 19,
+    marginBottom: compact ? 2 : 0,
+    backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
+    paddingHorizontal: singleRoot ? 8 : compact ? 2 : 7,
+    paddingVertical: singleRoot ? 3 : compact ? 0 : 2,
+    borderRadius: singleRoot ? 6 : compact ? 3 : 6,
+    minWidth: singleRoot ? 24 : undefined,
+    textAlign: singleRoot ? ('center' as const) : undefined,
+  };
+}
+
 function ChordLyricsLine({
-  line, currentChord, onChordTap, lineIdx, activeChordPos,
+  line, currentChord, onChordTap, lineIdx, activeChordPos, chordPressDelay = 200,
 }: {
   line: string;
   currentChord: string;
   onChordTap: (c: string) => void;
   lineIdx: number;
   activeChordPos: { lineIdx: number; posInLine: number } | null;
+  /** Higher delay when auto-scroll off — vertical swipe wins over chord tap. */
+  chordPressDelay?: number;
 }) {
   const normalized = normalizeLine(line);
   const segs: { chord?: string; text: string }[] = [];
@@ -567,16 +586,12 @@ function ChordLyricsLine({
           return (
             <Pressable
               key={`chord-${i}-${seg.chord}`}
-              unstable_pressDelay={200}
+              delayPressIn={chordPressDelay}
               onPress={() => onChordTap(seg.chord!)}
               hitSlop={4}
               style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
             >
-              <Text style={{
-                color: cs.color, fontSize: 14, fontWeight: '900',
-                backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
-                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6,
-              }}>{seg.chord}</Text>
+              <Text style={chordChipTextStyle(seg.chord!, cs)}>{seg.chord}</Text>
             </Pressable>
           );
         })}
@@ -593,15 +608,12 @@ function ChordLyricsLine({
           <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             {seg.chord && cs ? (
               <Pressable
-                unstable_pressDelay={200}
+                delayPressIn={chordPressDelay}
                 onPress={() => onChordTap(seg.chord!)}
                 hitSlop={4}
                 style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
               >
-                <Text style={{
-                  color: cs.color, fontSize: 14, fontWeight: '900', lineHeight: 19, marginBottom: 2,
-                  backgroundColor: cs.bg, paddingHorizontal: 2, borderRadius: 3,
-                }}>{seg.chord}</Text>
+                <Text style={chordChipTextStyle(seg.chord!, cs, true)}>{seg.chord}</Text>
               </Pressable>
             ) : <View style={{ height: 21 }} />}
             <Text style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
@@ -613,7 +625,7 @@ function ChordLyricsLine({
 }
 
 type Mode = 'live' | 'practice' | 'identify';
-const CHORDS_DEV_BUILD = 'scroll-search-2026-05-24';
+const CHORDS_DEV_BUILD = 'scroll-chord-a-2026-05-24';
 
 export default function ChordsScreen() {
   const insets = useSafeAreaInsets();
@@ -712,6 +724,7 @@ export default function ChordsScreen() {
   const [autoScroll, setAutoScroll]       = useState(false);
   const [practiceBpm, setPracticeBpm]     = useState(80);
   const lyricsScrollRef                   = useRef<ScrollView>(null);
+  const autoScrollActiveRef               = useRef(false);
   const autoScrollFrameRef                = useRef<number | null>(null);
   const autoScrollLastTsRef               = useRef(0);
   const scrollYRef                        = useRef(0);
@@ -720,13 +733,18 @@ export default function ChordsScreen() {
   /** Finger on lyrics — block auto-scroll interval + mic scrollTo until gesture ends */
   const lyricsUserScrollRef               = useRef(false);
 
-  const scrollLyricsTo = useCallback((y: number, animated = false) => {
+  const scrollLyricsTo = useCallback((y: number, animated = false, force = false) => {
+    if (!force && !autoScrollActiveRef.current) return;
     const viewH = Math.max(80, practiceLyricsViewportHRef.current);
     const maxY = Math.max(0, scrollContentHRef.current - viewH);
     const nextY = Math.max(0, Math.min(maxY, y));
     scrollYRef.current = nextY;
     lyricsScrollRef.current?.scrollTo({ y: nextY, animated });
   }, []);
+
+  useEffect(() => {
+    autoScrollActiveRef.current = autoScroll;
+  }, [autoScroll]);
 
   const pauseAutoScrollInterval = useCallback(() => {
     if (autoScrollFrameRef.current != null) {
@@ -737,6 +755,7 @@ export default function ChordsScreen() {
 
   const startAutoScroll = useCallback((bpm: number) => {
     pauseAutoScrollInterval();
+    autoScrollActiveRef.current = true;
     setAutoScroll(true);
     autoScrollLastTsRef.current = 0;
     const pxPerSec = Math.max(12, Math.min(46, bpm * 0.24));
@@ -775,6 +794,7 @@ export default function ChordsScreen() {
 
   const stopAutoScroll = useCallback(() => {
     pauseAutoScrollInterval();
+    autoScrollActiveRef.current = false;
     setAutoScroll(false);
   }, [pauseAutoScrollInterval]);
 
@@ -786,7 +806,7 @@ export default function ChordsScreen() {
     const viewH = Math.max(80, practiceLyricsViewportHRef.current);
     const maxY = Math.max(0, scrollContentHRef.current - viewH);
     if (scrollYRef.current >= maxY - 2) {
-      scrollLyricsTo(0, false);
+      scrollLyricsTo(0, false, true);
     }
     startAutoScroll(practiceBpm);
   }, [autoScroll, practiceBpm, scrollLyricsTo, startAutoScroll, stopAutoScroll]);
@@ -806,15 +826,16 @@ export default function ChordsScreen() {
   const handleLyricsScrollBeginDrag = useCallback(() => {
     lyricsUserScrollRef.current = true;
     pauseAutoScrollInterval();
+    autoScrollActiveRef.current = false;
     setAutoScroll(false);
   }, [pauseAutoScrollInterval]);
 
   const restoreLyricsScrollAfterLayout = useCallback(() => {
-    if (lyricsUserScrollRef.current) return;
+    if (!autoScrollActiveRef.current || lyricsUserScrollRef.current) return;
     const y = scrollYRef.current;
     if (y <= 0) return;
     requestAnimationFrame(() => {
-      scrollLyricsTo(y, false);
+      scrollLyricsTo(y, false, true);
     });
   }, [scrollLyricsTo]);
 
@@ -851,7 +872,7 @@ export default function ChordsScreen() {
   useEffect(() => {
     stopAutoScroll();
     scrollYRef.current = 0;
-    requestAnimationFrame(() => scrollLyricsTo(0, false));
+    requestAnimationFrame(() => scrollLyricsTo(0, false, true));
   }, [practiceLyricsDisplay, scrollLyricsTo, stopAutoScroll]);
 
   const lyricsImmersiveRef = useRef(false);
@@ -987,9 +1008,12 @@ export default function ChordsScreen() {
               if (detected === lc.chord || detected.startsWith(lc.chord) || lc.chord.startsWith(detected)) {
                 activeLyricIdxRef.current = i;
                 setActiveLyricIdx(i);
-                if (!lyricsUserScrollRef.current) {
+                if (
+                  autoScrollActiveRef.current
+                  && !lyricsUserScrollRef.current
+                ) {
                   const lineY = lineYRef.current[lc.lineIdx] ?? 0;
-                  scrollLyricsTo(Math.max(0, lineY - 64), false);
+                  scrollLyricsTo(Math.max(0, lineY - 64), false, true);
                 }
                 break;
               }
@@ -1868,7 +1892,7 @@ export default function ChordsScreen() {
       }
       setAutoChordFetchDone(true);
       setTimeout(() => {
-        scrollLyricsTo(0, false);
+        scrollLyricsTo(0, false, true);
       }, 350);
     } catch (e) {
       if (__DEV__) console.warn('[RecoTune] on-demand chord fetch', e);
@@ -2647,9 +2671,11 @@ export default function ChordsScreen() {
               onMomentumScrollEnd={handleLyricsScrollEnd}
               onContentSizeChange={(_, h) => {
                 scrollContentHRef.current = h;
-                scrollLyricsTo(scrollYRef.current, false);
-                if (autoScroll && autoScrollFrameRef.current == null) {
-                  startAutoScroll(practiceBpm);
+                if (autoScrollActiveRef.current) {
+                  scrollLyricsTo(scrollYRef.current, false, true);
+                  if (autoScrollFrameRef.current == null) {
+                    startAutoScroll(practiceBpm);
+                  }
                 }
               }}>
               {practiceLyricsDisplay.split('\n').map((line, li) => {
@@ -2664,6 +2690,7 @@ export default function ChordsScreen() {
                       currentChord={practiceCurrentChord}
                       lineIdx={li}
                       activeChordPos={activeChordPos}
+                      chordPressDelay={autoScroll ? 140 : 320}
                       onChordTap={(c) => {
                         if (autoScrollFrameRef.current != null) stopAutoScroll();
                         const idx = practiceChords.indexOf(c);

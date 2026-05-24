@@ -11,23 +11,35 @@ const CHORD_SLASH = `(?:\\/${ROOT})?`;
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
 const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
-const COMMON_WORD_CHORD_FALSE_POS = new Set(['a', 'A', 'i', 'I']);
+const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
+const LYRIC_PRONOUN_TOKENS = new Set(['I']);
 
 function isChordToken(token) {
   return VALID_CHORD_TOKEN_RE.test(token);
 }
 
-function isBareWordChordToken(token) {
-  if (!isChordToken(token) || COMMON_WORD_CHORD_FALSE_POS.has(token)) return false;
-  if (token.length === 1) return /^[GBCDEF]$/i.test(token);
+function isBareWordChordToken(token, opts) {
+  if (!isChordToken(token)) return false;
+  if (LYRIC_ARTICLE_TOKENS.has(token)) return false;
+  if (!opts?.chordLine && LYRIC_PRONOUN_TOKENS.has(token)) return false;
+  if (token.length === 1) return /^[A-G]$/i.test(token);
   return true;
+}
+
+function lineIsBareChordLine(line) {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.every(t => {
+    const { core } = splitTokenPunctuation(t);
+    return Boolean(core) && isChordToken(core);
+  });
 }
 
 function stripSpuriousChordBrackets(text) {
   return text.replace(/\[([^\]\n]+)\]/g, (match, inner) => {
     const ch = inner.trim();
     if (!ch) return match;
-    if (COMMON_WORD_CHORD_FALSE_POS.has(ch)) return ch;
+    if (LYRIC_ARTICLE_TOKENS.has(ch) || LYRIC_PRONOUN_TOKENS.has(ch)) return ch;
     if (ch.length === 1 && !isBareWordChordToken(ch)) return ch;
     if (!isChordToken(ch)) return ch;
     return match;
@@ -57,10 +69,11 @@ function bracketBareChords(line) {
   if (!line.trim() || CHORD_MARKER_RE.test(line) || lineHasSpuriousChordBrackets(line)) {
     return line;
   }
+  const chordLine = lineIsBareChordLine(line);
   return line.replace(/\S+/g, token => {
     if (token.includes('[')) return token;
     const { lead, core, trail } = splitTokenPunctuation(token);
-    if (!core || !isBareWordChordToken(core)) return token;
+    if (!core || !isBareWordChordToken(core, { chordLine })) return token;
     return `${lead}[${core}]${trail}`;
   });
 }
@@ -254,6 +267,22 @@ const tests = [
   ],
   ['C# chord line', csharpLine.includes('[C#]Hello') && !/\[C\]#/i.test(csharpLine)],
   ['Bb chord line', bbLine.includes('[Bb]She') && !/\[B\]b/i.test(bbLine)],
+  [
+    'A chord line',
+    (() => {
+      const merged = normalizeLyricsChords('A\nVerse', { allowMerge: true });
+      const row = normalizeLyricsChords('A D E', { allowMerge: true });
+      return merged.includes('[A]Verse') && /\[A\].*\[D\].*\[E\]/.test(row) && !/\[a\]/.test(row);
+    })(),
+  ],
+  [
+    'keep [A] bracket',
+    normalizeLyricsChords('[A]Hello') === '[A]Hello',
+  ],
+  [
+    'feather article lowercase',
+    !/\[a\]/i.test(normalizeLyricsChords('like a feather', { allowMerge: true })),
+  ],
 ];
 
 console.log('Output:\n' + creepOut + '\n');

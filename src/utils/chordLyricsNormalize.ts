@@ -5,7 +5,8 @@
  * - "When you were here before\nG\nCouldn't look you in the eye"
  *   → must NOT contain [e] inside When; G merges or becomes [G]
  * - "(Am) over you" → "[Am] over you"
- * - "G B C Cm" + lyric line → no [a] on articles; keep [G], [Am], [Cm]
+ * - "G B C Cm" + lyric line → no [a] on articles; keep [G], [Am], [Cm], [A]
+ * - "A D E" chord row / "[A]Hello" → capital A kept as chord, not stripped
  * - "G\\nBut I'm a creep" / "But [G]I'm a creep" → chord on last word, not before I'm
  */
 
@@ -19,8 +20,10 @@ const CHORD_SLASH = `(?:\\/${ROOT})?`;
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
 
-/** Articles / pronouns that look like note names but are lyrics. */
-const COMMON_WORD_CHORD_FALSE_POS = new Set(['a', 'A', 'i', 'I']);
+/** Lowercase articles in lyric prose — never bracket as chords. */
+const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
+/** Capital pronoun — not a chord in prose; chord symbol is uppercase A. */
+const LYRIC_PRONOUN_TOKENS = new Set(['I']);
 
 /** Lyric lines that often carry one chord on the last word (e.g. "But I'm a creep"). */
 const LINE_LEAD_CONNECTORS = new Set([
@@ -70,13 +73,24 @@ function isChordToken(token: string): boolean {
   return VALID_CHORD_TOKEN_RE.test(token);
 }
 
-/** Bracket only real chord symbols in prose — not single-letter articles. */
-function isBareWordChordToken(token: string): boolean {
-  if (!isChordToken(token) || COMMON_WORD_CHORD_FALSE_POS.has(token)) return false;
-  if (token.length === 1) {
-    return /^[GBCDEF]$/i.test(token);
-  }
+type BareChordOpts = { /** Line is chord symbols only (ChordPro row above lyrics). */ chordLine?: boolean };
+
+/** Bracket only real chord symbols — not articles in prose; A–G allowed as chords. */
+function isBareWordChordToken(token: string, opts?: BareChordOpts): boolean {
+  if (!isChordToken(token)) return false;
+  if (LYRIC_ARTICLE_TOKENS.has(token)) return false;
+  if (!opts?.chordLine && LYRIC_PRONOUN_TOKENS.has(token)) return false;
+  if (token.length === 1) return /^[A-G]$/i.test(token);
   return true;
+}
+
+function lineIsBareChordLine(line: string): boolean {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.every(t => {
+    const { core } = splitTokenPunctuation(t);
+    return Boolean(core) && isChordToken(core);
+  });
 }
 
 /** Keep [G]/[Am]; unwrap spurious [a], [e], [r], [A], [I]. */
@@ -84,7 +98,7 @@ export function stripSpuriousChordBrackets(text: string): string {
   return text.replace(/\[([^\]\n]+)\]/g, (match, inner: string) => {
     const ch = inner.trim();
     if (!ch) return match;
-    if (COMMON_WORD_CHORD_FALSE_POS.has(ch)) return ch;
+    if (LYRIC_ARTICLE_TOKENS.has(ch) || LYRIC_PRONOUN_TOKENS.has(ch)) return ch;
     if (ch.length === 1 && !isBareWordChordToken(ch)) return ch;
     if (!isChordToken(ch)) return ch;
     return match;
@@ -121,10 +135,11 @@ function bracketBareChords(line: string): string {
   if (!line.trim() || CHORD_MARKER_RE.test(line) || lineHasSpuriousChordBrackets(line)) {
     return line;
   }
+  const chordLine = lineIsBareChordLine(line);
   return line.replace(/\S+/g, token => {
     if (token.includes('[')) return token;
     const { lead, core, trail } = splitTokenPunctuation(token);
-    if (!core || !isBareWordChordToken(core)) return token;
+    if (!core || !isBareWordChordToken(core, { chordLine })) return token;
     return `${lead}[${core}]${trail}`;
   });
 }
