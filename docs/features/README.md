@@ -12,6 +12,7 @@
 | Дата       | Тема | Файл |
 |------------|------|------|
 | 2026-05-24 | База: поиск по rank; Практика: свайп RNGH | [2026-05-24-library-search-scroll-fix.md](./2026-05-24-library-search-scroll-fix.md) |
+| 2026-05-24 | Практика: стабильная строка с аккордом A | [2026-05-24-chord-a-layout-stable.md](./2026-05-24-chord-a-layout-stable.md) |
 | 2026-05-24 | Практика: свайп без авто + аккорд A | [2026-05-24-practice-scroll-chord-a.md](./2026-05-24-practice-scroll-chord-a.md) |
 | 2026-05-24 | База песен: без фантомного предвыбора чипов / модала | [2026-05-24-library-preselection-ux.md](./2026-05-24-library-preselection-ux.md) |
 | 2026-05-24 | База песен: избранное по умолчанию, поиск без filler | [2026-05-24-library-favorites-default-search.md](./2026-05-24-library-favorites-default-search.md) |

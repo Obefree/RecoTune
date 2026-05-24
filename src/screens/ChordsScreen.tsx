@@ -512,20 +512,28 @@ function normalizeLine(raw: string): string {
 
 // Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
 // activeChordPos: if provided and matches a chord in this line, that chord glows green
-function chordChipTextStyle(chord: string, cs: { color: string; bg: string }, compact?: boolean) {
-  const singleRoot = chord.length === 1 && /^[A-G]$/i.test(chord);
+/** Fixed row above lyric syllable — A, Am, C#m and empty spacer share the same box. */
+const CHORD_INLINE_ROW_H = 21;
+const CHORD_INLINE_SLOT_MIN_W = 26;
+
+const chordInlineSlotStyle = {
+  minHeight: CHORD_INLINE_ROW_H,
+  minWidth: CHORD_INLINE_SLOT_MIN_W,
+  justifyContent: 'flex-end' as const,
+  alignItems: 'center' as const,
+};
+
+function chordChipTextStyle(_chord: string, cs: { color: string; bg: string }, compact?: boolean) {
   return {
     color: cs.color,
-    fontSize: compact ? 14 : 14,
+    fontSize: 14,
     fontWeight: '900' as const,
-    lineHeight: compact ? 19 : 19,
-    marginBottom: compact ? 2 : 0,
+    lineHeight: 19,
     backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
-    paddingHorizontal: singleRoot ? 8 : compact ? 2 : 7,
-    paddingVertical: singleRoot ? 3 : compact ? 0 : 2,
-    borderRadius: singleRoot ? 6 : compact ? 3 : 6,
-    minWidth: singleRoot ? 24 : undefined,
-    textAlign: singleRoot ? ('center' as const) : undefined,
+    paddingHorizontal: compact ? 3 : 7,
+    paddingVertical: compact ? 0 : 2,
+    borderRadius: compact ? 4 : 6,
+    textAlign: 'center' as const,
   };
 }
 
@@ -585,7 +593,7 @@ function ChordLyricsLine({
   if (allChordsOnly) {
     posCounter = 0;
     return (
-      <View pointerEvents="box-none" style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10, gap: 8 }}>
+      <View pointerEvents="box-none" style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10, gap: 4 }}>
         {segs.filter(s => s.chord).map((seg, i) => {
           const cs = getChordStyle(seg.chord!);
           return (
@@ -596,7 +604,9 @@ function ChordLyricsLine({
               onPress={() => onChordTap(seg.chord!)}
               hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
             >
-              <Text style={chordChipTextStyle(seg.chord!, cs)}>{seg.chord}</Text>
+              <View style={chordInlineSlotStyle}>
+                <Text style={chordChipTextStyle(seg.chord!, cs)}>{seg.chord}</Text>
+              </View>
             </GestureTouchableOpacity>
           );
         })}
@@ -611,16 +621,21 @@ function ChordLyricsLine({
         const cs = seg.chord ? getChordStyle(seg.chord) : null;
         return (
           <View key={i} pointerEvents="box-none" style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
-            {seg.chord && cs ? (
-              <GestureTouchableOpacity
-                activeOpacity={0.7}
-                delayPressIn={chordTapDelay}
-                onPress={() => onChordTap(seg.chord!)}
-                hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
-              >
-                <Text style={chordChipTextStyle(seg.chord!, cs, true)}>{seg.chord}</Text>
-              </GestureTouchableOpacity>
-            ) : <View pointerEvents="none" style={{ height: 21 }} />}
+            <View
+              pointerEvents="box-none"
+              style={seg.chord ? chordInlineSlotStyle : { minHeight: CHORD_INLINE_ROW_H }}
+            >
+              {seg.chord && cs ? (
+                <GestureTouchableOpacity
+                  activeOpacity={0.7}
+                  delayPressIn={chordTapDelay}
+                  onPress={() => onChordTap(seg.chord!)}
+                  hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
+                >
+                  <Text style={chordChipTextStyle(seg.chord!, cs, true)}>{seg.chord}</Text>
+                </GestureTouchableOpacity>
+              ) : null}
+            </View>
             <Text pointerEvents="none" style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
           </View>
         );
