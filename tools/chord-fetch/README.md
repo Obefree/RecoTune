@@ -104,7 +104,7 @@ curl -s -X POST http://127.0.0.1:8787/fetch -H "Content-Type: application/json" 
 
 
 
-Если amdm.ru недоступен или таб не распознан — **заглушка** ChordPro с подсказкой (чтобы проверить цепочку в приложении).
+Если amdm.ru недоступен или таб не распознан — **HTTP 404** и `{ error, stub: true }` (без ChordPro в теле). Приложение не показывает это как таб (`chordFetchProxy` / `isChordProStubBody`).
 
 
 

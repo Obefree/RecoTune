@@ -1,0 +1,35 @@
+---
+description: Без заглушек и недоделок в UI — только рабочий путь или честное «недоступно»
+alwaysApply: true
+---
+
+# No stubs — working path or honest empty
+
+Политика продукта (пользователь): **заглушки не нужны** — либо рабочая схема, либо ничего, и явно написать почему недоступно. Не заполнять экран «бредом» и недоделками.
+
+## Запрещено (user-visible)
+
+- Fake / stub / placeholder **как будто это настоящий таб**: ChordPro «Тестовая заглушка», test-endpoint с фейковым табом, HTTP 200 с пустым или поддельным телом.
+- Показывать **прогрессию в шапке** или **metadata** как построчный таб с аккордами над словами.
+- **Эвристическое заполнение**: `projectChordsOntoLyrics`, склейка progression → lyrics, lyrics.ovh **без** `[Chord]` как «таб», каталогные строки с жанром «таб» при отсутствии verified ChordPro.
+- Выдавать **успех** (toast, «загружено», практика с текстом), когда контент не verified / не с прокси / не из бандла с `chordProVerified`.
+
+## Разрешено
+
+- **Полный рабочий путь**: verified ChordPro (builtin с флагом, AmDm/прокси после парса, ручной импорт, «Мои»).
+- **Честное пустое**: пустая практика + короткая причина (`PROGRESSION_ONLY_HINT`, ошибка `ChordFetchError`, «Текст не найден», «Подгрузите таб»).
+- **Прогрессия-only**: только строка аккордов в шапке + hint, **без** fake lyrics в области таба.
+- **Поиск metadata** (MusicBrainz chunks, lyrics.ovh как «только текст») — с явной меткой, не как ChordPro.
+
+## Реализация (ориентиры)
+
+- `src/providers/chordFetchProxy.ts` — `isChordProStubBody`, отказ от `stub` в JSON.
+- `tools/chord-fetch/amdmFetch.mjs` — внутренний stub только → **HTTP 404** + `error`, не 200 с ChordPro.
+- `src/utils/songContent.ts` — `hasVerifiedPracticeLyrics`, `chordProVerified`.
+- Прокси/тесты: smoke через реальный fetch или 404, не «успех-заглушка».
+
+## Для агентов и PR
+
+- Новая фича табов/текста: **end-to-end** или не мержить UI-часть.
+- Не добавлять `TODO` UI, demo-данные в production paths, «временно покажем X» без флага dev-only.
+- Документация и README не должны обещать заглушки пользователю; dev-only — явно помечать.
