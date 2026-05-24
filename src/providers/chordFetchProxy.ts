@@ -7,7 +7,7 @@ import {
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
 import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
 import { combinedArtistTitle } from '../utils/searchNormalize';
-import { resolveChordFetchUrl } from './chordFetchUrl';
+import { getEffectiveChordFetchUrl } from './chordFetchUrl';
 import { ensureAutoChordProxySettings } from './autoChordProxy';
 import { getProviderSettings } from './providerSettings';
 import type {
@@ -98,8 +98,13 @@ export async function postChordFetchProxy(
     });
   } catch (e) {
     if (e instanceof ChordFetchError) throw e;
+    const msg = e instanceof Error ? e.message : '';
+    const cleartextHint =
+      proxyUrl.startsWith('http://') && /Network request failed|cleartext/i.test(msg)
+        ? ' Android блокирует http:// — используйте https:// Vercel или Expo Go + dev-proxy.'
+        : '';
     throw new ChordFetchError(
-      'Не удалось подгрузить таб. Проверьте интернет или адрес подгрузки (Vercel / dev-proxy).',
+      `Не удалось подгрузить таб.${cleartextHint} Проверьте интернет, dev-proxy (:8787) или Vercel /api/fetch-chords.`,
     );
   }
 
@@ -194,6 +199,20 @@ function artistTitleFetchVariants(artist: string, title: string): { artist: stri
   return variants;
 }
 
+/** Quick health check for settings UI (Radiohead — Creep). */
+export async function probeChordFetchEndpoint(proxyUrl: string): Promise<string> {
+  const url = proxyUrl.trim();
+  if (!url) return 'URL не задан';
+  try {
+    const raw = await postChordFetchProxy('amdm', 'Radiohead', 'Creep', url);
+    const body = (raw.chordPro ?? raw.text ?? '').trim();
+    if (!body || isChordProStubBody(body)) return 'Ответ пустой или заглушка';
+    return `OK — ${body.split('\n').length} строк`;
+  } catch (e) {
+    return e instanceof ChordFetchError ? e.message : 'Проверка не удалась';
+  }
+}
+
 export async function fetchOnDemandChordSheet(
   provider: OnDemandChordProviderId,
   artist: string,
@@ -202,10 +221,10 @@ export async function fetchOnDemandChordSheet(
 ): Promise<SongDetail> {
   await ensureAutoChordProxySettings();
   const settings = await getProviderSettings();
-  const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
+  const proxyUrl = getEffectiveChordFetchUrl(settings.chordFetchProxyUrl);
   if (!proxyUrl) {
     throw new ChordFetchError(
-      'Подгрузка табов недоступна. Укажите EXPO_PUBLIC_CHORD_FETCH_URL, разверните API на Vercel или запустите dev-proxy.',
+      'Подгрузка табов недоступна. Укажите URL в ⚙ Источники, EXPO_PUBLIC_CHORD_FETCH_URL, Vercel /api/fetch-chords или dev-proxy на ПК.',
     );
   }
 

@@ -1,5 +1,5 @@
 import { getProviderSettings, saveProviderSettings, type ProviderSettings } from './providerSettings';
-import { resolveChordFetchUrl } from './chordFetchUrl';
+import { normalizeChordFetchUrl, resolveChordFetchUrl } from './chordFetchUrl';
 
 export { parseHostFromDebuggerHost, buildChordFetchProxyUrl } from './chordFetchUrl';
 
@@ -20,7 +20,7 @@ export async function ensureAutoChordProxySettings(): Promise<AutoChordProxyResu
     return { configured: true, autoFilled: false };
   }
 
-  const url = resolveChordFetchUrl();
+  const url = normalizeChordFetchUrl(resolveChordFetchUrl());
   if (!url) {
     return { configured: false, autoFilled: false };
   }
