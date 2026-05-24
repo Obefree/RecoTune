@@ -12,6 +12,11 @@ const MIN_CELL_W = 14;
 /** Avg gap below this → treat history as time-clustered and spread by index */
 const CLUSTER_AVG_GAP_MS = 55;
 const MARKER_STAGGER_PX = 16;
+/** Playhead anchor — slightly right of center (not trailing edge). */
+const PLAYHEAD_X_RATIO = 0.57;
+/** Max horizontal scroll per pitch update (px) when following live input. */
+const SCROLL_FOLLOW_MAX_STEP = 9;
+const CENTER_MIDI_EMA = 0.1;
 
 /** Стабильная высота блока графика в тюнере (режим ¢/ноты + зум) */
 export const TUNER_CHART_BLOCK_MIN_H =
@@ -33,6 +38,8 @@ export interface HistoryPoint {
   note:   string;
   octave: number;
   ts:     number;
+  /** When false, chart skips dot/segment (unvoiced glide). Default true for tuner history. */
+  voiced?: boolean;
 }
 
 export interface TuningChartTarget {
@@ -270,7 +277,7 @@ export default function FrequencyChart({
   const { width }  = useWindowDimensions();
   const padLeft    = compact ? 30 : PADDING_LEFT;
   const CHART_W    = chartPlotWidth ?? (width - 32 - 16 - PADDING_LEFT - 6);
-  const ANCHOR_X   = CHART_W * 0.60;
+  const ANCHOR_X   = CHART_W * PLAYHEAD_X_RATIO;
   const maxPts = Math.max(20, maxHistoryPoints ?? DEFAULT_MAX_POINTS);
   const BASE_CELL  = useMemo(() => CHART_W / Math.max(1, maxPts - 1), [CHART_W, maxPts]);
 
@@ -325,12 +332,13 @@ export default function FrequencyChart({
   useEffect(() => {
     if (pts.length === 0) return;
     setHScroll(prev => {
-      if (followEndRef.current) {
-        return clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
-      }
-      return clamp3(prev, 0, maxScroll);
+      if (!followEndRef.current) return clamp3(prev, 0, maxScroll);
+      const target = clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
+      const delta = target - prev;
+      if (Math.abs(delta) <= SCROLL_FOLLOW_MAX_STEP) return target;
+      return clamp3(prev + Math.sign(delta) * SCROLL_FOLLOW_MAX_STEP, 0, maxScroll);
     });
-  }, [lastTs, pts.length, lastEndX, maxScroll]);
+  }, [lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
 
   const beginPan = useCallback(() => {
     panOriginScroll.current = hsRef.current;
@@ -394,9 +402,12 @@ export default function FrequencyChart({
     : centRange >= 100 ? [-100,-50,0,50,100]
     : [-50,-25,0,25,50];
 
+  const isPlotted = (p: HistoryPoint) => p.voiced !== false;
+
   const centSegs = useMemo(() => {
     if (mode !== 'cents' || pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
+      if (!isPlotted(pts[i]) || !isPlotted(p)) return null;
       const x1 = xOf(i), x2 = xOf(i + 1);
       const c1 = plotCents(pts[i], useStringCents);
       const c2 = plotCents(p, useStringCents);
@@ -405,7 +416,7 @@ export default function FrequencyChart({
       const dx = x2-x1, dy = y2-y1;
       return { x: x1, y: y1, len: Math.sqrt(dx*dx+dy*dy),
                angle: Math.atan2(dy,dx)*(180/Math.PI), color: colorForCents(c2) };
-    });
+    }).filter((s): s is NonNullable<typeof s> => s != null);
   }, [mode, pts, cellW, centRange, plotH, useStringCents]);
 
   /* ── PITCH mode geometry ── */
@@ -429,7 +440,9 @@ export default function FrequencyChart({
       setCenterMidiSmooth(targetMidi);
       return;
     }
-    setCenterMidiSmooth(centerMidiRaw);
+    setCenterMidiSmooth(prev =>
+      prev + CENTER_MIDI_EMA * (centerMidiRaw - prev),
+    );
   }, [centerMidiRaw, targetMidi]);
 
   const centerMidi = targetMidi != null ? targetMidi : centerMidiSmooth;
@@ -475,6 +488,7 @@ export default function FrequencyChart({
   const pitchSegs = useMemo(() => {
     if (mode !== 'pitch' || pts.length < 2) return [];
     return pts.slice(1).map((p, i) => {
+      if (!isPlotted(pts[i]) || !isPlotted(p)) return null;
       const x1 = xOf(i), x2 = xOf(i + 1);
       const y1 = midiToY(pts[i].midi, centerMidi, pitchRange, plotH);
       const y2 = midiToY(p.midi,      centerMidi, pitchRange, plotH);
@@ -482,7 +496,7 @@ export default function FrequencyChart({
       return { x: x1, y: y1, len: Math.sqrt(dx*dx+dy*dy),
                angle: Math.atan2(dy,dx)*(180/Math.PI),
                color: octLine(p.octave) };
-    });
+    }).filter((s): s is NonNullable<typeof s> => s != null);
   }, [mode, pts, cellW, centerMidi, pitchRange, plotH]);
 
   const latest = pts.length > 0 ? pts[pts.length - 1] : null;
@@ -683,6 +697,7 @@ export default function FrequencyChart({
           })}
 
           {pts.map((p, i) => {
+            if (!isPlotted(p)) return null;
             const x = xOf(i);
             const c = plotCents(p, useStringCents);
             const y = mode === 'cents'

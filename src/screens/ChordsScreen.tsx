@@ -1436,23 +1436,9 @@ export default function ChordsScreen() {
     const settings = await getProviderSettings();
     let working = resolved;
 
-    if (settings.enabled.lyrics !== false) {
-      try {
-        const { text } = await fetchLyricsForTrack(resolved.artist, resolved.title);
-        if (text?.trim()) {
-          working = { ...working, lyrics: text };
-        }
-      } catch (e) {
-        if (__DEV__) console.warn('[RecoTune] lyrics.ovh silent', e);
-      }
-    }
-
-    if (hasAnnotatedLyrics(working.lyrics)) {
-      return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
-    }
-
+    let onlineFetchErr: string | null = null;
     const proxyUrl = settings.chordFetchProxyUrl.trim() || resolveChordFetchUrl();
-    if (proxyUrl) {
+    if (proxyUrl && settings.enabled.amdm !== false) {
       try {
         const detail = await fetchAmdmChordSheet(resolved.artist, resolved.title);
         const persisted = await ensureSongInUserLibrary(detail, 'amdm');
@@ -1466,18 +1452,34 @@ export default function ChordsScreen() {
         working = full;
       } catch (e) {
         if (__DEV__) console.warn('[RecoTune] online tab fetch', e);
-        const fetchErr = chordFetchErrorHint(e);
-        return {
-          song: working,
-          lyrics: working.lyrics?.trim() ? working.lyrics : undefined,
-          hint: fetchErr,
-          stillNeedsFetch: true,
-        };
+        onlineFetchErr = chordFetchErrorHint(e);
       }
     }
 
+    if (settings.enabled.lyrics !== false && !hasAnnotatedLyrics(working.lyrics)) {
+      try {
+        const lyricsRace = await Promise.race([
+          fetchLyricsForTrack(resolved.artist, resolved.title),
+          new Promise<{ text: null; source: null }>(resolve => {
+            setTimeout(() => resolve({ text: null, source: null }), 6000);
+          }),
+        ]);
+        if (lyricsRace.text?.trim()) {
+          working = { ...working, lyrics: lyricsRace.text };
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('[RecoTune] lyrics.ovh silent', e);
+      }
+    }
+
+    if (hasAnnotatedLyrics(working.lyrics)) {
+      return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
+    }
+
     const stillNeedsFetch = needsOnDemandChordFetch(working);
-    const hint = stillNeedsFetch ? practiceFetchHintForSettings(settings) : null;
+    const hint = stillNeedsFetch
+      ? onlineFetchErr ?? practiceFetchHintForSettings(settings)
+      : null;
     return {
       song: working,
       lyrics: working.lyrics?.trim() ? working.lyrics : undefined,
@@ -2162,10 +2164,17 @@ export default function ChordsScreen() {
           {practiceFetchHint}
         </Text>
       ) : null}
-      {chordFetchLoading && !practiceLyrics ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 }}>
-          <ActivityIndicator size="small" color="#7c4dff" />
-          <Text style={{ color: '#666', fontSize: 10 }}>Подбор текста и таба…</Text>
+      {chordFetchLoading ? (
+        <View style={{ alignItems: 'center', paddingVertical: 4, gap: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <ActivityIndicator size="small" color="#7c4dff" />
+            <Text style={{ color: '#666', fontSize: 10 }}>Подгрузка таба… до 15 с</Text>
+          </View>
+          {!resolveChordFetchUrl() && !(providerSettings?.chordFetchProxyUrl.trim()) ? (
+            <Text style={styles.practiceFetchHint} numberOfLines={2}>
+              Нужен Vercel /api/fetch-chords или dev-proxy — см. ⚙ Источники
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>

@@ -23,6 +23,29 @@ export class ChordFetchError extends Error {
   }
 }
 
+export const CHORD_FETCH_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = CHORD_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new ChordFetchError(
+        `Превышено время ожидания (${Math.round(timeoutMs / 1000)} с). Проверьте Vercel /api/fetch-chords или dev-proxy :8787.`,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export type ChordProxyResponse = {
   chordPro?: string;
   text?: string;
@@ -64,7 +87,7 @@ export async function postChordFetchProxy(
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain' },
       body: JSON.stringify({
@@ -73,7 +96,8 @@ export async function postChordFetchProxy(
         title: title.trim(),
       }),
     });
-  } catch {
+  } catch (e) {
+    if (e instanceof ChordFetchError) throw e;
     throw new ChordFetchError(
       'Не удалось подгрузить таб. Проверьте интернет или адрес подгрузки (Vercel / dev-proxy).',
     );
@@ -201,28 +225,40 @@ export async function fetchOnDemandChordSheet(
   }
 
   const variants = artistTitleFetchVariants(artist, title);
-  let lastError: ChordFetchError | null = null;
 
-  for (const v of variants) {
-    try {
-      const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl);
-      const payload = proxyResponseToPayload(raw, v.artist, v.title);
-      if (payload.lyrics && isChordProStubBody(payload.lyrics)) {
-        throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
-      }
-      await setChordCache(provider, artist, title, payload);
-      return chordCacheToSongDetail(payload, provider, id, {
-        ...attribution(),
-        url: payload.sourceUrl ?? attribution().url,
-      });
-    } catch (e) {
-      if (e instanceof ChordFetchError) lastError = e;
-      else lastError = new ChordFetchError('Подгрузка таба не удалась.');
+  const tryVariant = async (v: { artist: string; title: string }) => {
+    const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl);
+    const payload = proxyResponseToPayload(raw, v.artist, v.title);
+    if (payload.lyrics && isChordProStubBody(payload.lyrics)) {
+      throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
     }
-  }
+    await setChordCache(provider, artist, title, payload);
+    return chordCacheToSongDetail(payload, provider, id, {
+      ...attribution(),
+      url: payload.sourceUrl ?? attribution().url,
+    });
+  };
 
-  throw (
-    lastError ??
-    new ChordFetchError('Таб не найден. Проверьте интернет, proxy/Vercel и написание песни.')
-  );
+  try {
+    return await Promise.any(
+      variants.map(v =>
+        tryVariant(v).catch(e => {
+          if (e instanceof ChordFetchError) throw e;
+          throw new ChordFetchError('Подгрузка таба не удалась.');
+        }),
+      ),
+    );
+  } catch (e) {
+    if (e instanceof AggregateError) {
+      const chordErr = e.errors.find(err => err instanceof ChordFetchError) as
+        | ChordFetchError
+        | undefined;
+      throw (
+        chordErr ??
+        new ChordFetchError('Таб не найден. Проверьте интернет, proxy/Vercel и написание песни.')
+      );
+    }
+    if (e instanceof ChordFetchError) throw e;
+    throw new ChordFetchError('Подгрузка таба не удалась.');
+  }
 }

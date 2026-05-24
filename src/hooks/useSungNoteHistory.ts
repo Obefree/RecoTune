@@ -14,6 +14,10 @@ import {
   createPitchFrame,
   pushPitchFrameRing,
 } from '../utils/pitchFrame';
+import { isVoicedFrame } from '../utils/melodyTranscription';
+
+const CHART_MIN_INTERVAL_MS = 100;
+const CHART_MIDI_EMA = 0.12;
 
 const MAX_NOTES = 64;
 const MAX_PITCH_HISTORY = 120;
@@ -60,6 +64,8 @@ function toRegisteredEvent(note: SungNote): RegisteredNoteEvent {
 export function useSungNoteHistory() {
   const detectorRef = useRef(new SungNoteDetector());
   const pitchFrameRingRef = useRef<PitchFrame[]>([]);
+  const lastChartPtMsRef = useRef(0);
+  const smoothChartMidiRef = useRef<number | null>(null);
 
   const [notes, setNotes] = useState<SungNote[]>([]);
   const [pitchHistory, setPitchHistory] = useState<HistoryPoint[]>([]);
@@ -68,6 +74,8 @@ export function useSungNoteHistory() {
   const reset = useCallback(() => {
     detectorRef.current.reset();
     pitchFrameRingRef.current = [];
+    lastChartPtMsRef.current = 0;
+    smoothChartMidiRef.current = null;
     setNotes([]);
     setPitchHistory([]);
     setPitchFrames([]);
@@ -102,21 +110,33 @@ export function useSungNoteHistory() {
     pitchFrameRingRef.current = pushPitchFrameRing(pitchFrameRingRef.current, frame);
     setPitchFrames(pitchFrameRingRef.current);
 
-    if (chartFreq && chartFreq >= 55) {
-      const info = frequencyToNote(chartFreq);
-      const midi = freqToMidi(chartFreq);
-      const pt: HistoryPoint = {
-        cents: sample.cents ?? info.cents,
-        freq: chartFreq,
-        midi,
-        note: info.name,
-        octave: info.octave,
-        ts,
-      };
-      setPitchHistory(prev => {
-        const next = [...prev, pt];
-        return next.length > MAX_PITCH_HISTORY ? next.slice(-MAX_PITCH_HISTORY) : next;
-      });
+    if (chartFreq && chartFreq >= 55 && isVoicedFrame(frame)) {
+      if (ts - lastChartPtMsRef.current >= CHART_MIN_INTERVAL_MS) {
+        lastChartPtMsRef.current = ts;
+        const rawMidi = freqToMidi(chartFreq);
+        const prevMidi = smoothChartMidiRef.current;
+        const midi =
+          prevMidi == null
+            ? rawMidi
+            : CHART_MIDI_EMA * rawMidi + (1 - CHART_MIDI_EMA) * prevMidi;
+        smoothChartMidiRef.current = midi;
+        const info = frequencyToNote(chartFreq);
+        const pt: HistoryPoint = {
+          cents: sample.cents ?? info.cents,
+          freq: chartFreq,
+          midi,
+          note: info.name,
+          octave: info.octave,
+          ts,
+          voiced: true,
+        };
+        setPitchHistory(prev => {
+          const next = [...prev, pt];
+          return next.length > MAX_PITCH_HISTORY ? next.slice(-MAX_PITCH_HISTORY) : next;
+        });
+      }
+    } else if (!chartFreq || chartFreq < 55) {
+      smoothChartMidiRef.current = null;
     }
 
     const detected = detectorRef.current.process({ ...sample, ts });

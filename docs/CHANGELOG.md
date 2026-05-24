@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 2026-05-24
+
+- **Melody / Chords UX:** плавный график высоты (voiced-only, throttle, playhead ~57%), таймаут подгрузки табов 15 с, параллельный AmDm. См. [docs/features/2026-05-24-melody-chart-chords-ux.md](./features/2026-05-24-melody-chart-chords-ux.md).
+
 ### 2026-05-23
 
 - **Chords:** поиск (раскладка RU/EN, metadata) и подгрузка табов — без stub-заглушек, подсказки proxy/Vercel, AmDm multi-query. См. [docs/features/2026-05-23-chord-search-fetch-reliability.md](./features/2026-05-23-chord-search-fetch-reliability.md).

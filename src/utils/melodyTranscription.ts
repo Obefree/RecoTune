@@ -38,7 +38,8 @@ const TRANSCRIPTION = {
   mergeSameMidiMaxCents: 28,
 } as const;
 
-function isVoicedFrame(f: PitchFrame): boolean {
+/** Voiced gate shared by contour transcription and pitch chart. */
+export function isVoicedFrame(f: PitchFrame): boolean {
   if (f.freq == null || f.midi == null) return false;
   if (f.freq < PITCH_FRAME_RING.freqMin || f.freq > PITCH_FRAME_RING.freqMax) return false;
   if (f.rms < TRANSCRIPTION.minRms) return false;

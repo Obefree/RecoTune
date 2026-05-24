@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-24 | Melody график + Chords подгрузка | [2026-05-24-melody-chart-chords-ux.md](./2026-05-24-melody-chart-chords-ux.md) |
 | 2026-05-23 | Chords: поиск и подгрузка табов | [2026-05-23-chord-search-fetch-reliability.md](./2026-05-23-chord-search-fetch-reliability.md) |
 | 2026-05-23 | Практика: свайп текста пальцем | [2026-05-23-practice-lyrics-finger-scroll.md](./2026-05-23-practice-lyrics-finger-scroll.md) |
 | 2026-05-22 | Android Back + фильтры «База песен» | [2026-05-22-back-nav-library-filters.md](./2026-05-22-back-nav-library-filters.md) |

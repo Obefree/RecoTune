@@ -63,7 +63,7 @@ import {
 } from '../utils/melodyStorage';
 
 /** Display/chart smoothing — raw pitch still goes to detector + pitchFrames for contour. */
-const DISPLAY_EMA = 0.14;
+const DISPLAY_EMA = 0.07;
 const CHART_PAD = 32 + 16;
 
 interface NoteState { name: string; octave: number; cents: number; frequency: number }
