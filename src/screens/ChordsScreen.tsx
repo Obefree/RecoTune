@@ -1336,7 +1336,7 @@ export default function ChordsScreen() {
   const [chordFetchProbeBusy, setChordFetchProbeBusy] = useState(false);
   const [showAdvancedChordFetchUrl, setShowAdvancedChordFetchUrl] = useState(false);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
-  const [libFavOnly, setLibFavOnly]           = useState(false);
+  const [libFavOnly, setLibFavOnly]           = useState(true);
   const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
   const [libSortAz, setLibSortAz]             = useState(true);
 
@@ -1414,7 +1414,7 @@ export default function ChordsScreen() {
         return;
       }
       if (!q) {
-        setLibSearchHits(librarySongs);
+        setLibSearchHits([]);
         setLibProviderMeta(new Map());
         setLibSearchRank(new Map());
         setLibSearchBusy(false);
@@ -1480,10 +1480,18 @@ export default function ChordsScreen() {
   }, [libSearch, librarySongs]);
 
   const libResults = (() => {
-    let list = libSearch.trim() ? libSearchHits : allSongs;
-    if (libFavOnly) list = list.filter(s => favorites.has(s.id));
+    const q = libSearch.trim();
+    let list: SongEntry[];
+    if (q) {
+      // Search entire catalog (builtin + user + metadata); rank map from searchProviders.
+      list = libSearchHits;
+    } else if (libFavOnly) {
+      list = librarySongs.filter(s => favorites.has(s.id));
+    } else {
+      list = allSongs;
+    }
     if (libFullTabsOnly) list = list.filter(s => hasVerifiedPracticeLyrics(resolveSongEntry(s)));
-    if (libSearch.trim()) {
+    if (q) {
       list = [...list].sort((a, b) => {
         const ra = libSearchRank.get(a.id) ?? 99999;
         const rb = libSearchRank.get(b.id) ?? 99999;
@@ -1494,6 +1502,13 @@ export default function ChordsScreen() {
       list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     }
     return list;
+  })();
+
+  const libCountLabel = (() => {
+    const q = libSearch.trim();
+    if (q) return `${libResults.length} найдено`;
+    if (libFavOnly) return `${libResults.length} избранных`;
+    return `${libResults.length} из ${allSongs.length}`;
   })();
 
   function providerForSong(item: SongEntry): ProviderId {
@@ -1532,9 +1547,13 @@ export default function ChordsScreen() {
   function librarySearchEmptyHint(): string {
     const hasProxy = !!effectiveChordFetchUrl(providerSettings);
     const base =
-      'Ничего не найдено — проверьте написание (латиница/кириллица, раскладка). В каталоге ~32 песни с аккордами и тысячи названий из метаданных.';
+      'Ничего не найдено — проверьте написание (латиница/кириллица, раскладка). Ищем по избранному, ~32 встроенным с аккордами и метаданным каталога.';
     if (hasProxy) return `${base} Полный таб — после выбора песни.`;
     return `${base} Полный таб — прокси на ПК (${CHORD_FETCH_DEV_PROXY_CMD}, ⚙ Источники).`;
+  }
+
+  function libraryFavoritesEmptyHint(): string {
+    return 'В избранном пусто. Введите название в поиске и нажмите ⭐ у песни — или снимите фильтр «Избранное», чтобы увидеть весь каталог.';
   }
 
   async function enrichSongForPractice(base: SongEntry): Promise<{
@@ -3111,7 +3130,7 @@ export default function ChordsScreen() {
             ) : null}
           </View>
 
-          {/* Favorites + A→Z (search ranking unchanged when query set) */}
+          {/* Favorites + A→Z (empty list = favorites; search = ranked catalog) */}
           <View style={styles.libFilterRow}>
             <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
               style={[styles.libFilterPill, libFavOnly && styles.libFilterPillActive]}>
@@ -3125,7 +3144,7 @@ export default function ChordsScreen() {
               style={[styles.libFilterPill, libSortAz && styles.libFilterPillSortActive]}>
               <Text style={[styles.libFilterPillText, libSortAz && { color: '#7c4dff' }]}>А→Я</Text>
             </TouchableOpacity>
-            <Text style={styles.libCount}>{libResults.length} из {allSongs.length}</Text>
+            <Text style={styles.libCount}>{libCountLabel}</Text>
           </View>
           </View>
 
@@ -3144,6 +3163,14 @@ export default function ChordsScreen() {
                   {allSongs.length === 0
                     ? 'Каталог ещё загружается… Подождите секунду и повторите.'
                     : librarySearchEmptyHint()}
+                </Text>
+              ) : libFavOnly ? (
+                <Text style={styles.identEmptyHint}>
+                  {libraryInitError
+                    ? libraryInitError
+                    : allSongs.length === 0
+                      ? 'Каталог ещё загружается…'
+                      : libraryFavoritesEmptyHint()}
                 </Text>
               ) : null
             }

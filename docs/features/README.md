@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-24 | База песен: избранное по умолчанию, поиск без filler | [2026-05-24-library-favorites-default-search.md](./2026-05-24-library-favorites-default-search.md) |
 | 2026-05-24 | Chords: практика — только verified ChordPro | [2026-05-24-verified-chordpro-practice.md](./2026-05-24-verified-chordpro-practice.md) |
 | 2026-05-24 | Chords: прокси на ПК по умолчанию (без Vercel) | [2026-05-24-chord-fetch-pc-proxy-default.md](./2026-05-24-chord-fetch-pc-proxy-default.md) |
 | 2026-05-24 | Chords: URL API табов, диагностика | [2026-05-24-chord-fetch-url-ux.md](./2026-05-24-chord-fetch-url-ux.md) |
