@@ -6,6 +6,7 @@
 
 ### 2026-05-24
 
+- **Pitch-графики (Tuner / Chords):** parity с Melody — `timeAxis`, voiced throttle 100 ms, playhead. См. [docs/features/2026-05-24-pitch-chart-parity-tuner-chords.md](./features/2026-05-24-pitch-chart-parity-tuner-chords.md).
 - **Melody график:** ось X по времени (px/ms), playhead без «разгона» за 30+ с. См. [docs/features/2026-05-24-melody-chart-time-axis.md](./features/2026-05-24-melody-chart-time-axis.md).
 - **Chords / Практика:** стабильный свайп текста на Android — убраны touch-хендлеры с обёртки ScrollView, автопрокрутка не сбрасывает offset. См. [docs/features/2026-05-24-practice-lyrics-scroll-gesture-fix.md](./features/2026-05-24-practice-lyrics-scroll-gesture-fix.md).
 - **Melody график:** playhead — нота больше не «убегает» вперёд (откат cap скролла 9 px, EMA 0.20). См. [docs/features/2026-05-24-melody-chart-playhead-regression-fix.md](./features/2026-05-24-melody-chart-playhead-regression-fix.md).

@@ -3,7 +3,7 @@ import { frequencyToNote } from './noteUtils';
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 
-/** Single pitch sample for melody contour transcription (~12 Hz). */
+/** Single pitch sample for melody contour transcription. */
 export type PitchFrame = {
   t: number;
   freq: number | null;
@@ -14,8 +14,8 @@ export type PitchFrame = {
 };
 
 export const PITCH_FRAME_RING = {
-  /** ~12 s at ~12 Hz */
-  maxFrames: 144,
+  /** ~12 s at the faster melody engine cadence. */
+  maxFrames: 220,
   /** Melody transcription vocal range (Hz) */
   freqMin: 80,
   freqMax: 1000,

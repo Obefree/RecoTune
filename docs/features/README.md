@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-24 | Pitch-графики: parity Tuner / Chords / Melody | [2026-05-24-pitch-chart-parity-tuner-chords.md](./2026-05-24-pitch-chart-parity-tuner-chords.md) |
 | 2026-05-24 | Melody: ось времени на графике (без разгона) | [2026-05-24-melody-chart-time-axis.md](./2026-05-24-melody-chart-time-axis.md) |
 | 2026-05-24 | Практика: свайп текста (Android gesture) | [2026-05-24-practice-lyrics-scroll-gesture-fix.md](./2026-05-24-practice-lyrics-scroll-gesture-fix.md) |
 | 2026-05-24 | Melody: playhead, нота не убегает вперёд | [2026-05-24-melody-chart-playhead-regression-fix.md](./2026-05-24-melody-chart-playhead-regression-fix.md) |

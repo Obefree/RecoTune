@@ -1,12 +1,13 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet, Text } from 'react-native';
-import FrequencyChart, { HistoryPoint } from './FrequencyChart';
+import FrequencyChart, { type HistoryPoint, type PitchSegmentOverlay } from './FrequencyChart';
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
 import { useLocale } from '../context/LocaleContext';
 
 interface Props {
   history: HistoryPoint[];
   registeredEvents: RegisteredNoteEvent[];
+  segmentOverlays?: PitchSegmentOverlay[];
   active: boolean;
   chartPlotWidth?: number;
 }
@@ -14,6 +15,7 @@ interface Props {
 export default function MelodyPitchChart({
   history,
   registeredEvents,
+  segmentOverlays = [],
   active,
   chartPlotWidth,
 }: Props) {
@@ -42,6 +44,7 @@ export default function MelodyPitchChart({
         defaultHZoom={2}
         timeAxis
         registeredMarkers={markers}
+        segmentOverlays={segmentOverlays}
       />
       <Text style={styles.legend}>{t('chartScrollHistoryHint')}</Text>
       {registeredEvents.length > 0 ? (

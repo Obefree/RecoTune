@@ -126,6 +126,19 @@ export default function MelodyScreen() {
     return registeredEvents;
   }, [useContourRecognition, transcription.segments, registeredEvents]);
 
+  const segmentOverlays = useMemo(
+    () =>
+      transcription.segments.map(s => ({
+        startMs: s.startMs,
+        endMs: s.endMs,
+        midi: s.midi,
+        note: s.noteName,
+        octave: s.octave,
+        confidence: s.confidenceMean,
+      })),
+    [transcription.segments],
+  );
+
   const stripNotes = useMemo(
     () => activeEvents.map(e => ({
       name: e.name,
@@ -204,13 +217,15 @@ export default function MelodyScreen() {
     if (msg.type === 'ready') {
       setError(null);
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
-      const raw = msg.frequency;
+      const stable = msg.stableFrequency ?? msg.frequency;
+      const raw = msg.rawFrequency ?? stable;
       const prevF = smoothedFreqRef.current;
-      const freq = prevF == null ? raw : DISPLAY_EMA * raw + (1 - DISPLAY_EMA) * prevF;
+      const freq = prevF == null ? stable : DISPLAY_EMA * stable + (1 - DISPLAY_EMA) * prevF;
       smoothedFreqRef.current = freq;
 
       const info = frequencyToNote(freq);
       const rawInfo = frequencyToNote(raw);
+      const stableInfo = frequencyToNote(stable);
       const n: NoteState = {
         name: info.name,
         octave: info.octave,
@@ -221,10 +236,12 @@ export default function MelodyScreen() {
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
       feedSungNote({
-        frequency: raw,
+        frequency: stable,
+        frameFrequency: raw,
         chartFrequency: freq,
         signal: msg.signal ?? 0,
-        cents: rawInfo.cents,
+        cents: stableInfo.cents,
+        frameCents: rawInfo.cents,
         yinConfidence: msg.yinConfidence,
       });
     } else if (msg.type === 'signal') {
@@ -496,7 +513,7 @@ export default function MelodyScreen() {
 
   return (
     <View style={[styles.wrapper, { paddingTop: insets.top }]}>
-      {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} />}
+      {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} mode="melody" />}
       <MelodyPlayerEngine ref={playerRef} onMessage={handlePlayerMessage} />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -621,6 +638,7 @@ export default function MelodyScreen() {
         <MelodyPitchChart
           history={pitchHistory}
           registeredEvents={activeEvents}
+          segmentOverlays={recognitionMode === 'contour' ? segmentOverlays : []}
           active={isActive}
           chartPlotWidth={chartPlotWidth}
         />

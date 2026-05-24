@@ -2,6 +2,11 @@ import { listSongs } from './songLibrary';
 import { LYRICS_DB } from '../data/lyricsDatabase';
 import type { SongEntry } from '../data/songDatabase';
 import { contentQualityScore } from '../utils/songContent';
+import {
+  extractChordSequence,
+  looksLikeChordQuery,
+  scoreChordSequence,
+} from '../utils/chordProgression';
 import { compareSearchHits, scoreSongAgainstQuery, type MatchKind } from '../utils/searchScore';
 import { blobMatchesQuery, normalizeSearchText, searchQueryForms, tokenizeQuery } from '../utils/searchNormalize';
 
@@ -35,6 +40,8 @@ export async function searchSongsSmart(
 
   const qForms = searchQueryForms(q);
   const tokens = tokenizeQuery(q);
+  const queryChords = extractChordSequence(q);
+  const chordIntent = looksLikeChordQuery(q);
   let songs = await listSongs();
   if (options?.source === 'builtin') songs = songs.filter(s => !s.id.startsWith('custom_'));
   if (options?.source === 'user') songs = songs.filter(s => s.id.startsWith('custom_'));
@@ -57,6 +64,14 @@ export async function searchSongsSmart(
     const searchBlob = `${song.artist} ${song.title} ${song.genre} ${song.chords} ${lyrics}`;
     if (blobMatchesQuery(searchBlob, qForms)) {
       finalScore = Math.max(finalScore, 95);
+    }
+
+    if (chordIntent) {
+      const targetChords = extractChordSequence(`${song.chords} ${lyrics}`);
+      const chordScore = scoreChordSequence(queryChords, targetChords);
+      if (chordScore > 0) {
+        finalScore = Math.max(finalScore, 110 + chordScore);
+      }
     }
 
     if (finalScore > 0 || kind !== 'none') {
@@ -85,4 +100,4 @@ export function filterSongsQuick(songs: SongEntry[], query: string): SongEntry[]
     return blobMatchesQuery(blob, forms);
   });
 }
-
+

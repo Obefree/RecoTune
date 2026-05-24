@@ -55,6 +55,15 @@ export interface RegisteredMarker {
   octave: number;
 }
 
+export interface PitchSegmentOverlay {
+  startMs: number;
+  endMs: number;
+  midi: number;
+  note: string;
+  octave: number;
+  confidence?: number;
+}
+
 interface Props {
   history: HistoryPoint[];
   active: boolean;
@@ -62,6 +71,7 @@ interface Props {
   tuningTarget?: TuningChartTarget | null;
   /** Committed notes from sungNoteDetector — dots + vertical ticks on pitch trace */
   registeredMarkers?: RegisteredMarker[];
+  segmentOverlays?: PitchSegmentOverlay[];
   chartPlotWidth?: number;
   compact?: boolean;
   chartHeight?: number;
@@ -109,6 +119,7 @@ interface ChartTimeLayout {
   totalW: number;
   maxScroll: number;
   xOfIndex: (i: number) => number;
+  xOfTime: (ts: number) => number;
   markerX: (markerIndex: number, ts: number) => number;
 }
 
@@ -132,6 +143,7 @@ function buildTimeLayout(
       totalW: emptyW,
       maxScroll: Math.max(0, emptyW - chartW),
       xOfIndex: () => 0,
+      xOfTime: () => 0,
       markerX: mi => mi * effectiveCell,
     };
   }
@@ -140,6 +152,7 @@ function buildTimeLayout(
     const pxPerMs = effectiveCell / CHART_SAMPLE_INTERVAL_MS;
     const t0 = pts[0].ts;
     const xOfIndex = (i: number) => Math.max(0, (pts[i].ts - t0) * pxPerMs);
+    const xOfTime = (ts: number) => Math.max(0, (ts - t0) * pxPerMs);
 
     const idxGroups = new Map<number, number[]>();
     markers.forEach((mk, mi) => {
@@ -169,6 +182,7 @@ function buildTimeLayout(
       totalW,
       maxScroll: Math.max(0, totalW - chartW),
       xOfIndex,
+      xOfTime,
       markerX,
     };
   }
@@ -192,6 +206,7 @@ function buildTimeLayout(
       (slotCount - 1) * effectiveCell + maxStagger + 8,
     );
     const xOfIndex = (i: number) => i * effectiveCell;
+    const xOfTime = (ts: number) => xOfIndex(nearestHistoryIndex(pts, ts) ?? 0);
 
     const markerX = (mi: number, ts: number) => {
       const idx = nearestHistoryIndex(pts, ts) ?? 0;
@@ -206,6 +221,7 @@ function buildTimeLayout(
       totalW,
       maxScroll: Math.max(0, totalW - chartW),
       xOfIndex,
+      xOfTime,
       markerX,
     };
   }
@@ -225,6 +241,7 @@ function buildTimeLayout(
   const totalW = Math.max(chartW, (n - 1) * effectiveCell + maxStagger + 8);
   const contentW = totalW - 8 - maxStagger;
   const xOfIndex = (i: number) => (n <= 1 ? 0 : ((pts[i].ts - t0) / span) * contentW);
+  const xOfTime = (ts: number) => Math.max(0, Math.min(contentW, ((ts - t0) / span) * contentW));
 
   const markerX = (mi: number, ts: number) => {
     const idx = nearestHistoryIndex(pts, ts) ?? 0;
@@ -240,6 +257,7 @@ function buildTimeLayout(
     totalW,
     maxScroll: Math.max(0, totalW - chartW),
     xOfIndex,
+    xOfTime,
     markerX,
   };
 }
@@ -306,6 +324,7 @@ export default function FrequencyChart({
   active,
   tuningTarget = null,
   registeredMarkers = [],
+  segmentOverlays = [],
   chartPlotWidth,
   compact = false,
   chartHeight,
@@ -352,7 +371,7 @@ export default function FrequencyChart({
     () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad),
     [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad],
   );
-  const { totalW, maxScroll, xOfIndex, markerX } = timeLayout;
+  const { totalW, maxScroll, xOfIndex, xOfTime, markerX } = timeLayout;
   const xOf = xOfIndex;
   const useStringCents = tuningTarget != null;
 
@@ -533,6 +552,24 @@ export default function FrequencyChart({
     }).filter((s): s is NonNullable<typeof s> => s != null);
   }, [mode, pts, cellW, centerMidi, pitchRange, plotH]);
 
+  const segmentBlocks = useMemo(() => {
+    if (mode !== 'pitch' || segmentOverlays.length === 0 || pts.length === 0) return [];
+    return segmentOverlays.map((seg, i) => {
+      const x1 = xOfTime(seg.startMs);
+      const x2 = Math.max(x1 + 8, xOfTime(seg.endMs));
+      const y = midiToY(seg.midi, centerMidi, pitchRange, plotH);
+      if (y < -24 || y > plotH + 24) return null;
+      return {
+        key: `${seg.startMs}-${seg.midi}-${i}`,
+        left: x1,
+        top: Math.max(1, Math.min(plotH - 20, y - 10)),
+        width: Math.max(8, x2 - x1),
+        label: `${seg.note}${seg.octave}`,
+        confidence: seg.confidence ?? 0,
+      };
+    }).filter((s): s is NonNullable<typeof s> => s != null);
+  }, [mode, segmentOverlays, pts.length, xOfTime, centerMidi, pitchRange, plotH]);
+
   const latest = pts.length > 0 ? pts[pts.length - 1] : null;
   const blockW = padLeft + CHART_W;
 
@@ -643,6 +680,26 @@ export default function FrequencyChart({
           </>}
 
           {/* ── Line segments ── */}
+          {mode === 'pitch' && segmentBlocks.map(seg => (
+            <View
+              key={seg.key}
+              pointerEvents="none"
+              style={[
+                styles.segmentBlock,
+                {
+                  left: seg.left,
+                  top: seg.top,
+                  width: seg.width,
+                  opacity: Math.max(0.28, Math.min(0.6, 0.24 + seg.confidence * 0.5)),
+                },
+              ]}
+            >
+              {seg.width >= 34 ? (
+                <Text style={styles.segmentBlockText} numberOfLines={1}>{seg.label}</Text>
+              ) : null}
+            </View>
+          ))}
+
           {(mode === 'cents' ? centSegs : pitchSegs).map((s, i) => (
             <View key={i} style={{
               position: 'absolute', left: s.x, top: s.y - 1.5,
@@ -938,6 +995,21 @@ const styles = StyleSheet.create({
   },
   zoneBand: { position: 'absolute', left: 0, right: 0 },
   gridLine: { position: 'absolute', left: 0, right: 0 },
+  segmentBlock: {
+    position: 'absolute',
+    height: 20,
+    borderRadius: 5,
+    backgroundColor: '#7c4dff',
+    borderWidth: 1,
+    borderColor: '#d4c4ff66',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  segmentBlockText: {
+    color: '#f2ecff',
+    fontSize: 8,
+    fontWeight: '900',
+  },
   noteBubble: {
     position: 'absolute', backgroundColor: '#1a1a2e',
     borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,

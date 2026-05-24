@@ -30,12 +30,15 @@ export type TranscriptionResult = {
 const TRANSCRIPTION = {
   minRms: 0.008,
   maxYin: 0.18,
-  stableCents: 45,
-  pitchJumpSemitones: 0.65,
+  pitchJumpSemitones: 0.72,
+  transitionConfirmFrames: 2,
   minSegmentMs: 165,
   silenceGapMs: 185,
-  mergeSameMidiGapMs: 42,
-  mergeSameMidiMaxCents: 28,
+  mergeSameMidiGapMs: 130,
+  mergeSameMidiMaxCents: 55,
+  shortFragmentMs: 220,
+  shortFragmentFrames: 3,
+  shortFragmentMaxSemitones: 1.05,
 } as const;
 
 /** Voiced gate shared by contour transcription and pitch chart. */
@@ -71,16 +74,48 @@ interface RawSegment {
   frames: PitchFrame[];
 }
 
-function midiSpreadCents(frames: PitchFrame[]): number {
-  const midis = frames.map(f => f.midi!).filter(m => m != null);
-  if (midis.length < 2) return 0;
-  const med = median(midis);
-  const cents = midis.map(m => (m - med) * 100);
-  return Math.max(...cents) - Math.min(...cents);
+function midiToFreq(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function withSmoothedMidi(frame: PitchFrame, midi: number): PitchFrame {
+  const rounded = Math.round(midi);
+  return {
+    ...frame,
+    midi,
+    freq: midiToFreq(midi),
+    cents: Math.round((midi - rounded) * 100),
+  };
+}
+
+function smoothVoicedFrames(voiced: PitchFrame[]): PitchFrame[] {
+  if (voiced.length < 3) return voiced;
+  return voiced.map((frame, i) => {
+    const start = Math.max(0, i - 1);
+    const end = Math.min(voiced.length, i + 2);
+    const window = voiced.slice(start, end).map(f => f.midi!).filter(m => m != null);
+    return withSmoothedMidi(frame, median(window));
+  });
+}
+
+function segmentDuration(seg: RawSegment): number {
+  if (seg.frames.length === 0) return 0;
+  return seg.frames[seg.frames.length - 1].t - seg.frames[0].t;
 }
 
 function segmentMedianMidiFloat(frames: PitchFrame[]): number {
   return median(frames.map(f => f.midi!));
+}
+
+function isConfirmedPitchMove(voiced: PitchFrame[], index: number, currentMedian: number): boolean {
+  const frames: PitchFrame[] = [];
+  for (let i = index; i < voiced.length && frames.length < TRANSCRIPTION.transitionConfirmFrames; i++) {
+    if (i > index && voiced[i].t - voiced[i - 1].t >= TRANSCRIPTION.silenceGapMs) break;
+    frames.push(voiced[i]);
+  }
+  if (frames.length < TRANSCRIPTION.transitionConfirmFrames) return false;
+  const nextMedian = segmentMedianMidiFloat(frames);
+  return Math.abs(nextMedian - currentMedian) >= TRANSCRIPTION.pitchJumpSemitones;
 }
 
 function splitRawSegments(voiced: PitchFrame[]): RawSegment[] {
@@ -102,14 +137,10 @@ function splitRawSegments(voiced: PitchFrame[]): RawSegment[] {
       continue;
     }
 
-    if (semiJump >= TRANSCRIPTION.pitchJumpSemitones) {
-      segments.push({ frames: current });
-      current = [cur];
-      continue;
-    }
-
-    const spread = midiSpreadCents([...current, cur]);
-    if (spread > TRANSCRIPTION.stableCents) {
+    if (
+      semiJump >= TRANSCRIPTION.pitchJumpSemitones
+      && isConfirmedPitchMove(voiced, i, med)
+    ) {
       segments.push({ frames: current });
       current = [cur];
       continue;
@@ -122,7 +153,7 @@ function splitRawSegments(voiced: PitchFrame[]): RawSegment[] {
   return segments;
 }
 
-function mergeMicroSegments(raw: RawSegment[]): RawSegment[] {
+function mergeNearSameMidiSegments(raw: RawSegment[]): RawSegment[] {
   if (raw.length <= 1) return raw;
 
   const out: RawSegment[] = [raw[0]];
@@ -151,10 +182,80 @@ function mergeMicroSegments(raw: RawSegment[]): RawSegment[] {
   return out;
 }
 
+function absorbShortFragments(raw: RawSegment[]): RawSegment[] {
+  if (raw.length <= 1) return raw;
+
+  const out: RawSegment[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const cur = raw[i];
+    const curMed = segmentMedianMidiFloat(cur.frames);
+    const isShort =
+      segmentDuration(cur) < TRANSCRIPTION.shortFragmentMs
+      && cur.frames.length <= TRANSCRIPTION.shortFragmentFrames;
+
+    if (!isShort) {
+      out.push(cur);
+      i++;
+      continue;
+    }
+
+    const prev = out[out.length - 1];
+    const next = raw[i + 1];
+    const prevMed = prev ? segmentMedianMidiFloat(prev.frames) : null;
+    const nextMed = next ? segmentMedianMidiFloat(next.frames) : null;
+
+    if (
+      prev
+      && next
+      && prevMed != null
+      && nextMed != null
+      && Math.round(prevMed) === Math.round(nextMed)
+    ) {
+      out[out.length - 1] = { frames: [...prev.frames, ...cur.frames, ...next.frames] };
+      i += 2;
+      continue;
+    }
+
+    const prevDiff = prevMed == null ? Infinity : Math.abs(curMed - prevMed);
+    const nextDiff = nextMed == null ? Infinity : Math.abs(curMed - nextMed);
+    const canMergePrev = prev != null && prevDiff <= TRANSCRIPTION.shortFragmentMaxSemitones;
+    const canMergeNext = next != null && nextDiff <= TRANSCRIPTION.shortFragmentMaxSemitones;
+
+    if (canMergePrev && (!canMergeNext || prevDiff <= nextDiff)) {
+      out[out.length - 1] = { frames: [...prev.frames, ...cur.frames] };
+      i++;
+      continue;
+    }
+
+    if (canMergeNext) {
+      out.push({ frames: [...cur.frames, ...next.frames] });
+      i += 2;
+      continue;
+    }
+
+    out.push(cur);
+    i++;
+  }
+
+  return out;
+}
+
+function refineRawSegments(raw: RawSegment[]): RawSegment[] {
+  return mergeNearSameMidiSegments(absorbShortFragments(mergeNearSameMidiSegments(raw)));
+}
+
+function estimateFrameStepMs(frames: PitchFrame[]): number {
+  if (frames.length < 2) return 65;
+  const gaps = frames.slice(1).map((f, i) => f.t - frames[i].t).filter(g => g > 15 && g < 180);
+  if (gaps.length === 0) return 65;
+  return Math.max(45, Math.min(110, median(gaps)));
+}
+
 function fitSegment(frames: PitchFrame[]): TranscribedNoteSegment | null {
   if (frames.length === 0) return null;
   const startMs = frames[0].t;
-  const endMs = frames[frames.length - 1].t;
+  const endMs = frames[frames.length - 1].t + estimateFrameStepMs(frames);
   const durationMs = endMs - startMs;
   if (durationMs < TRANSCRIPTION.minSegmentMs && frames.length < 2) return null;
 
@@ -184,12 +285,12 @@ function fitSegment(frames: PitchFrame[]): TranscribedNoteSegment | null {
  * Contour-based note extraction from pitch frame ring (MVP 1).
  */
 export function transcribeFromPitchFrames(frames: PitchFrame[]): TranscriptionResult {
-  const voiced = frames.filter(isVoicedFrame);
+  const voiced = smoothVoicedFrames(frames.filter(isVoicedFrame));
   if (voiced.length === 0) {
     return { segments: [], voicedFrameCount: 0, confidence: 0 };
   }
 
-  const split = mergeMicroSegments(splitRawSegments(voiced));
+  const split = refineRawSegments(splitRawSegments(voiced));
   const segments: TranscribedNoteSegment[] = [];
 
   for (const raw of split) {

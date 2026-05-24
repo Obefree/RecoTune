@@ -8,25 +8,20 @@ import {
   SungNoteSample,
   mergeJitterNotes,
 } from '../utils/sungNoteDetector';
-import { frequencyToNote } from '../utils/noteUtils';
 import {
   type PitchFrame,
   createPitchFrame,
   pushPitchFrameRing,
 } from '../utils/pitchFrame';
-import { isVoicedFrame } from '../utils/melodyTranscription';
-
-const CHART_MIN_INTERVAL_MS = 100;
+import { appendVoicedChartPoint } from '../utils/pitchChartHistory';
 
 const MAX_NOTES = 64;
-const MAX_PITCH_HISTORY = 120;
 
-const A4_FREQ = 440;
-const A4_MIDI = 69;
-
-/** Optional smoothed frequency for chart only; detector + pitchFrames use `frequency`. */
+/** `frequency` feeds classic detector, `frameFrequency` feeds contour, `chartFrequency` feeds graph/UI. */
 export interface SungNoteFeedSample extends SungNoteSample {
   chartFrequency?: number;
+  frameFrequency?: number;
+  frameCents?: number;
 }
 
 export interface RegisteredNoteEvent {
@@ -43,10 +38,6 @@ export interface MelodySnapshot {
   pitchHistory: HistoryPoint[];
   registeredEvents: RegisteredNoteEvent[];
   pitchFrames?: PitchFrame[];
-}
-
-function freqToMidi(freq: number): number {
-  return 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
 }
 
 function toRegisteredEvent(note: SungNote): RegisteredNoteEvent {
@@ -95,37 +86,32 @@ export function useSungNoteHistory() {
   const feed = useCallback((sample: SungNoteFeedSample) => {
     const ts = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const chartFreq = sample.chartFrequency ?? sample.frequency;
-    const contourFreq = chartFreq ?? sample.frequency;
+    const frameFreq = sample.frameFrequency ?? sample.frequency;
 
     const frame = createPitchFrame({
       t: ts,
-      frequency: contourFreq,
+      frequency: frameFreq,
       signal: sample.signal,
-      cents: sample.cents,
+      cents: sample.frameCents ?? sample.cents,
       yinConfidence: sample.yinConfidence,
     });
     pitchFrameRingRef.current = pushPitchFrameRing(pitchFrameRingRef.current, frame);
     setPitchFrames(pitchFrameRingRef.current);
 
-    if (chartFreq && chartFreq >= 55 && isVoicedFrame(frame)) {
-      if (ts - lastChartPtMsRef.current >= CHART_MIN_INTERVAL_MS) {
-        lastChartPtMsRef.current = ts;
-        const midi = freqToMidi(chartFreq);
-        const info = frequencyToNote(chartFreq);
-        const pt: HistoryPoint = {
-          cents: sample.cents ?? info.cents,
-          freq: chartFreq,
-          midi,
-          note: info.name,
-          octave: info.octave,
-          ts,
-          voiced: true,
-        };
-        setPitchHistory(prev => {
-          const next = [...prev, pt];
-          return next.length > MAX_PITCH_HISTORY ? next.slice(-MAX_PITCH_HISTORY) : next;
+    if (chartFreq) {
+      setPitchHistory(prev => {
+        const result = appendVoicedChartPoint(prev, {
+          chartFreq,
+          frame,
+          lastPtMs: lastChartPtMsRef.current,
+          cents: sample.cents,
         });
-      }
+        if (result) {
+          lastChartPtMsRef.current = result.lastPtMs;
+          return result.history;
+        }
+        return prev;
+      });
     }
 
     const detected = detectorRef.current.process({ ...sample, ts });

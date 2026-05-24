@@ -21,6 +21,8 @@ import MiniCentsStrip from '../components/MiniCentsStrip';
 import { useLocale } from '../context/LocaleContext';
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
 import { SungNoteDetector } from '../utils/sungNoteDetector';
+import { createPitchFrame } from '../utils/pitchFrame';
+import { appendVoicedChartPoint, PITCH_CHART_MAX_POINTS } from '../utils/pitchChartHistory';
 
 const EMA_ALPHA_FREQ_LOW = 0.14;
 const EMA_ALPHA_CENTS_LOW = 0.16;
@@ -34,10 +36,7 @@ function emaAlphaFreq(hz: number) {
 function emaAlphaCents(hz: number) {
   return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_CENTS_HIGH : EMA_ALPHA_CENTS_LOW;
 }
-const A4_FREQ    = 440;
-const A4_MIDI    = 69;
 
-const MAX_HISTORY = 80;
 const MAX_REGISTERED = 64;
 const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', 'Guitar 7': '🎸', Ukulele: '🪗', Bass: '🎸', Mandolin: '🪕' };
 
@@ -73,6 +72,7 @@ export default function TunerScreen() {
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const smoothedFreqRef = useRef<number | null>(null);
   const smoothedCentsRef = useRef<number | null>(null);
+  const lastChartPtMsRef = useRef(0);
   useEffect(() => {
     if (isActive) {
       pulseLoop.current = Animated.loop(Animated.sequence([
@@ -101,7 +101,6 @@ export default function TunerScreen() {
       smoothedFreqRef.current = freq;
 
       const info = frequencyToNote(freq);
-      const midi = 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
       const rawCents = info.cents;
       const prevC = smoothedCentsRef.current;
       let dispCents = rawCents;
@@ -124,14 +123,26 @@ export default function TunerScreen() {
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
       const ts = Date.now();
+      const chartFrame = createPitchFrame({
+        t: ts,
+        frequency: raw,
+        signal: msg.signal ?? 0,
+        cents: rawCents,
+        yinConfidence: msg.yinConfidence,
+      });
       setHistory(prev => {
-        const pt: HistoryPoint = {
+        const result = appendVoicedChartPoint(prev, {
+          chartFreq: freq,
+          frame: chartFrame,
+          lastPtMs: lastChartPtMsRef.current,
           cents: dispCents,
-          freq, midi,
-          note: info.name, octave: info.octave, ts,
-        };
-        const next = [...prev, pt];
-        return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+          maxPoints: PITCH_CHART_MAX_POINTS,
+        });
+        if (result) {
+          lastChartPtMsRef.current = result.lastPtMs;
+          return result.history;
+        }
+        return prev;
       });
       const detected = sungDetectorRef.current.process({
         frequency: freq,
@@ -175,6 +186,7 @@ export default function TunerScreen() {
     sungDetectorRef.current.reset();
     smoothedFreqRef.current = null;
     smoothedCentsRef.current = null;
+    lastChartPtMsRef.current = 0;
     setIsActive(true);
   }, [t]);
 
@@ -195,7 +207,7 @@ export default function TunerScreen() {
 
   return (
     <View style={[styles.wrapper, { paddingTop: insets.top }]}>
-      {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} />}
+      {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} mode="tuner" />}
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
@@ -251,6 +263,9 @@ export default function TunerScreen() {
             <FrequencyChart
               history={history}
               active={isActive}
+              timeAxis
+              defaultHZoom={2}
+              maxHistoryPoints={PITCH_CHART_MAX_POINTS}
               registeredMarkers={registeredEvents.map(e => ({
                 ts: e.ts,
                 midi: e.midi,

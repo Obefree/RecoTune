@@ -21,6 +21,7 @@ import {
   getFavoriteIds,
   setFavorite,
   filterSongsQuick,
+  searchSongsSmart,
 } from '../services/initSongLibrary';
 import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
@@ -56,6 +57,14 @@ import {
 } from '../providers/types';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
 import { normalizeLyricsChords } from '../utils/chordLyricsNormalize';
+import { projectChordsOntoLyrics } from '../utils/chordProgression';
+import {
+  createPitchFrame,
+  pushPitchFrameRing,
+  type PitchFrame,
+} from '../utils/pitchFrame';
+import { transcribeFromPitchFrames } from '../utils/melodyTranscription';
+import { appendVoicedChartPoint, PITCH_CHART_MAX_POINTS } from '../utils/pitchChartHistory';
 import {
   shareLibraryBackup,
   importLibraryBackupJson,
@@ -68,7 +77,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 
-import FrequencyChart, { HistoryPoint } from '../components/FrequencyChart';
+import FrequencyChart, { type HistoryPoint, type PitchSegmentOverlay } from '../components/FrequencyChart';
 import { useLocale } from '../context/LocaleContext';
 import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch } from '../utils/songMatch';
@@ -548,7 +557,8 @@ function ChordLyricsLine({
           const cs = getChordStyle(seg.chord!);
           return (
             <Pressable
-              delayPressIn={200}
+              key={`chord-${i}-${seg.chord}`}
+              unstable_pressDelay={200}
               onPress={() => onChordTap(seg.chord!)}
               hitSlop={4}
               style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
@@ -574,7 +584,7 @@ function ChordLyricsLine({
           <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             {seg.chord && cs ? (
               <Pressable
-                delayPressIn={200}
+                unstable_pressDelay={200}
                 onPress={() => onChordTap(seg.chord!)}
                 hitSlop={4}
                 style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
@@ -594,6 +604,7 @@ function ChordLyricsLine({
 }
 
 type Mode = 'live' | 'practice' | 'identify';
+const CHORDS_DEV_BUILD = 'scroll-search-2026-05-24';
 
 export default function ChordsScreen() {
   const insets = useSafeAreaInsets();
@@ -638,12 +649,30 @@ export default function ChordsScreen() {
   const [voiceFreq, setVoiceFreq]     = useState(0);
   const [voiceCents, setVoiceCents]   = useState(0);
   const [voiceHistory, setVoiceHistory] = useState<HistoryPoint[]>([]);
+  const [voicePitchFrames, setVoicePitchFrames] = useState<PitchFrame[]>([]);
   const practiceSmoothedFreqRef = useRef<number | null>(null);
+  const practicePitchFrameRingRef = useRef<PitchFrame[]>([]);
+  const lastVoiceChartPtMsRef = useRef(0);
 
-  const VOICE_CHART_EMA = 0.28;
-  const MAX_VOICE_HISTORY = 80;
-  const A4_FREQ_CHART = 440;
-  const A4_MIDI_CHART = 69;
+  const VOICE_CHART_EMA = 0.20;
+
+  const voiceTranscription = useMemo(
+    () => transcribeFromPitchFrames(voicePitchFrames),
+    [voicePitchFrames],
+  );
+
+  const voiceSegmentOverlays = useMemo<PitchSegmentOverlay[]>(
+    () =>
+      voiceTranscription.segments.map(s => ({
+        startMs: s.startMs,
+        endMs: s.endMs,
+        midi: s.midi,
+        note: s.noteName,
+        octave: s.octave,
+        confidence: s.confidenceMean,
+      })),
+    [voiceTranscription.segments],
+  );
 
   /* ── Practice recording ── */
   const [isPracticeRec, setIsPracticeRec] = useState(false);
@@ -670,37 +699,66 @@ export default function ChordsScreen() {
   const [autoScroll, setAutoScroll]       = useState(false);
   const [practiceBpm, setPracticeBpm]     = useState(80);
   const lyricsScrollRef                   = useRef<ScrollView>(null);
-  const autoScrollIntervalRef             = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoScrollFrameRef                = useRef<number | null>(null);
+  const autoScrollLastTsRef               = useRef(0);
   const scrollYRef                        = useRef(0);
   const scrollContentHRef                 = useRef(0);
   const practiceLyricsViewportHRef        = useRef(260);
   /** Finger on lyrics — block auto-scroll interval + mic scrollTo until gesture ends */
   const lyricsUserScrollRef               = useRef(false);
 
+  const scrollLyricsTo = useCallback((y: number, animated = false) => {
+    const viewH = Math.max(80, practiceLyricsViewportHRef.current);
+    const maxY = Math.max(0, scrollContentHRef.current - viewH);
+    const nextY = Math.max(0, Math.min(maxY, y));
+    scrollYRef.current = nextY;
+    lyricsScrollRef.current?.scrollTo({ y: nextY, animated });
+  }, []);
+
   const pauseAutoScrollInterval = useCallback(() => {
-    if (autoScrollIntervalRef.current) {
-      clearInterval(autoScrollIntervalRef.current);
-      autoScrollIntervalRef.current = null;
+    if (autoScrollFrameRef.current != null) {
+      cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
     }
   }, []);
 
-  const startAutoScroll = useCallback((bpm: number, viewH: number) => {
+  const startAutoScroll = useCallback((bpm: number) => {
     pauseAutoScrollInterval();
     setAutoScroll(true);
-    const msPerBeat = 60000 / bpm;
-    autoScrollIntervalRef.current = setInterval(() => {
-      if (lyricsUserScrollRef.current) return;
-      const maxY = Math.max(0, scrollContentHRef.current - viewH);
-      const nextY = Math.min(maxY, scrollYRef.current + 1.2);
-      scrollYRef.current = nextY;
-      if (nextY < maxY) {
-        lyricsScrollRef.current?.scrollTo({ y: nextY, animated: false });
+    autoScrollLastTsRef.current = 0;
+    const pxPerSec = Math.max(12, Math.min(46, bpm * 0.24));
+
+    const tick = (ts: number) => {
+      if (lyricsUserScrollRef.current) {
+        autoScrollLastTsRef.current = ts;
+        autoScrollFrameRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      const maxY = Math.max(0, scrollContentHRef.current - Math.max(80, practiceLyricsViewportHRef.current));
+      if (maxY <= 0) {
+        if (scrollContentHRef.current <= 0) {
+          autoScrollFrameRef.current = requestAnimationFrame(tick);
+        } else {
+          pauseAutoScrollInterval();
+          setAutoScroll(false);
+        }
+        return;
+      }
+      const prevTs = autoScrollLastTsRef.current || ts;
+      const dt = Math.max(0, Math.min(80, ts - prevTs));
+      autoScrollLastTsRef.current = ts;
+      const nextY = Math.min(maxY, scrollYRef.current + (pxPerSec * dt) / 1000);
+      scrollLyricsTo(nextY, false);
+      if (nextY < maxY - 1) {
+        autoScrollFrameRef.current = requestAnimationFrame(tick);
       } else {
         pauseAutoScrollInterval();
         setAutoScroll(false);
       }
-    }, msPerBeat / 8);
-  }, [pauseAutoScrollInterval]);
+    };
+
+    autoScrollFrameRef.current = requestAnimationFrame(tick);
+  }, [pauseAutoScrollInterval, scrollLyricsTo]);
 
   const stopAutoScroll = useCallback(() => {
     pauseAutoScrollInterval();
@@ -715,17 +773,16 @@ export default function ChordsScreen() {
     const viewH = Math.max(80, practiceLyricsViewportHRef.current);
     const maxY = Math.max(0, scrollContentHRef.current - viewH);
     if (scrollYRef.current >= maxY - 2) {
-      scrollYRef.current = 0;
-      lyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+      scrollLyricsTo(0, false);
     }
-    startAutoScroll(practiceBpm, viewH);
-  }, [autoScroll, practiceBpm, startAutoScroll, stopAutoScroll]);
+    startAutoScroll(practiceBpm);
+  }, [autoScroll, practiceBpm, scrollLyricsTo, startAutoScroll, stopAutoScroll]);
 
   const bumpPracticeBpm = useCallback((delta: number) => {
     const next = Math.min(240, Math.max(30, practiceBpm + delta));
     setPracticeBpm(next);
-    if (autoScrollIntervalRef.current) {
-      startAutoScroll(next, Math.max(80, practiceLyricsViewportHRef.current));
+    if (autoScrollFrameRef.current != null) {
+      startAutoScroll(next);
     }
   }, [practiceBpm, startAutoScroll]);
 
@@ -744,9 +801,9 @@ export default function ChordsScreen() {
     const y = scrollYRef.current;
     if (y <= 0) return;
     requestAnimationFrame(() => {
-      lyricsScrollRef.current?.scrollTo({ y, animated: false });
+      scrollLyricsTo(y, false);
     });
-  }, []);
+  }, [scrollLyricsTo]);
 
   useEffect(() => () => { stopAutoScroll(); }, [stopAutoScroll]);
 
@@ -777,6 +834,12 @@ export default function ChordsScreen() {
     setActiveLyricIdx(-1);
     lineYRef.current = {};
   }, [lyricChordList]);
+
+  useEffect(() => {
+    stopAutoScroll();
+    scrollYRef.current = 0;
+    requestAnimationFrame(() => scrollLyricsTo(0, false));
+  }, [practiceLyricsDisplay, scrollLyricsTo, stopAutoScroll]);
 
   const lyricsImmersiveRef = useRef(false);
   const immersiveLyrics =
@@ -823,6 +886,10 @@ export default function ChordsScreen() {
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsSource, setLyricsSource] = useState<'ovh' | 'library' | null>(null);
   const [libraryMatch, setLibraryMatch] = useState<SongEntry | null>(null);
+  const identifyChordedLyrics = useMemo(
+    () => (lyrics?.trim() ? projectChordsOntoLyrics(lyrics, libraryMatch?.chords) : ''),
+    [lyrics, libraryMatch?.chords],
+  );
   const [manualArtist, setManualArtist] = useState('');
   const [manualTitle, setManualTitle]   = useState('');
   const [metadataTrackCount, setMetadataTrackCount] = useState(0);
@@ -841,7 +908,10 @@ export default function ChordsScreen() {
       stopPracticeRec();
       setPitchActive(false);
       setVoiceHistory([]);
+      setVoicePitchFrames([]);
+      practicePitchFrameRingRef.current = [];
       practiceSmoothedFreqRef.current = null;
+      lastVoiceChartPtMsRef.current = 0;
       setTabBarHidden(false);
       lyricsImmersiveRef.current = false;
     };
@@ -909,7 +979,7 @@ export default function ChordsScreen() {
                 setActiveLyricIdx(i);
                 if (!lyricsUserScrollRef.current) {
                   const lineY = lineYRef.current[lc.lineIdx] ?? 0;
-                  lyricsScrollRef.current?.scrollTo({ y: Math.max(0, lineY - 60), animated: true });
+                  scrollLyricsTo(Math.max(0, lineY - 64), false);
                 }
                 break;
               }
@@ -933,18 +1003,33 @@ export default function ChordsScreen() {
 
           if (modeRef.current === 'practice' && pitchActiveRef.current) {
             const raw = msg.pitchHz as number;
+            const now = Date.now();
             const prev = practiceSmoothedFreqRef.current;
             const freq = prev == null ? raw : VOICE_CHART_EMA * raw + (1 - VOICE_CHART_EMA) * prev;
             practiceSmoothedFreqRef.current = freq;
             const info = frequencyToNote(freq);
-            const midiF = 12 * Math.log2(freq / A4_FREQ_CHART) + A4_MIDI_CHART;
+            const rawInfo = frequencyToNote(raw);
+            const frame = createPitchFrame({
+              t: now,
+              frequency: raw,
+              signal: 0.08,
+              cents: rawInfo.cents,
+            });
+            practicePitchFrameRingRef.current = pushPitchFrameRing(practicePitchFrameRingRef.current, frame);
+            setVoicePitchFrames(practicePitchFrameRingRef.current);
             setVoiceHistory(hprev => {
-              const pt: HistoryPoint = {
-                cents: info.cents, freq, midi: midiF,
-                note: info.name, octave: info.octave, ts: Date.now(),
-              };
-              const next = [...hprev, pt];
-              return next.length > MAX_VOICE_HISTORY ? next.slice(-MAX_VOICE_HISTORY) : next;
+              const result = appendVoicedChartPoint(hprev, {
+                chartFreq: freq,
+                frame,
+                lastPtMs: lastVoiceChartPtMsRef.current,
+                cents: info.cents,
+                maxPoints: PITCH_CHART_MAX_POINTS,
+              });
+              if (result) {
+                lastVoiceChartPtMsRef.current = result.lastPtMs;
+                return result.history;
+              }
+              return hprev;
             });
           }
         } else {
@@ -1073,7 +1158,7 @@ export default function ChordsScreen() {
     const { text, source } = await fetchLyricsForTrack(artist, title);
     if (text) {
       setLyrics(text);
-      setPracticeLyrics(text);
+      setPracticeLyrics(projectChordsOntoLyrics(text, practiceInput));
       setLyricsSource(source);
     }
     setLyricsLoading(false);
@@ -1110,7 +1195,7 @@ export default function ChordsScreen() {
       const libLyrics = resolveLyricsText(match);
       if (libLyrics) {
         setLyrics(libLyrics);
-        setPracticeLyrics(libLyrics);
+        setPracticeLyrics(projectChordsOntoLyrics(libLyrics, match.chords));
         setLyricsSource('library');
       }
     }
@@ -1122,7 +1207,7 @@ export default function ChordsScreen() {
       const libText = match ? resolveLyricsText(match) : undefined;
       if (text && !libText) {
         setLyrics(text);
-        setPracticeLyrics(text);
+        setPracticeLyrics(projectChordsOntoLyrics(text, match?.chords ?? practiceInput));
         setLyricsSource(source);
       }
       setLyricsLoading(false);
@@ -1164,7 +1249,7 @@ export default function ChordsScreen() {
       return;
     }
     switchMode('practice');
-    if (lyrics) setPracticeLyrics(lyrics);
+    if (identifyChordedLyrics) setPracticeLyrics(identifyChordedLyrics);
   }
 
   function clearIdentifyResult() {
@@ -1243,6 +1328,7 @@ export default function ChordsScreen() {
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [libFavOnly, setLibFavOnly]           = useState(false);
+  const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
   const [libSortAz, setLibSortAz]             = useState(true);
 
   /* ── Song library (SQLite) ── */
@@ -1325,10 +1411,30 @@ export default function ChordsScreen() {
         setLibSearchBusy(false);
         return;
       }
+      const applyLocalSongs = (songs: SongEntry[]) => {
+        const meta = new Map<string, ProviderId>();
+        const rank = new Map<string, number>();
+        songs.forEach((song, i) => {
+          rank.set(song.id, i);
+          meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
+        });
+        setLibSearchHits(songs);
+        setLibProviderMeta(meta);
+        setLibSearchRank(rank);
+      };
+
+      const quick = filterSongsQuick(librarySongs, q).slice(0, 80);
+      applyLocalSongs(quick);
       setLibSearchBusy(true);
       try {
         await initSongLibrary();
-        const results = await searchProviders(q, { limit: 150 });
+        const localHits = await searchSongsSmart(q, { limit: 120 });
+        if (cancelled) return;
+        if (localHits.length > 0 || quick.length === 0) {
+          applyLocalSongs(localHits);
+        }
+
+        const results = await searchProviders(q, { limit: 150, includeRemote: false });
         if (cancelled) return;
         const meta = new Map<string, ProviderId>();
         const rank = new Map<string, number>();
@@ -1354,28 +1460,20 @@ export default function ChordsScreen() {
       } catch (err) {
         if (__DEV__) console.warn('[RecoTune] library search failed', err);
         if (!cancelled) {
-          const songs = filterSongsQuick(librarySongs, q);
-          const meta = new Map<string, ProviderId>();
-          const rank = new Map<string, number>();
-          songs.forEach((song, i) => {
-            rank.set(song.id, i);
-            meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
-          });
-          setLibSearchHits(songs);
-          setLibProviderMeta(meta);
-          setLibSearchRank(rank);
+          applyLocalSongs(filterSongsQuick(librarySongs, q));
         }
       } finally {
         if (!cancelled) setLibSearchBusy(false);
       }
     };
-    const t = setTimeout(() => { void run(); }, 180);
+    const t = setTimeout(() => { void run(); }, 90);
     return () => { cancelled = true; clearTimeout(t); };
   }, [libSearch, librarySongs]);
 
   const libResults = (() => {
     let list = libSearch.trim() ? libSearchHits : allSongs;
     if (libFavOnly) list = list.filter(s => favorites.has(s.id));
+    if (libFullTabsOnly) list = list.filter(s => hasAnnotatedLyrics(resolveLyricsText(s)));
     if (libSearch.trim()) {
       list = [...list].sort((a, b) => {
         const ra = libSearchRank.get(a.id) ?? 99999;
@@ -1536,7 +1634,7 @@ export default function ChordsScreen() {
     await saveProviderSettings(toSave);
     setProviderSettings(toSave);
     if (libSearch.trim()) {
-      const results = await searchProviders(libSearch, { limit: 150 });
+      const results = await searchProviders(libSearch, { limit: 150, includeRemote: false });
       const meta = new Map<string, ProviderId>();
       const songs: SongEntry[] = [];
       for (const r of results) {
@@ -1566,7 +1664,7 @@ export default function ChordsScreen() {
       bpm: libraryMatch?.bpm,
       difficulty: libraryMatch?.difficulty ?? (chordFromLyrics.length <= 3 ? 1 : chordFromLyrics.length <= 5 ? 2 : 3),
       genre: 'НАЙТИ',
-      lyrics: lyrics ?? libraryMatch?.lyrics,
+      lyrics: identifyChordedLyrics || lyrics || libraryMatch?.lyrics,
     };
     await upsertUserSong(song);
     await reloadLibrary();
@@ -1756,7 +1854,7 @@ export default function ChordsScreen() {
       }
       setAutoChordFetchDone(true);
       setTimeout(() => {
-        lyricsScrollRef.current?.scrollTo({ y: 0, animated: true });
+        scrollLyricsTo(0, false);
       }, 350);
     } catch (e) {
       if (__DEV__) console.warn('[RecoTune] on-demand chord fetch', e);
@@ -1801,7 +1899,10 @@ export default function ChordsScreen() {
     setPitchActive(true);
     setVoiceNote('—'); setVoiceFreq(0); setVoiceCents(0);
     setVoiceHistory([]);
+    setVoicePitchFrames([]);
+    practicePitchFrameRingRef.current = [];
     practiceSmoothedFreqRef.current = null;
+    lastVoiceChartPtMsRef.current = 0;
     pendingStartRef.current = false;
     if (wvReadyRef.current) {
       sendCmd('startPracticeVoice');
@@ -1815,6 +1916,9 @@ export default function ChordsScreen() {
     pendingPracticeVoiceRef.current = false;
     practiceSmoothedFreqRef.current = null;
     setVoiceHistory([]);
+    setVoicePitchFrames([]);
+    practicePitchFrameRingRef.current = [];
+    lastVoiceChartPtMsRef.current = 0;
     sendCmd('stop');
   }
 
@@ -2143,9 +2247,13 @@ export default function ChordsScreen() {
             <FrequencyChart
               history={voiceHistory}
               active={pitchActive}
+              segmentOverlays={voiceSegmentOverlays}
               chartPlotWidth={practiceVoiceChartW}
               chartHeight={practiceEmbedChartH}
               compact
+              timeAxis
+              defaultHZoom={2}
+              maxHistoryPoints={PITCH_CHART_MAX_POINTS}
             />
           </View>
         ) : null}
@@ -2217,6 +2325,7 @@ export default function ChordsScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>CHORDS</Text>
+          {__DEV__ ? <Text style={styles.devBuildText}>{CHORDS_DEV_BUILD}</Text> : null}
         </View>
         <View style={styles.modePills}>
           {(['live','practice','identify'] as Mode[]).map(m => {
@@ -2512,7 +2621,13 @@ export default function ChordsScreen() {
               onScrollBeginDrag={handleLyricsScrollBeginDrag}
               onScrollEndDrag={handleLyricsScrollEnd}
               onMomentumScrollEnd={handleLyricsScrollEnd}
-              onContentSizeChange={(_, h) => { scrollContentHRef.current = h; }}>
+              onContentSizeChange={(_, h) => {
+                scrollContentHRef.current = h;
+                scrollLyricsTo(scrollYRef.current, false);
+                if (autoScroll && autoScrollFrameRef.current == null) {
+                  startAutoScroll(practiceBpm);
+                }
+              }}>
               {practiceLyricsDisplay.split('\n').map((line, li) => {
                 const activeLyricEntry = activeLyricIdx >= 0 ? lyricChordList[activeLyricIdx] : null;
                 const activeChordPos = activeLyricEntry?.lineIdx === li
@@ -2526,7 +2641,7 @@ export default function ChordsScreen() {
                       lineIdx={li}
                       activeChordPos={activeChordPos}
                       onChordTap={(c) => {
-                        if (autoScrollIntervalRef.current) stopAutoScroll();
+                        if (autoScrollFrameRef.current != null) stopAutoScroll();
                         const idx = practiceChords.indexOf(c);
                         if (idx >= 0) setPracticeChordIdx(idx);
                       }}
@@ -2664,8 +2779,19 @@ export default function ChordsScreen() {
               </View>
               {lyricsLoading ? (
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
-              ) : lyrics ? (
-                <Text style={styles.resultLyricsText}>{lyrics}</Text>
+              ) : identifyChordedLyrics ? (
+                <View style={styles.resultChordedLyrics}>
+                  {identifyChordedLyrics.split('\n').map((line, li) => (
+                    <ChordLyricsLine
+                      key={`identify-line-${li}`}
+                      line={line}
+                      currentChord=""
+                      lineIdx={li}
+                      activeChordPos={null}
+                      onChordTap={() => {}}
+                    />
+                  ))}
+                </View>
               ) : (
                 <Text style={styles.identifyLyricsEmpty}>Текст не найден (каталог / lyrics.ovh)</Text>
               )}
@@ -2960,6 +3086,8 @@ export default function ChordsScreen() {
               value={libSearch}
               onChangeText={setLibSearch}
               autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
             />
             {libSearchBusy ? (
               <ActivityIndicator size="small" color="#7c4dff" style={{ marginRight: 8 }} />
@@ -2976,6 +3104,10 @@ export default function ChordsScreen() {
             <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
               style={[styles.libFilterPill, libFavOnly && styles.libFilterPillActive]}>
               <Text style={[styles.libFilterPillText, libFavOnly && styles.libFilterPillTextActive]}>⭐ Избранное</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setLibFullTabsOnly(v => !v)}
+              style={[styles.libFilterPill, libFullTabsOnly && styles.libFilterPillTabsActive]}>
+              <Text style={[styles.libFilterPillText, libFullTabsOnly && { color: '#00e676' }]}>Ð¢ÐÐ‘Ð«</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setLibSortAz(v => !v)}
               style={[styles.libFilterPill, libSortAz && styles.libFilterPillSortActive]}>
@@ -3465,6 +3597,7 @@ const styles = StyleSheet.create({
   mainScreenColumn: { flex: 1, minHeight: 0, flexDirection: 'column' },
   header:     { flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 8 },
   title:      { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600' },
+  devBuildText: { color: '#333', fontSize: 9, fontWeight: '700', marginTop: 2 },
   modePills:  { flexDirection: 'row', gap: 5 },
   pill:       { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: '#333' },
   pillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
@@ -4071,6 +4204,7 @@ const styles = StyleSheet.create({
   resultLyricsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' },
   lyricsSourceTag: { color: '#444', fontSize: 9, fontWeight: '700', marginLeft: 'auto' as const },
   resultLyricsText: { color: '#aaa', fontSize: 14, lineHeight: 24 },
+  resultChordedLyrics: { paddingTop: 4 },
   lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   identifyLyricsEmpty: { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
 
@@ -4148,6 +4282,7 @@ const styles = StyleSheet.create({
   libFilterRow:  { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 6 },
   libFilterPill: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
   libFilterPillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
+  libFilterPillTabsActive: { borderColor: '#00e67655', backgroundColor: '#00e67612' },
   libFilterPillSortActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff15' },
   libFilterPillText: { color: '#555', fontSize: 11, fontWeight: '600' },
   libFilterPillTextActive: { color: '#0a0a0f', fontWeight: '800' },

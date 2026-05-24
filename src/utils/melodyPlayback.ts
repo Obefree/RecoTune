@@ -308,12 +308,13 @@ export function buildMelodyPlaybackNotesFromSegments(
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
+    const next = segments[i + 1];
+    const segmentEnd = next ? Math.min(seg.endMs, next.startMs) : seg.endMs;
     const rawDur = Math.max(
       MELODY_PLAYBACK.CONTOUR_MIN_DURATION_MS,
       MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS,
-      seg.endMs - seg.startMs - (i < segments.length - 1 ? noteGapMs : 0),
+      segmentEnd - seg.startMs - (next ? noteGapMs : 0),
     );
-    const next = segments[i + 1];
     const samePitch = next != null && next.midi === seg.midi;
     const dur =
       samePitch && rawDur < MELODY_PLAYBACK.MIN_SAME_PITCH_MS
