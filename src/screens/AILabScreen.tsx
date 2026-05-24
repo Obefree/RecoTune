@@ -12,6 +12,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, Modal, FlatList, TouchableWithoutFeedback,
+  useWindowDimensions,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -20,10 +21,15 @@ import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
+import { assertPlaybackFileExists } from '../utils/playbackUri';
 
 /* ─── Types ─── */
 interface ChordEvent { time: number; chord: string; confidence: number }
+type StemOutputMode = 'all' | 'vocals' | 'minus';
+
 interface StemItem {
+  id: string;
   label: string;
   color: string;
   b64: string;
@@ -33,6 +39,7 @@ interface StemItem {
   playing: boolean;
   position: number;
   duration: number;
+  loadError?: string;
 }
 
 /* ─── Chord analysis WebView ─── */
@@ -114,8 +121,12 @@ async function applyBandFilter(origBuf,lo,hi,sr,len,stereo){
   src.connect(lpF);lpF.connect(hpF);hpF.connect(offCtx.destination);
   src.start(0);return offCtx.startRendering();
 }
-async function separate(b64){
+async function separate(b64,mode){
   try{
+    const m=mode||'all';
+    const wantBands=m==='all';
+    const wantVocals=m==='all'||m==='vocals';
+    const wantMinus=m==='all'||m==='minus';
     post({type:'progress',msg:'Декодирование аудио...'});
     const ab=b64ToAB(b64);
     const tmpCtx=new OfflineAudioContext(1,1,44100);
@@ -123,54 +134,67 @@ async function separate(b64){
     const sr=origBuf.sampleRate;const len=origBuf.length;
     const stereo=origBuf.numberOfChannels>1;
     const results=[];
-
-    // ── 1. Bass (20-250 Hz)
-    post({type:'progress',msg:'Бас...'});
-    const bassR=await applyBandFilter(origBuf,20,250,sr,len,stereo);
-    const bL=bassR.getChannelData(0);const bR=stereo?bassR.getChannelData(1):null;
-    results.push({label:'Бас',color:'#7c4dff',b64:ab64(encodeWAV(bL,bR,sr,16)),sizeKb:Math.round((44+len*(stereo?4:2))/1024)});
-
-    // ── 2. Mid (250-4000 Hz)
-    post({type:'progress',msg:'Средние частоты...'});
-    const midR=await applyBandFilter(origBuf,250,4000,sr,len,stereo);
-    const mL=midR.getChannelData(0);const mR=stereo?midR.getChannelData(1):null;
-    results.push({label:'Середина',color:'#00e676',b64:ab64(encodeWAV(mL,mR,sr,16)),sizeKb:Math.round((44+len*(stereo?4:2))/1024)});
-
-    // ── 3. Hi (4000+ Hz)
-    post({type:'progress',msg:'Высокие частоты...'});
-    const hiR=await applyBandFilter(origBuf,4000,20000,sr,len,stereo);
-    const hL=hiR.getChannelData(0);const hR=stereo?hiR.getChannelData(1):null;
-    results.push({label:'Высокие',color:'#40c4ff',b64:ab64(encodeWAV(hL,hR,sr,16)),sizeKb:Math.round((44+len*(stereo?4:2))/1024)});
-
-    // ── 4. Vocal isolation (center channel of 200-5000 Hz band)
-    post({type:'progress',msg:'Выделение голоса...'});
     const L=origBuf.getChannelData(0);
     const R=stereo?origBuf.getChannelData(1):origBuf.getChannelData(0);
-    // Center = (L+R)/2 in mono
-    const centerCtx=new OfflineAudioContext(1,len,sr);
-    const centerBuf=centerCtx.createBuffer(1,len,sr);
-    const centerData=centerBuf.getChannelData(0);
-    for(let i=0;i<len;i++)centerData[i]=(L[i]+R[i])*0.5;
-    const vSrc=centerCtx.createBufferSource();vSrc.buffer=centerBuf;
-    const vHP=centerCtx.createBiquadFilter();vHP.type='highpass';vHP.frequency.value=200;vHP.Q.value=0.5;
-    const vLP=centerCtx.createBiquadFilter();vLP.type='lowpass'; vLP.frequency.value=5000;vLP.Q.value=0.5;
-    vSrc.connect(vHP);vHP.connect(vLP);vLP.connect(centerCtx.destination);
-    vSrc.start(0);
-    const vocalR=await centerCtx.startRendering();
-    const vocalData=vocalR.getChannelData(0);
-    results.push({label:'Голос',color:'#ff9800',b64:ab64(encodeWAV(vocalData,null,sr,16)),sizeKb:Math.round((44+len*2)/1024)});
+    let vocalData=null;
 
-    // ── 5. Karaoke (vocal-suppressed stereo)
-    post({type:'progress',msg:'Минус (без голоса)...'});
-    const karL=new Float32Array(len);const karR=new Float32Array(len);
-    for(let i=0;i<len;i++){karL[i]=L[i]-vocalData[i];karR[i]=R[i]-vocalData[i];}
-    results.push({label:'Минус',color:'#ff5252',b64:ab64(encodeWAV(karL,karR,sr,16)),sizeKb:Math.round((44+len*4)/1024)});
+    if(wantBands){
+      post({type:'progress',msg:'Бас...'});
+      const bassR=await applyBandFilter(origBuf,20,250,sr,len,stereo);
+      const bL=bassR.getChannelData(0);const bR=stereo?bassR.getChannelData(1):null;
+      results.push({id:'bass',label:'Бас',color:'#7c4dff',b64:ab64(encodeWAV(bL,bR,sr,16)),sizeKb:Math.round((44+len*(stereo?4:2))/1024)});
+      post({type:'progress',msg:'Средние частоты...'});
+      const midR=await applyBandFilter(origBuf,250,4000,sr,len,stereo);
+      const mL=midR.getChannelData(0);const mR=stereo?midR.getChannelData(1):null;
+      results.push({id:'mid',label:'Середина',color:'#00e676',b64:ab64(encodeWAV(mL,mR,sr,16)),sizeKb:Math.round((44+len*(stereo?4:2))/1024)});
+      post({type:'progress',msg:'Высокие частоты...'});
+      const hiR=await applyBandFilter(origBuf,4000,20000,sr,len,stereo);
+      const hL=hiR.getChannelData(0);const hR=stereo?hiR.getChannelData(1):null;
+      results.push({id:'hi',label:'Высокие',color:'#40c4ff',b64:ab64(encodeWAV(hL,hR,sr,16)),sizeKb:Math.round((44+len*(stereo?4:2))/1024)});
+    }
+
+    if(wantVocals||wantMinus){
+      post({type:'progress',msg:'Выделение вокала...'});
+      const centerCtx=new OfflineAudioContext(1,len,sr);
+      const centerBuf=centerCtx.createBuffer(1,len,sr);
+      const centerData=centerBuf.getChannelData(0);
+      for(let i=0;i<len;i++)centerData[i]=(L[i]+R[i])*0.5;
+      const vSrc=centerCtx.createBufferSource();vSrc.buffer=centerBuf;
+      const vHP=centerCtx.createBiquadFilter();vHP.type='highpass';vHP.frequency.value=200;vHP.Q.value=0.5;
+      const vLP=centerCtx.createBiquadFilter();vLP.type='lowpass'; vLP.frequency.value=5000;vLP.Q.value=0.5;
+      vSrc.connect(vHP);vHP.connect(vLP);vLP.connect(centerCtx.destination);
+      vSrc.start(0);
+      const vocalR=await centerCtx.startRendering();
+      vocalData=vocalR.getChannelData(0);
+      if(wantVocals){
+        results.push({id:'vocals',label:'Вокал',color:'#ff9800',b64:ab64(encodeWAV(vocalData,null,sr,16)),sizeKb:Math.round((44+len*2)/1024)});
+      }
+    }
+
+    if(wantMinus){
+      if(!vocalData){
+        const centerCtx=new OfflineAudioContext(1,len,sr);
+        const centerBuf=centerCtx.createBuffer(1,len,sr);
+        const centerData=centerBuf.getChannelData(0);
+        for(let i=0;i<len;i++)centerData[i]=(L[i]+R[i])*0.5;
+        const vSrc=centerCtx.createBufferSource();vSrc.buffer=centerBuf;
+        const vHP=centerCtx.createBiquadFilter();vHP.type='highpass';vHP.frequency.value=200;vHP.Q.value=0.5;
+        const vLP=centerCtx.createBiquadFilter();vLP.type='lowpass'; vLP.frequency.value=5000;vLP.Q.value=0.5;
+        vSrc.connect(vHP);vHP.connect(vLP);vLP.connect(centerCtx.destination);
+        vSrc.start(0);
+        vocalData=(await centerCtx.startRendering()).getChannelData(0);
+      }
+      post({type:'progress',msg:'Минус (инструментал)...'});
+      const karL=new Float32Array(len);const karR=new Float32Array(len);
+      for(let i=0;i<len;i++){karL[i]=L[i]-vocalData[i];karR[i]=R[i]-vocalData[i];}
+      results.push({id:'minus',label:'Минус',color:'#ff5252',b64:ab64(encodeWAV(karL,karR,sr,16)),sizeKb:Math.round((44+len*4)/1024)});
+    }
 
     post({type:'done',stems:results});
   }catch(e){post({type:'error',msg:String(e)});}
 }
-window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='separate')separate(m.b64);}catch{}});
-document.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='separate')separate(m.b64);}catch{}});
+window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='separate')separate(m.b64,m.mode);}catch{}});
+document.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='separate')separate(m.b64,m.mode);}catch{}});
 </script></body></html>`;
 
 /* ─── App sandbox audio folders (same as RecorderScreen / StudioScreen) ─── */
@@ -184,8 +208,15 @@ interface AppAudioRow { uri: string; name: string; badge: string }
 function fmt(s: number) { return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`; }
 function fmtMs(ms: number) { return fmt(ms / 1000); }
 
+const STEM_MODE_OPTIONS: { id: StemOutputMode; label: string; sub: string; color: string }[] = [
+  { id: 'vocals', label: 'ВОКАЛ', sub: 'только голос', color: '#ff9800' },
+  { id: 'minus', label: 'МИНУС', sub: 'без вокала', color: '#ff5252' },
+  { id: 'all', label: 'ВСЕ 5', sub: 'бас · сер · верх', color: '#40c4ff' },
+];
+
 export default function AILabScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const [tab, setTab] = useState<'chords' | 'stems'>('chords');
 
   /* ── Chord analysis state ── */
@@ -204,6 +235,7 @@ export default function AILabScreen() {
   const [previewName, setPreviewName]     = useState('');
 
   /* ── Stem separation state ── */
+  const [stemOutputMode, setStemOutputMode] = useState<StemOutputMode>('minus');
   const [stemStatus, setStemStatus]       = useState<'idle'|'loading'|'done'|'error'>('idle');
   const [stemMsg, setStemMsg]             = useState('');
   const [stemItems, setStemItems]         = useState<StemItem[]>([]);
@@ -211,24 +243,31 @@ export default function AILabScreen() {
 
   const chordsWvRef = useRef<WebView>(null);
   const stemsWvRef  = useRef<WebView>(null);
+  const stemItemsRef = useRef<StemItem[]>([]);
 
   const [appModalVisible, setAppModalVisible] = useState(false);
   const [appAudioRows, setAppAudioRows]     = useState<AppAudioRow[]>([]);
+
+  useEffect(() => {
+    stemItemsRef.current = stemItems;
+  }, [stemItems]);
 
   /* ── Cleanup sounds on unmount ── */
   useEffect(() => {
     return () => {
       previewSound?.unloadAsync();
-      stemItems.forEach(s => s.sound?.unloadAsync());
+      stemItemsRef.current.forEach(s => s.sound?.unloadAsync());
     };
-  }, [previewSound, stemItems]);
+  }, [previewSound]);
 
   /* ── File preview: load and toggle ── */
   const loadPreview = useCallback(async (uri: string, name: string) => {
     try {
       await previewSound?.unloadAsync();
       setPreviewPlaying(false);
-      const { sound } = await Audio.Sound.createAsync({ uri }, {}, (status) => {
+      await applyPlaybackAudioMode();
+      const playbackUri = await assertPlaybackFileExists(uri);
+      const { sound } = await Audio.Sound.createAsync({ uri: playbackUri }, {}, (status) => {
         if (status.isLoaded) setPreviewPlaying(status.isPlaying ?? false);
       });
       setPreviewSound(sound);
@@ -341,14 +380,12 @@ export default function AILabScreen() {
     } catch (e) { Alert.alert('Ошибка', String(e)); }
   }, [chordEvents, songKey, songBpm, songDur]);
 
-  const separateWithUri = useCallback(async (uri: string) => {
+  const separateWithUri = useCallback(async (uri: string, mode: StemOutputMode = stemOutputMode) => {
     try {
       setStemStatus('loading');
       setStemMsg('Чтение файла...');
-      setStemItems(prev => {
-        prev.forEach(s => s.sound?.unloadAsync());
-        return [];
-      });
+      stemItemsRef.current.forEach(s => s.sound?.unloadAsync());
+      setStemItems([]);
 
       const info = await FileSystem.getInfoAsync(uri);
       if (info.exists && (info as any).size > 20 * 1024 * 1024) {
@@ -358,14 +395,14 @@ export default function AILabScreen() {
       setStemHtml(STEM_HTML);
       setTimeout(() => {
         stemsWvRef.current?.injectJavaScript(`
-          (function(){window.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({cmd:'separate',b64:${JSON.stringify(b64)}})}));}());true;
+          (function(){window.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({cmd:'separate',b64:${JSON.stringify(b64)},mode:${JSON.stringify(mode)}})}));}());true;
         `);
       }, 600);
     } catch (e) {
       Alert.alert('Ошибка', String(e));
       setStemStatus('error');
     }
-  }, []);
+  }, [stemOutputMode]);
 
   /* ── Pick file and run stem separation ── */
   const pickAndSeparate = useCallback(async () => {
@@ -389,29 +426,64 @@ export default function AILabScreen() {
         setStemMsg(msg.msg);
       } else if (msg.type === 'done') {
         setStemMsg('Сохранение дорожек...');
+        await applyPlaybackAudioMode();
         const items: StemItem[] = [];
-        for (const s of msg.stems as { label: string; color: string; b64: string; sizeKb: number }[]) {
-          const path = `${FileSystem.cacheDirectory}stem_${s.label.toLowerCase().replace(/[^a-zа-я]/gi, '_')}_${Date.now()}.wav`;
+        const batchTs = Date.now();
+        const rawStems = msg.stems as { id?: string; label: string; color: string; b64: string; sizeKb: number }[];
+        for (let i = 0; i < rawStems.length; i++) {
+          const s = rawStems[i];
+          const stemId = s.id ?? `stem_${i}`;
+          const path = `${FileSystem.cacheDirectory}stem_${stemId}_${batchTs}_${i}.wav`;
           await FileSystem.writeAsStringAsync(path, s.b64, { encoding: FileSystem.EncodingType.Base64 });
-          const item: StemItem = { ...s, uri: path, playing: false, position: 0, duration: 0 };
+          const item: StemItem = {
+            id: stemId,
+            label: s.label,
+            color: s.color,
+            b64: s.b64,
+            sizeKb: s.sizeKb,
+            uri: path,
+            playing: false,
+            position: 0,
+            duration: 0,
+          };
           try {
-            const { sound } = await Audio.Sound.createAsync({ uri: path }, {}, (status) => {
-              if (!status.isLoaded) return;
-              setStemItems(prev => prev.map(si =>
-                si.uri === path
-                  ? { ...si, playing: status.isPlaying ?? false, position: status.positionMillis ?? 0, duration: status.durationMillis ?? 0 }
-                  : si
-              ));
-            });
+            const playbackUri = await assertPlaybackFileExists(path);
+            const { sound } = await Audio.Sound.createAsync(
+              { uri: playbackUri },
+              { progressUpdateIntervalMillis: 200 },
+              (status) => {
+                if (!status.isLoaded) return;
+                setStemItems(prev => prev.map(si =>
+                  si.id === stemId
+                    ? {
+                        ...si,
+                        playing: status.isPlaying ?? false,
+                        position: status.positionMillis ?? 0,
+                        duration: status.durationMillis ?? si.duration,
+                      }
+                    : si
+                ));
+              },
+            );
             item.sound = sound;
             const st = await sound.getStatusAsync();
             if (st.isLoaded) item.duration = st.durationMillis ?? 0;
-          } catch {}
+          } catch (err) {
+            item.loadError = String(err);
+          }
           items.push(item);
         }
         setStemItems(items);
+        stemItemsRef.current = items;
         setStemStatus('done');
         setStemHtml(null);
+        const failed = items.filter(it => it.loadError);
+        if (failed.length) {
+          Alert.alert(
+            'Воспроизведение',
+            `Не удалось подготовить: ${failed.map(f => f.label).join(', ')}. Экспорт WAV всё ещё доступен.`,
+          );
+        }
       } else if (msg.type === 'error') {
         setStemStatus('error');
         setStemMsg(msg.msg);
@@ -421,20 +493,31 @@ export default function AILabScreen() {
   }, []);
 
   /* ── Play / pause a stem ── */
-  const toggleStem = useCallback(async (item: StemItem) => {
-    if (!item.sound) return;
+  const toggleStem = useCallback(async (stemId: string) => {
+    const item = stemItemsRef.current.find(s => s.id === stemId);
+    if (!item?.sound) {
+      Alert.alert('Воспроизведение', item?.loadError ?? 'Аудио не загружено. Попробуйте разделить файл снова.');
+      return;
+    }
     try {
-      if (item.playing) {
+      await applyPlaybackAudioMode();
+      const st = await item.sound.getStatusAsync();
+      if (!st.isLoaded) return;
+      if (st.isPlaying) {
         await item.sound.pauseAsync();
       } else {
-        // Stop all others
-        for (const si of stemItems) {
-          if (si.uri !== item.uri && si.playing && si.sound) await si.sound.pauseAsync();
+        for (const si of stemItemsRef.current) {
+          if (si.id !== stemId && si.sound) {
+            const other = await si.sound.getStatusAsync();
+            if (other.isLoaded && other.isPlaying) await si.sound.pauseAsync();
+          }
         }
         await item.sound.playAsync();
       }
-    } catch {}
-  }, [stemItems]);
+    } catch (err) {
+      Alert.alert('Воспроизведение', String(err));
+    }
+  }, []);
 
   /* ── Export a stem ── */
   const exportStem = useCallback(async (item: StemItem) => {
@@ -594,102 +677,126 @@ export default function AILabScreen() {
 
       {/* ── STEMS TAB ── */}
       {tab === 'stems' && (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, gap: 12 }} showsVerticalScrollIndicator={false}>
+        <View style={styles.stemsRoot}>
+          <View style={styles.stemsToolbar}>
+            <Text style={styles.stemModeTitle}>ЧТО ИЗВЛЕЧЬ</Text>
+            <View style={styles.stemModeRow}>
+              {STEM_MODE_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={[
+                    styles.stemModeChip,
+                    stemOutputMode === opt.id && { borderColor: opt.color, backgroundColor: opt.color + '18' },
+                  ]}
+                  onPress={() => setStemOutputMode(opt.id)}
+                  disabled={stemStatus === 'loading'}
+                >
+                  <Text style={[styles.stemModeChipLabel, stemOutputMode === opt.id && { color: opt.color }]}>
+                    {opt.label}
+                  </Text>
+                  <Text style={styles.stemModeChipSub}>{opt.sub}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
-          <View style={[styles.infoCard, { borderColor: '#40c4ff33' }]}>
-            <Ionicons name="information-circle-outline" size={18} color="#40c4ff" />
-            <Text style={styles.infoText}>
-              Разделение на 5 дорожек:{'\n'}
-              <Text style={{ color: '#7c4dff' }}>Бас</Text> (20–250 Гц) · <Text style={{ color: '#00e676' }}>Середина</Text> (250–4к) · <Text style={{ color: '#40c4ff' }}>Высокие</Text> (4к+){'\n'}
-              <Text style={{ color: '#ff9800' }}>Голос</Text> (центральный канал 200–5к Гц) · <Text style={{ color: '#ff5252' }}>Минус</Text> (оригинал без голоса){'\n'}
-              Голос и Минус лучше работают на стерео треках.{'\n'}
-              <Text style={{ color: '#666' }}>Тот же список Recorder/Studio, что и во вкладке «Аккорды».</Text>
-            </Text>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.stemPickBtn]}
+              onPress={pickAndSeparate}
+              disabled={stemStatus === 'loading'}
+            >
+              <Ionicons name="git-branch" size={20} color="#fff" />
+              <Text style={styles.actionBtnText}>ВЫБРАТЬ ФАЙЛ</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.actionBtnSecondary, styles.stemPickBtnSecondary]}
+              onPress={openAppFilesModal}
+              disabled={stemStatus === 'loading'}
+            >
+              <Ionicons name="mic" size={18} color="#40c4ff" />
+              <Text style={[styles.actionBtnTextSecondary, { color: '#40c4ff', fontSize: 11 }]}>REC / STUDIO</Text>
+            </TouchableOpacity>
+
+            {stemStatus === 'loading' && (
+              <View style={styles.progressCardCompact}>
+                <ActivityIndicator color="#40c4ff" />
+                <Text style={styles.progressText} numberOfLines={2}>{stemMsg}</Text>
+              </View>
+            )}
+            {stemStatus === 'error' && (
+              <View style={styles.errorCard}>
+                <Ionicons name="alert-circle" size={18} color="#ff5252" />
+                <Text style={styles.errorText}>{stemMsg}</Text>
+              </View>
+            )}
           </View>
 
-          <TouchableOpacity
-            style={[styles.actionBtn, { backgroundColor: '#40c4ff88' }]}
-            onPress={pickAndSeparate}
-            disabled={stemStatus === 'loading'}
-          >
-            <Ionicons name="git-branch" size={22} color="#fff" />
-            <Text style={styles.actionBtnText}>ФАЙЛ С ТЕЛЕФОНА (ЛЮБОЙ)</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.actionBtnSecondary, { borderColor: '#40c4ff44' }]}
-            onPress={openAppFilesModal}
-            disabled={stemStatus === 'loading'}
-          >
-            <Ionicons name="mic" size={20} color="#40c4ff" />
-            <Text style={[styles.actionBtnTextSecondary, { color: '#40c4ff' }]}>ИЗ RECORDER / STUDIO</Text>
-          </TouchableOpacity>
-
-          {stemStatus === 'loading' && (
-            <View style={styles.progressCard}>
-              <ActivityIndicator color="#40c4ff" size="large" />
-              <Text style={styles.progressText}>{stemMsg}</Text>
-              <Text style={styles.progressHint}>Для треков ≥ 3 мин — займёт несколько минут.</Text>
-            </View>
-          )}
-
-          {stemStatus === 'error' && (
-            <View style={styles.errorCard}>
-              <Ionicons name="alert-circle" size={20} color="#ff5252" />
-              <Text style={styles.errorText}>{stemMsg}</Text>
-            </View>
-          )}
-
-          {/* Playable stem strips */}
-          {stemStatus === 'done' && stemItems.length > 0 && (
-            <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { marginBottom: 8 }]}>ДОРОЖКИ — нажмите ▶ для прослушивания</Text>
-              {stemItems.map(item => (
-                <View key={item.label} style={[styles.stemStrip, { borderLeftColor: item.color }]}>
-                  {/* Play/Pause button */}
+          {stemStatus === 'done' && stemItems.length > 0 ? (
+            <FlatList
+              style={styles.stemsList}
+              contentContainerStyle={[
+                styles.stemsListContent,
+                { minHeight: Math.max(220, windowHeight * 0.42) },
+              ]}
+              data={stemItems}
+              keyExtractor={it => it.id}
+              showsVerticalScrollIndicator={false}
+              ListHeaderComponent={
+                <Text style={[styles.sectionTitle, styles.stemsListHeader]}>
+                  ▶ прослушать · ↗ экспорт WAV
+                </Text>
+              }
+              ListFooterComponent={
+                <Text style={styles.footerNoteCompact}>
+                  Офлайн-сепарация (не Demucs). Стерео — лучше для вокала и минуса.
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <View style={[styles.stemStrip, { borderLeftColor: item.color }]}>
                   <TouchableOpacity
                     style={[styles.stemPlayBtn, { backgroundColor: item.color + '22', borderColor: item.color + '55' }]}
-                    onPress={() => toggleStem(item)}
+                    onPress={() => toggleStem(item.id)}
                   >
-                    <Ionicons name={item.playing ? 'pause' : 'play'} size={20} color={item.color} />
+                    <Ionicons name={item.playing ? 'pause' : 'play'} size={22} color={item.color} />
                   </TouchableOpacity>
-
-                  {/* Info + progress */}
                   <View style={styles.stemStripInfo}>
                     <View style={styles.stemStripRow}>
                       <Text style={[styles.stemName, { color: item.color }]}>{item.label}</Text>
-                      <Text style={styles.stemSize}>{item.sizeKb} KB · WAV</Text>
+                      <Text style={styles.stemSize}>{item.sizeKb} KB</Text>
                     </View>
-                    {/* Progress bar */}
-                    <View style={styles.stemProgress}>
-                      <View style={[styles.stemProgressFill, {
-                        width: item.duration > 0 ? `${(item.position / item.duration) * 100}%` as any : '0%',
-                        backgroundColor: item.color,
-                      }]} />
+                    <View style={styles.stemWaveArea}>
+                      <View style={styles.stemProgress}>
+                        <View style={[styles.stemProgressFill, {
+                          width: item.duration > 0 ? `${(item.position / item.duration) * 100}%` as `${number}%` : '0%',
+                          backgroundColor: item.color,
+                        }]} />
+                      </View>
                     </View>
                     <View style={styles.stemTimeRow}>
                       <Text style={styles.stemTime}>{fmtMs(item.position)}</Text>
                       <Text style={styles.stemTime}>{fmtMs(item.duration)}</Text>
                     </View>
+                    {item.loadError ? (
+                      <Text style={styles.stemLoadErr} numberOfLines={1}>{item.loadError}</Text>
+                    ) : null}
                   </View>
-
-                  {/* Export */}
                   <TouchableOpacity
                     style={[styles.stemExportBtn, { borderColor: item.color + '55' }]}
                     onPress={() => exportStem(item)}
                   >
-                    <Ionicons name="share-outline" size={18} color={item.color} />
+                    <Ionicons name="share-outline" size={20} color={item.color} />
                   </TouchableOpacity>
                 </View>
-              ))}
+              )}
+            />
+          ) : stemStatus !== 'loading' ? (
+            <View style={[styles.stemsIdlePane, { minHeight: Math.max(180, windowHeight * 0.38) }]}>
+              <Ionicons name="git-branch-outline" size={40} color="#2a2a36" />
+              <Text style={styles.stemsIdleText}>
+                Выберите режим: вокал, минус (караоке) или все 5 дорожек, затем файл.
+              </Text>
             </View>
-          )}
-
-          <Text style={styles.footerNote}>
-            Частотное разделение (не ML-сепарация).{'\n'}
-            Demucs/Spleeter уровень: lalal.ai · moises.ai
-          </Text>
-        </ScrollView>
+          ) : null}
+        </View>
       )}
 
       <Modal visible={appModalVisible} animationType="slide" transparent onRequestClose={() => setAppModalVisible(false)}>
@@ -802,19 +909,67 @@ const styles = StyleSheet.create({
   freqChord: { color: '#aaa', fontSize: 12, fontWeight: '700' },
   freqCount: { color: '#444', fontSize: 10 },
 
+  stemsRoot: { flex: 1, paddingHorizontal: 12 },
+  stemsToolbar: { gap: 8, paddingBottom: 8 },
+  stemModeTitle: { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700', marginTop: 2 },
+  stemModeRow: { flexDirection: 'row', gap: 8 },
+  stemModeChip: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e1e28',
+    backgroundColor: '#111118',
+  },
+  stemModeChipLabel: { color: '#888', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  stemModeChipSub: { color: '#444', fontSize: 9, marginTop: 2, textAlign: 'center' },
+  stemPickBtn: { backgroundColor: '#40c4ff88', paddingVertical: 12 },
+  stemPickBtnSecondary: { borderColor: '#40c4ff44', paddingVertical: 10 },
+  progressCardCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#111118',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#1e1e28',
+  },
+  stemsList: { flex: 1 },
+  stemsListContent: { paddingBottom: 16, gap: 0 },
+  stemsListHeader: { marginBottom: 10, marginTop: 4 },
+  stemsIdlePane: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    gap: 12,
+    backgroundColor: '#0d0d12',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a24',
+    marginBottom: 8,
+  },
+  stemsIdleText: { color: '#555', fontSize: 13, textAlign: 'center', lineHeight: 20 },
+
   /* Stem strips */
-  stemStrip:      { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#0d0d14', borderRadius: 12, padding: 10, borderLeftWidth: 3, borderWidth: 1, borderColor: '#1e1e28', marginBottom: 6 },
-  stemPlayBtn:    { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  stemStripInfo:  { flex: 1, gap: 4 },
+  stemStrip:      { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#0d0d14', borderRadius: 12, padding: 12, borderLeftWidth: 3, borderWidth: 1, borderColor: '#1e1e28', marginBottom: 8 },
+  stemPlayBtn:    { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  stemStripInfo:  { flex: 1, gap: 6 },
   stemStripRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  stemName:       { fontSize: 14, fontWeight: '700' },
+  stemName:       { fontSize: 15, fontWeight: '700' },
   stemSize:       { color: '#444', fontSize: 10 },
-  stemProgress:   { height: 3, backgroundColor: '#1a1a24', borderRadius: 2, overflow: 'hidden' },
-  stemProgressFill:{ height: 3, borderRadius: 2 },
+  stemWaveArea:   { paddingVertical: 4 },
+  stemProgress:   { height: 8, backgroundColor: '#1a1a24', borderRadius: 4, overflow: 'hidden' },
+  stemProgressFill:{ height: 8, borderRadius: 4 },
   stemTimeRow:    { flexDirection: 'row', justifyContent: 'space-between' },
-  stemTime:       { color: '#333', fontSize: 9 },
-  stemExportBtn:  { padding: 8, borderRadius: 10, borderWidth: 1 },
+  stemTime:       { color: '#555', fontSize: 10 },
+  stemLoadErr:    { color: '#ff5252', fontSize: 9 },
+  stemExportBtn:  { padding: 10, borderRadius: 10, borderWidth: 1 },
 
   footerNote: { color: '#333', fontSize: 11, textAlign: 'center', lineHeight: 18, marginTop: 4 },
+  footerNoteCompact: { color: '#333', fontSize: 10, textAlign: 'center', lineHeight: 16, marginTop: 12, marginBottom: 4 },
   hiddenWV:   { position: 'absolute', width: 1, height: 1, opacity: 0 },
 });

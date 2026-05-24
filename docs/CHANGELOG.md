@@ -6,6 +6,7 @@
 
 ### 2026-05-24
 
+- **AI Lab / ДОРОЖКИ:** режимы **вокал** и **минус**, раскладка на весь экран, воспроизведение stem после разделения. См. [docs/features/2026-05-24-ailab-stems-playback-layout.md](./features/2026-05-24-ailab-stems-playback-layout.md).
 - **Melody / Chords UX:** плавный график высоты (voiced-only, throttle, playhead ~57%), таймаут подгрузки табов 15 с, параллельный AmDm. См. [docs/features/2026-05-24-melody-chart-chords-ux.md](./features/2026-05-24-melody-chart-chords-ux.md).
 
 ### 2026-05-23
