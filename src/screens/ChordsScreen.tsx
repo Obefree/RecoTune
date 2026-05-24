@@ -19,8 +19,6 @@ import {
   deleteUserSong,
   getFavoriteIds,
   setFavorite,
-  filterSongsQuick,
-  searchSongsSmart,
 } from '../services/initSongLibrary';
 import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
@@ -45,6 +43,12 @@ import { ChordFetchError, probeChordFetchEndpoint } from '../providers/chordFetc
 import { fetchAmdmChordSheet } from '../providers/amdmProvider';
 import type { OnDemandChordProviderId, ProviderAttribution } from '../providers/types';
 import { searchProviders, searchResultToSongEntry } from '../providers/registry';
+import type { SongSearchResult } from '../providers/types';
+import { combinedArtistTitle } from '../utils/searchNormalize';
+import {
+  ScrollView as GestureScrollView,
+  TouchableOpacity as GestureTouchableOpacity,
+} from 'react-native-gesture-handler';
 import { ensureAutoChordProxySettings } from '../providers/autoChordProxy';
 import {
   CHORD_FETCH_DEV_PROXY_CMD,
@@ -536,6 +540,7 @@ function ChordLyricsLine({
   /** Higher delay when auto-scroll off — vertical swipe wins over chord tap. */
   chordPressDelay?: number;
 }) {
+  const chordTapDelay = chordPressDelay ?? 200;
   const normalized = normalizeLine(line);
   const segs: { chord?: string; text: string }[] = [];
   let remaining = normalized;
@@ -580,19 +585,19 @@ function ChordLyricsLine({
   if (allChordsOnly) {
     posCounter = 0;
     return (
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10, gap: 8 }}>
+      <View pointerEvents="box-none" style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10, gap: 8 }}>
         {segs.filter(s => s.chord).map((seg, i) => {
           const cs = getChordStyle(seg.chord!);
           return (
-            <Pressable
+            <GestureTouchableOpacity
               key={`chord-${i}-${seg.chord}`}
-              delayPressIn={chordPressDelay}
+              activeOpacity={0.7}
+              delayPressIn={chordTapDelay}
               onPress={() => onChordTap(seg.chord!)}
-              hitSlop={4}
-              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+              hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
             >
               <Text style={chordChipTextStyle(seg.chord!, cs)}>{seg.chord}</Text>
-            </Pressable>
+            </GestureTouchableOpacity>
           );
         })}
       </View>
@@ -601,22 +606,22 @@ function ChordLyricsLine({
 
   posCounter = 0;
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+    <View pointerEvents="box-none" style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
       {segs.map((seg, i) => {
         const cs = seg.chord ? getChordStyle(seg.chord) : null;
         return (
-          <View key={i} style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
+          <View key={i} pointerEvents="box-none" style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             {seg.chord && cs ? (
-              <Pressable
-                delayPressIn={chordPressDelay}
+              <GestureTouchableOpacity
+                activeOpacity={0.7}
+                delayPressIn={chordTapDelay}
                 onPress={() => onChordTap(seg.chord!)}
-                hitSlop={4}
-                style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
               >
                 <Text style={chordChipTextStyle(seg.chord!, cs, true)}>{seg.chord}</Text>
-              </Pressable>
-            ) : <View style={{ height: 21 }} />}
-            <Text style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
+              </GestureTouchableOpacity>
+            ) : <View pointerEvents="none" style={{ height: 21 }} />}
+            <Text pointerEvents="none" style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
           </View>
         );
       })}
@@ -625,7 +630,7 @@ function ChordLyricsLine({
 }
 
 type Mode = 'live' | 'practice' | 'identify';
-const CHORDS_DEV_BUILD = 'scroll-chord-a-2026-05-24';
+const CHORDS_DEV_BUILD = 'search-scroll-2026-05-24b';
 
 export default function ChordsScreen() {
   const insets = useSafeAreaInsets();
@@ -723,7 +728,7 @@ export default function ChordsScreen() {
   /* ── Auto-scroll ── */
   const [autoScroll, setAutoScroll]       = useState(false);
   const [practiceBpm, setPracticeBpm]     = useState(80);
-  const lyricsScrollRef                   = useRef<ScrollView>(null);
+  const lyricsScrollRef                   = useRef<GestureScrollView>(null);
   const autoScrollActiveRef               = useRef(false);
   const autoScrollFrameRef                = useRef<number | null>(null);
   const autoScrollLastTsRef               = useRef(0);
@@ -872,8 +877,8 @@ export default function ChordsScreen() {
   useEffect(() => {
     stopAutoScroll();
     scrollYRef.current = 0;
-    requestAnimationFrame(() => scrollLyricsTo(0, false, true));
-  }, [practiceLyricsDisplay, scrollLyricsTo, stopAutoScroll]);
+    lyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [practiceSong?.id, stopAutoScroll]);
 
   const lyricsImmersiveRef = useRef(false);
   const immersiveLyrics =
@@ -1429,6 +1434,26 @@ export default function ChordsScreen() {
   const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
 
+  const applyLibSearchResults = useCallback((results: SongSearchResult[]) => {
+    const meta = new Map<string, ProviderId>();
+    const rank = new Map<string, number>();
+    const songs: SongEntry[] = [];
+    const seen = new Set<string>();
+    for (const r of results) {
+      const song = searchResultToSongEntry(r);
+      if (!song) continue;
+      const key = combinedArtistTitle(song.artist, song.title);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rank.set(song.id, songs.length);
+      songs.push(song);
+      meta.set(song.id, r.provider);
+    }
+    setLibSearchHits(songs);
+    setLibProviderMeta(meta);
+    setLibSearchRank(rank);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const q = libSearch.trim();
@@ -1447,64 +1472,22 @@ export default function ChordsScreen() {
         setLibSearchBusy(false);
         return;
       }
-      const applyLocalSongs = (songs: SongEntry[]) => {
-        const meta = new Map<string, ProviderId>();
-        const rank = new Map<string, number>();
-        songs.forEach((song, i) => {
-          rank.set(song.id, i);
-          meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
-        });
-        setLibSearchHits(songs);
-        setLibProviderMeta(meta);
-        setLibSearchRank(rank);
-      };
-
-      const quick = filterSongsQuick(librarySongs, q).slice(0, 80);
-      applyLocalSongs(quick);
       setLibSearchBusy(true);
       try {
         await initSongLibrary();
-        const localHits = await searchSongsSmart(q, { limit: 120 });
-        if (cancelled) return;
-        if (localHits.length > 0 || quick.length === 0) {
-          applyLocalSongs(localHits);
-        }
-
         const results = await searchProviders(q, { limit: 150, includeRemote: false });
         if (cancelled) return;
-        const meta = new Map<string, ProviderId>();
-        const rank = new Map<string, number>();
-        const songs: SongEntry[] = [];
-        for (const r of results) {
-          const song = searchResultToSongEntry(r);
-          if (song) {
-            rank.set(song.id, songs.length);
-            songs.push(song);
-            meta.set(song.id, r.provider);
-          }
-        }
-        if (songs.length === 0 && librarySongs.length > 0) {
-          for (const song of filterSongsQuick(librarySongs, q)) {
-            rank.set(song.id, songs.length);
-            songs.push(song);
-            meta.set(song.id, song.id.startsWith('custom_') ? 'user' : 'builtin');
-          }
-        }
-        setLibSearchHits(songs);
-        setLibProviderMeta(meta);
-        setLibSearchRank(rank);
+        applyLibSearchResults(results);
       } catch (err) {
         if (__DEV__) console.warn('[RecoTune] library search failed', err);
-        if (!cancelled) {
-          applyLocalSongs(filterSongsQuick(librarySongs, q));
-        }
+        if (!cancelled) applyLibSearchResults([]);
       } finally {
         if (!cancelled) setLibSearchBusy(false);
       }
     };
     const t = setTimeout(() => { void run(); }, 90);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [libSearch, librarySongs]);
+  }, [libSearch, librarySongs, libraryInitError, applyLibSearchResults]);
 
   const libResults = (() => {
     const q = libSearch.trim();
@@ -1674,17 +1657,7 @@ export default function ChordsScreen() {
     setProviderSettings(toSave);
     if (libSearch.trim()) {
       const results = await searchProviders(libSearch, { limit: 150, includeRemote: false });
-      const meta = new Map<string, ProviderId>();
-      const songs: SongEntry[] = [];
-      for (const r of results) {
-        const song = searchResultToSongEntry(r);
-        if (song) {
-          songs.push(song);
-          meta.set(song.id, r.provider);
-        }
-      }
-      setLibSearchHits(songs);
-      setLibProviderMeta(meta);
+      applyLibSearchResults(results);
     }
   }
 
@@ -1891,8 +1864,9 @@ export default function ChordsScreen() {
         setPracticeFetchHint(null);
       }
       setAutoChordFetchDone(true);
+      scrollYRef.current = 0;
       setTimeout(() => {
-        scrollLyricsTo(0, false, true);
+        lyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
       }, 350);
     } catch (e) {
       if (__DEV__) console.warn('[RecoTune] on-demand chord fetch', e);
@@ -2655,7 +2629,7 @@ export default function ChordsScreen() {
               />
             </ScrollView>
           ) : practiceLyrics ? (
-            <ScrollView
+            <GestureScrollView
               ref={lyricsScrollRef}
               style={[styles.lyricsScroll, { flex: 1 }]}
               contentContainerStyle={{ padding: 10, paddingBottom: Math.max(16, practiceDockHeight + 8) }}
@@ -2671,11 +2645,10 @@ export default function ChordsScreen() {
               onMomentumScrollEnd={handleLyricsScrollEnd}
               onContentSizeChange={(_, h) => {
                 scrollContentHRef.current = h;
-                if (autoScrollActiveRef.current) {
-                  scrollLyricsTo(scrollYRef.current, false, true);
-                  if (autoScrollFrameRef.current == null) {
-                    startAutoScroll(practiceBpm);
-                  }
+                if (!autoScrollActiveRef.current) return;
+                scrollLyricsTo(scrollYRef.current, false, true);
+                if (autoScrollFrameRef.current == null) {
+                  startAutoScroll(practiceBpm);
                 }
               }}>
               {practiceLyricsDisplay.split('\n').map((line, li) => {
@@ -2690,7 +2663,7 @@ export default function ChordsScreen() {
                       currentChord={practiceCurrentChord}
                       lineIdx={li}
                       activeChordPos={activeChordPos}
-                      chordPressDelay={autoScroll ? 140 : 320}
+                      chordPressDelay={autoScroll ? 140 : 420}
                       onChordTap={(c) => {
                         if (autoScrollFrameRef.current != null) stopAutoScroll();
                         const idx = practiceChords.indexOf(c);
@@ -2700,7 +2673,7 @@ export default function ChordsScreen() {
                   </View>
                 );
               })}
-            </ScrollView>
+            </GestureScrollView>
           ) : (
             <ScrollView style={[styles.lyricsScroll, { flex: 1 }]}
               contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: 28 }}

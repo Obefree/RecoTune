@@ -84,12 +84,13 @@ async function mergeMetadataHits(
     const resolved = resolveSongEntry(song);
     const key = metadataDedupeKey(resolved.title, resolved.artist);
     const provider: ProviderId = 'builtin';
+    if (h.score < 35 && !h.linkedSong) continue;
     merge(map, {
       id: resolved.id,
       title: resolved.title,
       artist: resolved.artist,
       provider,
-      score: h.score + (h.linkedSong ? 6 : 0),
+      score: h.score,
       matchKind: h.matchKind,
       chords: resolved.chords,
       song: resolved,
@@ -136,8 +137,6 @@ export async function searchProviders(
 
   const map = new Map<string, SongSearchResult>();
 
-  await mergeMetadataHits(map, q, limit);
-
   if (!q) {
     const all = await searchSongsSmart('', { limit });
     for (const h of all) {
@@ -175,7 +174,7 @@ export async function searchProviders(
     });
   }
 
-
+  await mergeMetadataHits(map, q, limit);
 
   if (options?.includeRemote !== false) {
 

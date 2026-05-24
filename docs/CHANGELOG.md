@@ -6,6 +6,7 @@
 
 ### 2026-05-24
 
+- **Chords / База + Практика:** поиск только по relevance (без preview-каталога); свайп текста — RNGH ScrollView, без `scrollTo` на normalize. См. [docs/features/2026-05-24-library-search-scroll-fix.md](./features/2026-05-24-library-search-scroll-fix.md).
 - **Chords / Практика:** свайп текста при выкл. авто (без лишнего `scrollTo`/MIC); аккорд **A** в нормализации и UI. См. [docs/features/2026-05-24-practice-scroll-chord-a.md](./features/2026-05-24-practice-scroll-chord-a.md).
 - **Chords / База песен:** без «двойного» предвыбора чипов, модал только без песни в практике, подпись ТАБЫ. См. [docs/features/2026-05-24-library-preselection-ux.md](./features/2026-05-24-library-preselection-ux.md).
 - **Chords / База песен:** по умолчанию только избранное; поиск по каталогу без подмешивания несовпавших builtin. См. [docs/features/2026-05-24-library-favorites-default-search.md](./features/2026-05-24-library-favorites-default-search.md).
