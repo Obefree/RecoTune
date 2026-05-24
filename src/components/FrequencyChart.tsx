@@ -12,11 +12,8 @@ const MIN_CELL_W = 14;
 /** Avg gap below this → treat history as time-clustered and spread by index */
 const CLUSTER_AVG_GAP_MS = 55;
 const MARKER_STAGGER_PX = 16;
-/** Playhead anchor — slightly right of center (not trailing edge). */
-const PLAYHEAD_X_RATIO = 0.57;
-/** Max horizontal scroll per pitch update (px) when following live input. */
-const SCROLL_FOLLOW_MAX_STEP = 9;
-const CENTER_MIDI_EMA = 0.1;
+/** Playhead anchor — slightly right of center (visible “now” line). */
+const PLAYHEAD_X_RATIO = 0.58;
 
 /** Стабильная высота блока графика в тюнере (режим ¢/ноты + зум) */
 export const TUNER_CHART_BLOCK_MIN_H =
@@ -333,10 +330,7 @@ export default function FrequencyChart({
     if (pts.length === 0) return;
     setHScroll(prev => {
       if (!followEndRef.current) return clamp3(prev, 0, maxScroll);
-      const target = clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
-      const delta = target - prev;
-      if (Math.abs(delta) <= SCROLL_FOLLOW_MAX_STEP) return target;
-      return clamp3(prev + Math.sign(delta) * SCROLL_FOLLOW_MAX_STEP, 0, maxScroll);
+      return clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
     });
   }, [lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
 
@@ -440,9 +434,7 @@ export default function FrequencyChart({
       setCenterMidiSmooth(targetMidi);
       return;
     }
-    setCenterMidiSmooth(prev =>
-      prev + CENTER_MIDI_EMA * (centerMidiRaw - prev),
-    );
+    setCenterMidiSmooth(centerMidiRaw);
   }, [centerMidiRaw, targetMidi]);
 
   const centerMidi = targetMidi != null ? targetMidi : centerMidiSmooth;
