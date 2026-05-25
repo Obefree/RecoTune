@@ -29,6 +29,8 @@ const EMA_ALPHA_CENTS_LOW = 0.16;
 const EMA_ALPHA_FREQ_HIGH = 0.11;
 const EMA_ALPHA_CENTS_HIGH = 0.14;
 const HIGH_NOTE_HZ = 280;
+/** Slower EMA for graph trace only — needle keeps `emaAlphaFreq` / `emaAlphaCents`. */
+const CHART_EMA_ALPHA = 0.1;
 
 function emaAlphaFreq(hz: number) {
   return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_FREQ_HIGH : EMA_ALPHA_FREQ_LOW;
@@ -72,7 +74,9 @@ export default function TunerScreen() {
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const smoothedFreqRef = useRef<number | null>(null);
   const smoothedCentsRef = useRef<number | null>(null);
+  const chartSmoothedFreqRef = useRef<number | null>(null);
   const lastChartPtMsRef = useRef(0);
+  const [chartSessionT0, setChartSessionT0] = useState<number | null>(null);
   useEffect(() => {
     if (isActive) {
       pulseLoop.current = Animated.loop(Animated.sequence([
@@ -123,6 +127,11 @@ export default function TunerScreen() {
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
       const ts = Date.now();
+      const prevChartF = chartSmoothedFreqRef.current;
+      const chartFreq = prevChartF == null
+        ? freq
+        : CHART_EMA_ALPHA * freq + (1 - CHART_EMA_ALPHA) * prevChartF;
+      chartSmoothedFreqRef.current = chartFreq;
       const chartFrame = createPitchFrame({
         t: ts,
         frequency: raw,
@@ -132,11 +141,12 @@ export default function TunerScreen() {
       });
       setHistory(prev => {
         const result = appendVoicedChartPoint(prev, {
-          chartFreq: freq,
+          chartFreq,
           frame: chartFrame,
           lastPtMs: lastChartPtMsRef.current,
           cents: dispCents,
           maxPoints: PITCH_CHART_MAX_POINTS,
+          voicedGate: 'tuner',
         });
         if (result) {
           lastChartPtMsRef.current = result.lastPtMs;
@@ -168,11 +178,13 @@ export default function TunerScreen() {
       sungDetectorRef.current.process({ frequency: null, signal: msg.signal ?? 0 });
       smoothedFreqRef.current = null;
       smoothedCentsRef.current = null;
+      chartSmoothedFreqRef.current = null;
       setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
       sungDetectorRef.current.process({ frequency: null, signal: 0 });
       smoothedFreqRef.current = null;
       smoothedCentsRef.current = null;
+      chartSmoothedFreqRef.current = null;
       setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
       setError(msg.message ?? t('micError')); setIsActive(false);
@@ -186,7 +198,9 @@ export default function TunerScreen() {
     sungDetectorRef.current.reset();
     smoothedFreqRef.current = null;
     smoothedCentsRef.current = null;
+    chartSmoothedFreqRef.current = null;
     lastChartPtMsRef.current = 0;
+    setChartSessionT0(Date.now());
     setIsActive(true);
   }, [t]);
 
@@ -195,6 +209,8 @@ export default function TunerScreen() {
     sungDetectorRef.current.reset();
     smoothedFreqRef.current = null;
     smoothedCentsRef.current = null;
+    chartSmoothedFreqRef.current = null;
+    setChartSessionT0(null);
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
 
@@ -270,7 +286,9 @@ export default function TunerScreen() {
               history={history}
               active={isActive}
               timeAxis
-              defaultHZoom={2}
+              layoutOriginTs={chartSessionT0}
+              defaultHZoom={1}
+              smoothCenterMidi
               maxHistoryPoints={PITCH_CHART_MAX_POINTS}
               registeredMarkers={registeredEvents.map(e => ({
                 ts: e.ts,

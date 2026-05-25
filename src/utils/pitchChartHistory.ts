@@ -7,6 +7,13 @@ import { isVoicedFrame } from './melodyTranscription';
 export const PITCH_CHART_MIN_INTERVAL_MS = 100;
 export const PITCH_CHART_MAX_POINTS = 120;
 
+export type ChartVoicedGate = 'melody' | 'tuner';
+
+/** Tuner: keep trace while needle uses the same mic path (less strict than Melody transcription). */
+export function isTunerVoicedFrame(frame: PitchFrame): boolean {
+  return frame.freq != null && frame.freq >= 55 && frame.rms >= 0.004;
+}
+
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 
@@ -23,11 +30,20 @@ export function appendVoicedChartPoint(
     lastPtMs: number;
     cents?: number;
     maxPoints?: number;
+    voicedGate?: ChartVoicedGate;
   },
 ): { history: HistoryPoint[]; lastPtMs: number } | null {
-  const { chartFreq, frame, lastPtMs, cents, maxPoints = PITCH_CHART_MAX_POINTS } = opts;
+  const {
+    chartFreq,
+    frame,
+    lastPtMs,
+    cents,
+    maxPoints = PITCH_CHART_MAX_POINTS,
+    voicedGate = 'melody',
+  } = opts;
   const ts = frame.t;
-  if (chartFreq < 55 || !isVoicedFrame(frame)) return null;
+  const voiced = voicedGate === 'tuner' ? isTunerVoicedFrame(frame) : isVoicedFrame(frame);
+  if (chartFreq < 55 || !voiced) return null;
   if (ts - lastPtMs < PITCH_CHART_MIN_INTERVAL_MS) return null;
 
   const midi = freqToMidi(chartFreq);

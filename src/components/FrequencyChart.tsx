@@ -13,6 +13,8 @@ const MIN_CELL_W = 14;
 const CHART_SAMPLE_INTERVAL_MS = 100;
 /** Avg gap below this → treat history as time-clustered and spread by index */
 const CLUSTER_AVG_GAP_MS = 55;
+/** Pitch-mode center smoothing when `smoothCenterMidi` (tuner graph). */
+const CENTER_MIDI_EMA = 0.1;
 const MARKER_STAGGER_PX = 16;
 /** Playhead anchor — slightly right of center (visible “now” line). */
 const PLAYHEAD_X_RATIO = 0.58;
@@ -81,6 +83,12 @@ interface Props {
   defaultHZoom?: number;
   /** Wall-clock X axis (px/ms) — Melody live chart; avoids index-based speed-up. */
   timeAxis?: boolean;
+  /** Session start ts — X stays fixed when oldest points drop (tuner live chart). */
+  layoutOriginTs?: number | null;
+  /** Auto-scroll so the latest point stays near the playhead (default on). */
+  scrollFollow?: boolean;
+  /** EMA on pitch-mode Y center when no tuning target (tuner). */
+  smoothCenterMidi?: boolean;
 }
 
 function nearestHistoryIndex(pts: HistoryPoint[], ts: number): number | null {
@@ -130,6 +138,7 @@ function buildTimeLayout(
   cellW: number,
   timeAxis: boolean,
   scrollRightPad: number,
+  layoutOriginTs: number | null | undefined,
 ): ChartTimeLayout {
   const effectiveCell = Math.max(cellW, MIN_CELL_W);
   const n = pts.length;
@@ -150,7 +159,7 @@ function buildTimeLayout(
 
   if (timeAxis) {
     const pxPerMs = effectiveCell / CHART_SAMPLE_INTERVAL_MS;
-    const t0 = pts[0].ts;
+    const t0 = layoutOriginTs ?? pts[0].ts;
     const xOfIndex = (i: number) => Math.max(0, (pts[i].ts - t0) * pxPerMs);
     const xOfTime = (ts: number) => Math.max(0, (ts - t0) * pxPerMs);
 
@@ -226,7 +235,7 @@ function buildTimeLayout(
     };
   }
 
-  const t0 = pts[0].ts;
+  const t0 = layoutOriginTs ?? pts[0].ts;
   const span = Math.max(1, pts[n - 1].ts - t0);
   const idxGroups = new Map<number, number[]>();
   markers.forEach((mk, mi) => {
@@ -331,6 +340,9 @@ export default function FrequencyChart({
   maxHistoryPoints,
   defaultHZoom = 1,
   timeAxis = false,
+  layoutOriginTs = null,
+  scrollFollow = true,
+  smoothCenterMidi = false,
 }: Props) {
   const { t } = useLocale();
   const plotH = Math.max(72, Math.min(300, chartHeight ?? DEFAULT_CHART_H));
@@ -368,8 +380,8 @@ export default function FrequencyChart({
   const cellW = BASE_CELL * hZoom;
 
   const timeLayout = useMemo(
-    () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad),
-    [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad],
+    () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs),
+    [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs],
   );
   const { totalW, maxScroll, xOfIndex, xOfTime, markerX } = timeLayout;
   const xOf = xOfIndex;
@@ -387,13 +399,13 @@ export default function FrequencyChart({
   const lastEndX = pts.length > 0 ? xOfIndex(pts.length - 1) : 0;
 
   useEffect(() => {
-    if (pts.length === 0) return;
+    if (!scrollFollow || pts.length === 0) return;
     setHScroll(prev => {
       const clamped = clamp3(prev, 0, maxScroll);
       if (!followEndRef.current) return clamped;
       return clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
     });
-  }, [lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
+  }, [scrollFollow, lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
 
   const beginPan = useCallback(() => {
     panOriginScroll.current = hsRef.current;
@@ -414,10 +426,10 @@ export default function FrequencyChart({
     hzRef.current = z;
     setHZoom(z);
     setHScroll(s => clamp3(s, 0, maxHScrollFromTotal(
-      buildTimeLayout(pts, registeredMarkers, CHART_W, BASE_CELL * z, timeAxis, scrollRightPad).totalW,
+      buildTimeLayout(pts, registeredMarkers, CHART_W, BASE_CELL * z, timeAxis, scrollRightPad, layoutOriginTs).totalW,
       CHART_W,
     )));
-  }, [pts, registeredMarkers, BASE_CELL, CHART_W, timeAxis, scrollRightPad]);
+  }, [pts, registeredMarkers, BASE_CELL, CHART_W, timeAxis, scrollRightPad, layoutOriginTs]);
 
   const scrollToStart = useCallback(() => {
     followEndRef.current = false;
@@ -495,8 +507,15 @@ export default function FrequencyChart({
       setCenterMidiSmooth(targetMidi);
       return;
     }
-    setCenterMidiSmooth(centerMidiRaw);
-  }, [centerMidiRaw, targetMidi]);
+    if (!smoothCenterMidi) {
+      setCenterMidiSmooth(centerMidiRaw);
+      return;
+    }
+    setCenterMidiSmooth(prev => {
+      if (pts.length < 2 || Math.abs(prev - centerMidiRaw) > 12) return centerMidiRaw;
+      return prev + CENTER_MIDI_EMA * (centerMidiRaw - prev);
+    });
+  }, [centerMidiRaw, targetMidi, smoothCenterMidi, pts.length]);
 
   const centerMidi = targetMidi != null ? targetMidi : centerMidiSmooth;
   /** Stable Y for markers — median of recent history, no drift between frames */

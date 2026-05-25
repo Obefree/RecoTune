@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-25 | Tuner: график нот без скачков (playhead) | [2026-05-25-tuner-chart-stable.md](./2026-05-25-tuner-chart-stable.md) |
 | 2026-05-25 | Tuner: ряд струн внизу экрана | [2026-05-25-tuner-strings-row-restore.md](./2026-05-25-tuner-strings-row-restore.md) |
 | 2026-05-25 | База: прогрессия в списке; AmDm; таб-строки | [2026-05-25-library-amdm-tab-lines.md](./2026-05-25-library-amdm-tab-lines.md) |
 | 2026-05-24 | База: поиск по rank; Практика: свайп RNGH | [2026-05-24-library-search-scroll-fix.md](./2026-05-24-library-search-scroll-fix.md) |

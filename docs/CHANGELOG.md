@@ -6,6 +6,7 @@
 
 ### 2026-05-25
 
+- **Tuner / График:** стабильная ось X (`layoutOriginTs`), отдельное сглаживание трассировки и tuner voiced-gate; стрелка ¢ без изменений. См. [docs/features/2026-05-25-tuner-chart-stable.md](./features/2026-05-25-tuner-chart-stable.md).
 - **Tuner:** восстановлен нижний ряд открытых струн (подсветка ближайшей); хроматическая стрелка без изменений. См. [docs/features/2026-05-25-tuner-strings-row-restore.md](./features/2026-05-25-tuner-strings-row-restore.md).
 - **Chords / База + AmDm + Практика:** прогрессия в строках списка, каталог по умолчанию (не только избранное), парсер AmDm без HTML в начале, табулатура в одну строку. См. [docs/features/2026-05-25-library-amdm-tab-lines.md](./features/2026-05-25-library-amdm-tab-lines.md).
 
