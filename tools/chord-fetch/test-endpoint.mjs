@@ -23,9 +23,37 @@ if (url.startsWith('http')) {
   });
   const text = await res.text();
   console.log('HTTP', res.status, text.slice(0, 200));
+  if (res.ok) {
+    try {
+      const payload = JSON.parse(text);
+      const cp = payload.chordPro ?? '';
+      const bodyLines = cp
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !/^\{/.test(l));
+      const first = bodyLines[0] ?? '';
+      if (/^</.test(first) || /class=|href=|onclick=/i.test(first.slice(0, 120))) {
+        console.error('FAIL: HTML/UI junk at start:', first.slice(0, 120));
+        process.exit(1);
+      }
+    } catch {
+      /* non-JSON */
+    }
+  }
   process.exit(res.ok ? 0 : 1);
 }
 
 const { status, payload } = await handleChordFetchRequest(body);
 console.log('local', status, payload.error || (payload.chordPro?.slice(0, 120) ?? ''));
+if (status === 200 && payload.chordPro) {
+  const bodyLines = payload.chordPro
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^\{/.test(l));
+  const first = bodyLines[0] ?? '';
+  if (/^</.test(first) || /class=|href=|onclick=|javascript:/i.test(first.slice(0, 120))) {
+    console.error('FAIL: HTML/UI junk at start:', first.slice(0, 120));
+    process.exit(1);
+  }
+}
 process.exit(status === 200 ? 0 : 1);

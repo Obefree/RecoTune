@@ -24,6 +24,7 @@ import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
   contentQualityScore,
   hasVerifiedPracticeLyrics,
+  libraryListChordSnippet,
   needsOnDemandChordFetch,
   PROGRESSION_ONLY_HINT,
   resolveLyricsText,
@@ -31,6 +32,7 @@ import {
   songContentBadge,
   songContentBadgeLabel,
 } from '../utils/songContent';
+import { isTablatureLine } from '../utils/chordLyricsNormalize';
 import { getMetadataTrackCount } from '../metadata/metadataDb';
 import {
   formatMetadataSyncError,
@@ -548,6 +550,30 @@ function ChordLyricsLine({
   /** Higher delay when auto-scroll off — vertical swipe wins over chord tap. */
   chordPressDelay?: number;
 }) {
+  if (isTablatureLine(line)) {
+    return (
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator
+        style={{ marginBottom: 10, maxHeight: 22 }}
+        contentContainerStyle={{ alignItems: 'center' }}
+      >
+        <Text
+          selectable
+          style={{
+            fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+            fontSize: 13,
+            lineHeight: 18,
+            color: '#9c7cff',
+          }}
+        >
+          {line}
+        </Text>
+      </ScrollView>
+    );
+  }
+
   const chordTapDelay = chordPressDelay ?? 200;
   const normalized = normalizeLine(line);
   const segs: { chord?: string; text: string }[] = [];
@@ -1380,7 +1406,7 @@ export default function ChordsScreen() {
   const [chordFetchProbeBusy, setChordFetchProbeBusy] = useState(false);
   const [showAdvancedChordFetchUrl, setShowAdvancedChordFetchUrl] = useState(false);
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
-  const [libFavOnly, setLibFavOnly]           = useState(true);
+  const [libFavOnly, setLibFavOnly]           = useState(false);
   const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
 
   /* ── Song library (SQLite) ── */
@@ -3202,7 +3228,17 @@ export default function ChordsScreen() {
                       {isCustom && <Text style={{ color: '#7c4dff', fontSize: 9, fontWeight: '800' }}>МОЯ</Text>}
                     </View>
                     <Text style={styles.libItemArtist}>{item.artist}</Text>
-                    <Text style={styles.libItemChords} numberOfLines={1}>{item.chords}</Text>
+                    {(() => {
+                      const chordSnippet = libraryListChordSnippet(resolved);
+                      return (
+                        <Text
+                          style={[styles.libItemChords, !chordSnippet && styles.libItemChordsMuted]}
+                          numberOfLines={1}
+                        >
+                          {chordSnippet || '—'}
+                        </Text>
+                      );
+                    })()}
                   </View>
                   <View style={styles.libItemRight}>
                     <Text
@@ -4503,6 +4539,7 @@ const styles = StyleSheet.create({
   libItemTitle: { color: '#eee', fontSize: 14, fontWeight: '700' },
   libItemArtist:{ color: '#999', fontSize: 12, marginTop: 1 },
   libItemChords:{ color: '#9c7cff', fontSize: 11, marginTop: 3 },
+  libItemChordsMuted: { color: '#555' },
   libItemRight: { alignItems: 'flex-end', gap: 3 },
   libItemGenre: { color: '#666', fontSize: 10 },
   libItemBpm:   { color: '#555', fontSize: 10 },

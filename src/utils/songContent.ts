@@ -6,6 +6,7 @@ import {
   normalizeLyricsChords,
   type NormalizeLyricsOptions,
 } from './chordLyricsNormalize';
+import { extractChordSequence } from './chordProgression';
 
 const CHORD_MARKER_RE = /\[[A-G][#b\d]*(?:\/[A-G][#b\d]*)?[^\]]*\]/i;
 
@@ -124,4 +125,14 @@ export function contentQualityScore(song: SongEntry): number {
   }
   if (song.chords?.trim()) return 8;
   return 0;
+}
+
+/** Short progression for library list rows (builtin, metadata, search hits). */
+export function libraryListChordSnippet(song: SongEntry): string {
+  const resolved = resolveSongEntry(song);
+  const direct = resolved.chords?.trim();
+  if (direct) return direct;
+  const fromLyrics = [...new Set(extractChordSequence(resolved.lyrics))].slice(0, 12);
+  if (fromLyrics.length) return fromLyrics.join(' ');
+  return '';
 }

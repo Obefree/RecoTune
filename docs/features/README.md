@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-25 | База: прогрессия в списке; AmDm; таб-строки | [2026-05-25-library-amdm-tab-lines.md](./2026-05-25-library-amdm-tab-lines.md) |
 | 2026-05-24 | База: поиск по rank; Практика: свайп RNGH | [2026-05-24-library-search-scroll-fix.md](./2026-05-24-library-search-scroll-fix.md) |
 | 2026-05-24 | Практика: стабильная строка с аккордом A | [2026-05-24-chord-a-layout-stable.md](./2026-05-24-chord-a-layout-stable.md) |
 | 2026-05-24 | Практика: свайп без авто + аккорд A | [2026-05-24-practice-scroll-chord-a.md](./2026-05-24-practice-scroll-chord-a.md) |

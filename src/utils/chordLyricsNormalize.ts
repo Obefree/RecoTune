@@ -12,6 +12,17 @@
 
 const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
 
+/** Guitar/bass tab row — must stay one line in practice UI (no word-wrap). */
+export function isTablatureLine(line: string): boolean {
+  const t = line.trim();
+  if (!t || t.length < 4) return false;
+  if (/^\|.*\|/.test(t)) return true;
+  if (/\|--/.test(t) && /\d/.test(t)) return true;
+  if (/^[-=]{4,}$/.test(t)) return true;
+  if (/^[eEbBgGdDaA]\|/i.test(t) && /\d/.test(t)) return true;
+  return false;
+}
+
 const ROOT = '[A-G](?:#|b|♯|♭)?';
 const CHORD_SUFFIX =
   '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|°|Ø|\\d+)?';
@@ -294,7 +305,11 @@ export function cleanupVerifiedChordPro(text: string): string {
   normalized = parenToBrackets(normalized);
   normalized = normalized
     .split('\n')
-    .map(line => repositionMisplacedInlineChords(stripSpuriousChordBrackets(parenToBrackets(line))))
+    .map(line =>
+      isTablatureLine(line)
+        ? line
+        : repositionMisplacedInlineChords(stripSpuriousChordBrackets(parenToBrackets(line))),
+    )
     .join('\n');
   return stripSpuriousChordBrackets(normalized).trim();
 }

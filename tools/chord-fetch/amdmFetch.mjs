@@ -37,6 +37,45 @@ function scoreAmdmLink(href, artist, title) {
   return score;
 }
 
+/** Drop AmDm nav/UI fragments that sometimes appear before the tab block. */
+function isAmdmUiGarbageLine(line) {
+  const t = line.trim();
+  if (!t) return true;
+  if (/^</.test(t)) return true;
+  if (/^(?:div|span|button|script|style|a|href|class|onclick)\b/i.test(t)) return true;
+  if (/class="|onclick=|javascript:|href=|data-v-|v-if=/i.test(t)) return true;
+  if (/^(?:сохранить|войти|регистрация|подбор|аккорды|табы|главная|поиск|меню)\b/i.test(t)) return true;
+  if (/amdm\.ru|logo|navbar|breadcrumb|cookie/i.test(t)) return true;
+  return false;
+}
+
+function scoreAmdmPreHtml(html) {
+  let score = 0;
+  if (/podbor__chord/i.test(html)) score += 120;
+  if (/data-chord=/i.test(html)) score += 80;
+  const chordDivs = (html.match(/podbor__chord/gi) || []).length;
+  score += Math.min(chordDivs * 8, 80);
+  if (/<button|<nav|navbar|header-menu|breadcrumb/i.test(html)) score -= 60;
+  if (html.length > 400) score += 15;
+  else if (html.length < 80) score -= 30;
+  return score;
+}
+
+/** Pick the `<pre>` that contains the chord/lyrics podbor, not site chrome. */
+function pickAmdmPreHtml($) {
+  const candidates = [];
+  $('pre').each((_, el) => {
+    const html = $(el).html()?.trim();
+    if (html) candidates.push({ html, score: scoreAmdmPreHtml(html) });
+  });
+  if (!candidates.length) {
+    const fallback = $('.podbor pre, .podbor__text pre, #chords pre').first().html()?.trim();
+    if (fallback) candidates.push({ html: fallback, score: scoreAmdmPreHtml(fallback) });
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.html ?? null;
+}
+
 function amdmPreHtmlToChordProLines(html) {
   const lines = [];
   let chordBuf = [];
@@ -49,7 +88,7 @@ function amdmPreHtmlToChordProLines(html) {
       continue;
     }
     const chunk = decodeHtml(m[2]).replace(/\s+/g, ' ').trim();
-    if (!chunk) continue;
+    if (!chunk || isAmdmUiGarbageLine(chunk)) continue;
     const prefix = chordBuf.map((c) => `[${c}]`).join('');
     chordBuf = [];
     lines.push(`${prefix}${chunk}`);
@@ -57,7 +96,7 @@ function amdmPreHtmlToChordProLines(html) {
   if (chordBuf.length) {
     lines.push(chordBuf.map((c) => `[${c}]`).join(''));
   }
-  return lines.filter(Boolean);
+  return lines.filter((line) => line.trim() && !isAmdmUiGarbageLine(line));
 }
 
 export function buildChordPro({ title, artist, lines, sourceUrl, note }) {
@@ -154,7 +193,7 @@ async function fetchAmdmFromSearchHtml(searchHtml, artist, title, searchUrl) {
 
   const $ = cheerio.load(songHtml);
   const ogTitle = $('meta[property="og:title"]').attr('content')?.trim();
-  const preHtml = $('pre').first().html()?.trim();
+  const preHtml = pickAmdmPreHtml($);
   if (!preHtml) {
     return {
       ok: false,

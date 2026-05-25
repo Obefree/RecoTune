@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 2026-05-25
+
+- **Chords / База + AmDm + Практика:** прогрессия в строках списка, каталог по умолчанию (не только избранное), парсер AmDm без HTML в начале, табулатура в одну строку. См. [docs/features/2026-05-25-library-amdm-tab-lines.md](./features/2026-05-25-library-amdm-tab-lines.md).
+
 ### 2026-05-24
 
 - **Chords / Практика:** стабильная высота/ширина колонки аккорда (A vs Am) в `ChordLyricsLine`. См. [docs/features/2026-05-24-chord-a-layout-stable.md](./features/2026-05-24-chord-a-layout-stable.md).
