@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-25 | Tuner: ряд струн внизу экрана | [2026-05-25-tuner-strings-row-restore.md](./2026-05-25-tuner-strings-row-restore.md) |
 | 2026-05-25 | База: прогрессия в списке; AmDm; таб-строки | [2026-05-25-library-amdm-tab-lines.md](./2026-05-25-library-amdm-tab-lines.md) |
 | 2026-05-24 | База: поиск по rank; Практика: свайп RNGH | [2026-05-24-library-search-scroll-fix.md](./2026-05-24-library-search-scroll-fix.md) |
 | 2026-05-24 | Практика: стабильная строка с аккордом A | [2026-05-24-chord-a-layout-stable.md](./2026-05-24-chord-a-layout-stable.md) |

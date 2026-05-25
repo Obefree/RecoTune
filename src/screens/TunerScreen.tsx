@@ -12,8 +12,8 @@ import WebView from 'react-native-webview';
 
 import TunerEngine, { PitchMessage } from '../components/TunerEngine';
 import {
-  centsToColor, frequencyToNote, INSTRUMENTS, TUNINGS, getTuningsForInstrument,
-  type Tuning,
+  centsToColor, frequencyToNote, findNearestString, INSTRUMENTS, TUNINGS,
+  getTuningsForInstrument, type Tuning,
 } from '../utils/noteUtils';
 import TunerNeedle from '../components/TunerNeedle';
 import FrequencyChart, { HistoryPoint, TUNER_CHART_BLOCK_MIN_H } from '../components/FrequencyChart';
@@ -205,6 +205,12 @@ export default function TunerScreen() {
   const tuneColor   = note && isActive ? centsToColor(displayCents) : '#3a3a4a';
   const inTune      = note && isActive && Math.abs(displayCents) <= 5;
 
+  const activeStringNumber = (() => {
+    if (!frequency || !isActive) return null;
+    const match = findNearestString(frequency, tuning.strings);
+    return match && match.distance < 50 ? match.stringDef.string : null;
+  })();
+
   return (
     <View style={[styles.wrapper, { paddingTop: insets.top }]}>
       {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} mode="tuner" />}
@@ -347,6 +353,21 @@ export default function TunerScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+        {/* ── Open strings (chromatic needle unchanged; highlight nearest string) ── */}
+        <View style={styles.stringsCard}>
+          <View style={styles.stringsGrid}>
+            {tuning.strings.map(gs => {
+              const active = activeStringNumber === gs.string;
+              return (
+                <View key={`${gs.string}-${gs.note}`} style={[styles.pill, active && styles.pillActive]}>
+                  <Text style={[styles.pillNum, active && styles.pillNumActive]}>{gs.string}</Text>
+                  <Text style={[styles.pillNote, active && styles.pillNoteActive]}>{gs.note}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
       </ScrollView>
 
       {/* ── Tuning picker (instrument mode — future string targeting) ── */}
@@ -455,6 +476,15 @@ const styles = StyleSheet.create({
   btnText:    { color: '#e0e0e0', fontSize: 13, fontWeight: '700', letterSpacing: 2 },
   btnTextActive: { color: '#0a0a0f' },
   errorText:  { color: '#ff5252', fontSize: 12, marginBottom: 8, textAlign: 'center' },
+
+  stringsCard: { backgroundColor: '#111118', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#1e1e28' },
+  stringsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
+  pill:        { alignItems: 'center', backgroundColor: '#1a1a24', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 9, borderWidth: 1, borderColor: '#2a2a38', minWidth: 40 },
+  pillActive:  { backgroundColor: '#00e67618', borderColor: '#00e676' },
+  pillNum:     { color: '#555', fontSize: 9, fontWeight: '700' },
+  pillNumActive:{ color: '#00e676' },
+  pillNote:    { color: '#888', fontSize: 12, fontWeight: '600', marginTop: 1 },
+  pillNoteActive:{ color: '#00e676', fontWeight: '800' },
 
   modalOverlay: { flex: 1, backgroundColor: '#000000bb', justifyContent: 'flex-end' },
   modalSheet:   { backgroundColor: '#111118', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, borderWidth: 1, borderColor: '#222' },
