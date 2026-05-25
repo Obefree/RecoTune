@@ -13,7 +13,11 @@ import {
   createPitchFrame,
   pushPitchFrameRing,
 } from '../utils/pitchFrame';
-import { appendVoicedChartPoint } from '../utils/pitchChartHistory';
+import {
+  ChartFreqStabilizer,
+  appendVoicedChartPoint,
+  softenLastChartPoint,
+} from '../utils/pitchChartHistory';
 
 const MAX_NOTES = 64;
 
@@ -52,7 +56,14 @@ function toRegisteredEvent(note: SungNote): RegisteredNoteEvent {
 }
 
 export function useSungNoteHistory() {
-  const detectorRef = useRef(new SungNoteDetector());
+  const detectorRef = useRef(
+    new SungNoteDetector({
+      midiSlopeMaxSemitonesPerSec: 12,
+      maxYinConfidence: 0.2,
+    }),
+  );
+  const chartStabilizerRef = useRef(new ChartFreqStabilizer());
+  const chartRecordingRef = useRef(true);
   const pitchFrameRingRef = useRef<PitchFrame[]>([]);
   const lastChartPtMsRef = useRef(0);
 
@@ -62,12 +73,21 @@ export function useSungNoteHistory() {
   const [registeredEvents, setRegisteredEvents] = useState<RegisteredNoteEvent[]>([]);
   const reset = useCallback(() => {
     detectorRef.current.reset();
+    chartStabilizerRef.current.reset();
+    chartRecordingRef.current = true;
     pitchFrameRingRef.current = [];
     lastChartPtMsRef.current = 0;
     setNotes([]);
     setPitchHistory([]);
     setPitchFrames([]);
     setRegisteredEvents([]);
+  }, []);
+
+  /** Call when mic stops — clamp last trace point, block late chart append. */
+  const endRecording = useCallback(() => {
+    chartRecordingRef.current = false;
+    chartStabilizerRef.current.reset();
+    setPitchHistory(prev => softenLastChartPoint(prev));
   }, []);
 
   const loadSnapshot = useCallback((snap: MelodySnapshot) => {
@@ -83,9 +103,15 @@ export function useSungNoteHistory() {
     );
   }, []);
 
+  const beginRecording = useCallback(() => {
+    chartRecordingRef.current = true;
+    chartStabilizerRef.current.reset();
+    lastChartPtMsRef.current = 0;
+  }, []);
+
   const feed = useCallback((sample: SungNoteFeedSample) => {
     const ts = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const chartFreq = sample.chartFrequency ?? sample.frequency;
+    const chartSource = sample.chartFrequency ?? sample.frequency;
     const frameFreq = sample.frameFrequency ?? sample.frequency;
 
     const frame = createPitchFrame({
@@ -98,10 +124,19 @@ export function useSungNoteHistory() {
     pitchFrameRingRef.current = pushPitchFrameRing(pitchFrameRingRef.current, frame);
     setPitchFrames(pitchFrameRingRef.current);
 
-    if (chartFreq) {
+    if (chartSource == null || chartSource < 55) {
+      chartStabilizerRef.current.reset();
+    }
+
+    const stabilizedChart =
+      chartSource != null && chartSource >= 55
+        ? chartStabilizerRef.current.process(chartSource)
+        : null;
+
+    if (stabilizedChart != null && chartRecordingRef.current) {
       setPitchHistory(prev => {
         const result = appendVoicedChartPoint(prev, {
-          chartFreq,
+          chartFreq: stabilizedChart,
           frame,
           lastPtMs: lastChartPtMsRef.current,
           cents: sample.cents,
@@ -136,6 +171,8 @@ export function useSungNoteHistory() {
     registeredEvents,
     feed,
     reset,
+    beginRecording,
+    endRecording,
     loadSnapshot,
   };
 }

@@ -108,6 +108,8 @@ export default function MelodyScreen() {
     registeredEvents,
     feed: feedSungNote,
     reset: resetSungNotes,
+    beginRecording: beginChartRecording,
+    endRecording: endChartRecording,
     loadSnapshot,
   } = useSungNoteHistory();
 
@@ -238,7 +240,6 @@ export default function MelodyScreen() {
       feedSungNote({
         frequency: stable,
         frameFrequency: raw,
-        chartFrequency: freq,
         signal: msg.signal ?? 0,
         cents: stableInfo.cents,
         frameCents: rawInfo.cents,
@@ -270,8 +271,9 @@ export default function MelodyScreen() {
     }
     setError(null);
     smoothedFreqRef.current = null;
+    beginChartRecording();
     setIsActive(true);
-  }, [t]);
+  }, [t, beginChartRecording]);
 
   const resetPlaybackVisual = useCallback(() => {
     setPlaybackElapsedMs(0);
@@ -285,6 +287,7 @@ export default function MelodyScreen() {
   }, [resetPlaybackVisual]);
 
   const stop = useCallback(() => {
+    endChartRecording();
     stopMelodyPlayback();
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
     smoothedFreqRef.current = null;
@@ -292,7 +295,7 @@ export default function MelodyScreen() {
     setNote(null);
     setFrequency(null);
     setSignalLevel(0);
-  }, [stopMelodyPlayback]);
+  }, [stopMelodyPlayback, endChartRecording]);
 
   const rhythmEst = useMemo(() => estimateRhythm(activeEvents), [activeEvents]);
 

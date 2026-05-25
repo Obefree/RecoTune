@@ -28,12 +28,17 @@ export type TranscriptionResult = {
 };
 
 const TRANSCRIPTION = {
-  minRms: 0.008,
-  maxYin: 0.18,
+  minRms: 0.006,
+  maxYin: 0.21,
+  /** Chart trace only — keeps glide visible without phantom notes on strip. */
+  chartMinRms: 0.004,
+  chartMaxYin: 0.24,
   pitchJumpSemitones: 0.72,
   transitionConfirmFrames: 2,
   minSegmentMs: 165,
-  silenceGapMs: 185,
+  silenceGapMs: 220,
+  /** Bridge brief dropouts between two sung regions (portamento / breath). */
+  voicedBridgeGapMs: 130,
   mergeSameMidiGapMs: 130,
   mergeSameMidiMaxCents: 55,
   shortFragmentMs: 220,
@@ -41,13 +46,52 @@ const TRANSCRIPTION = {
   shortFragmentMaxSemitones: 1.05,
 } as const;
 
-/** Voiced gate shared by contour transcription and pitch chart. */
+/** Contour / transcription voiced gate. */
 export function isVoicedFrame(f: PitchFrame): boolean {
   if (f.freq == null || f.midi == null) return false;
   if (f.freq < PITCH_FRAME_RING.freqMin || f.freq > PITCH_FRAME_RING.freqMax) return false;
   if (f.rms < TRANSCRIPTION.minRms) return false;
   if (f.yinConfidence != null && f.yinConfidence > TRANSCRIPTION.maxYin) return false;
   return true;
+}
+
+/** Melody pitch chart — slightly softer than contour (continuous trace on glides). */
+export function isChartVoicedFrame(f: PitchFrame): boolean {
+  if (f.freq == null || f.midi == null) return false;
+  if (f.freq < PITCH_FRAME_RING.freqMin || f.freq > PITCH_FRAME_RING.freqMax) return false;
+  if (f.rms < TRANSCRIPTION.chartMinRms) return false;
+  if (f.yinConfidence != null && f.yinConfidence > TRANSCRIPTION.chartMaxYin) return false;
+  return true;
+}
+
+function isBridgeCandidate(f: PitchFrame): boolean {
+  if (f.freq == null || f.midi == null) return false;
+  if (f.freq < PITCH_FRAME_RING.freqMin || f.freq > PITCH_FRAME_RING.freqMax) return false;
+  return f.rms >= TRANSCRIPTION.chartMinRms;
+}
+
+/** Include short unvoiced gaps between sung regions so glides are not empty. */
+function expandVoicedFrames(frames: PitchFrame[]): PitchFrame[] {
+  const strictIdx: number[] = [];
+  frames.forEach((f, i) => {
+    if (isVoicedFrame(f)) strictIdx.push(i);
+  });
+  if (strictIdx.length === 0) return [];
+
+  const keep = new Set<number>();
+  for (let k = 0; k < strictIdx.length; k++) {
+    const i = strictIdx[k];
+    keep.add(i);
+    if (k === 0) continue;
+    const prevI = strictIdx[k - 1];
+    const gap = frames[i].t - frames[prevI].t;
+    if (gap > TRANSCRIPTION.voicedBridgeGapMs) continue;
+    for (let j = prevI + 1; j < i; j++) {
+      if (isBridgeCandidate(frames[j])) keep.add(j);
+    }
+  }
+
+  return frames.filter((_, i) => keep.has(i));
 }
 
 function frameConfidence(f: PitchFrame): number {
@@ -285,7 +329,7 @@ function fitSegment(frames: PitchFrame[]): TranscribedNoteSegment | null {
  * Contour-based note extraction from pitch frame ring (MVP 1).
  */
 export function transcribeFromPitchFrames(frames: PitchFrame[]): TranscriptionResult {
-  const voiced = smoothVoicedFrames(frames.filter(isVoicedFrame));
+  const voiced = smoothVoicedFrames(expandVoicedFrames(frames));
   if (voiced.length === 0) {
     return { segments: [], voicedFrameCount: 0, confidence: 0 };
   }

@@ -43,6 +43,7 @@ export default function MelodyPitchChart({
         maxHistoryPoints={120}
         defaultHZoom={2}
         timeAxis
+        scrollFollow={active}
         registeredMarkers={markers}
         segmentOverlays={segmentOverlays}
       />

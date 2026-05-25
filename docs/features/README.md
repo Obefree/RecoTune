@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-25 | Melody: график + контур на глиссандо | [2026-05-25-melody-chart-glide-recognition.md](./2026-05-25-melody-chart-glide-recognition.md) |
 | 2026-05-25 | Tuner: график нот без скачков (playhead) | [2026-05-25-tuner-chart-stable.md](./2026-05-25-tuner-chart-stable.md) |
 | 2026-05-25 | Tuner: ряд струн внизу экрана | [2026-05-25-tuner-strings-row-restore.md](./2026-05-25-tuner-strings-row-restore.md) |
 | 2026-05-25 | База: прогрессия в списке; AmDm; таб-строки | [2026-05-25-library-amdm-tab-lines.md](./2026-05-25-library-amdm-tab-lines.md) |
