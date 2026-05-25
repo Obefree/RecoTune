@@ -20,7 +20,7 @@ const A4_MIDI = 69;
 /** ~4 semitones — reject harmonic jumps (aligned with TunerEngine melody profile). */
 const CHART_JUMP_RATIO = 1.26;
 const CHART_JUMP_BLEND = 0.42;
-const CHART_EMA_ALPHA = 0.22;
+const CHART_EMA_ALPHA = 0.28;
 /** Max vertical step per chart sample (~100 ms). */
 const CHART_MAX_CENTS_STEP = 42;
 const CHART_FREQ_RING = 5;

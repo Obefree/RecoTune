@@ -372,6 +372,7 @@ export default function FrequencyChart({
   const panOriginScroll = useRef(0);
   const pinchOriginZoom = useRef(defaultHZoom);
   const followEndRef = useRef(true);
+  const lastFollowWallMsRef = useRef<number | null>(null);
 
   useEffect(() => { hsRef.current = hScroll; }, [hScroll]);
   useEffect(() => { hzRef.current = hZoom; }, [hZoom]);
@@ -383,7 +384,7 @@ export default function FrequencyChart({
     () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs),
     [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs],
   );
-  const { totalW, maxScroll, xOfIndex, xOfTime, markerX } = timeLayout;
+  const { totalW, maxScroll, effectiveCell, xOfIndex, xOfTime, markerX } = timeLayout;
   const xOf = xOfIndex;
   const useStringCents = tuningTarget != null;
 
@@ -392,6 +393,7 @@ export default function FrequencyChart({
       setHScroll(0);
       setHZoom(defaultHZoom);
       followEndRef.current = true;
+      lastFollowWallMsRef.current = null;
     }
   }, [history.length, defaultHZoom]);
 
@@ -400,12 +402,26 @@ export default function FrequencyChart({
 
   useEffect(() => {
     if (!scrollFollow || pts.length === 0) return;
+    const target = clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const prevWall = lastFollowWallMsRef.current ?? now;
+    lastFollowWallMsRef.current = now;
+    const dt = Math.max(16, Math.min(now - prevWall, 200));
+
     setHScroll(prev => {
       const clamped = clamp3(prev, 0, maxScroll);
       if (!followEndRef.current) return clamped;
-      return clamp3(lastEndX - ANCHOR_X, 0, maxScroll);
+      if (!timeAxis) return target;
+
+      const pxPerMs = effectiveCell / CHART_SAMPLE_INTERVAL_MS;
+      const maxForward = pxPerMs * dt * 1.12;
+      const delta = target - clamped;
+      if (delta > maxForward + 0.5) {
+        return clamp3(clamped + maxForward, 0, maxScroll);
+      }
+      return target;
     });
-  }, [scrollFollow, lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
+  }, [scrollFollow, timeAxis, effectiveCell, lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
 
   const beginPan = useCallback(() => {
     panOriginScroll.current = hsRef.current;

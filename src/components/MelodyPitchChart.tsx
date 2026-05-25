@@ -10,6 +10,8 @@ interface Props {
   segmentOverlays?: PitchSegmentOverlay[];
   active: boolean;
   chartPlotWidth?: number;
+  /** Session start for time-axis X — fixed while recording (see Tuner chartSessionT0). */
+  layoutOriginTs?: number | null;
 }
 
 export default function MelodyPitchChart({
@@ -18,6 +20,7 @@ export default function MelodyPitchChart({
   segmentOverlays = [],
   active,
   chartPlotWidth,
+  layoutOriginTs = null,
 }: Props) {
   const { t } = useLocale();
   const markers = useMemo(
@@ -43,6 +46,7 @@ export default function MelodyPitchChart({
         maxHistoryPoints={120}
         defaultHZoom={2}
         timeAxis
+        layoutOriginTs={layoutOriginTs}
         scrollFollow={active}
         registeredMarkers={markers}
         segmentOverlays={segmentOverlays}

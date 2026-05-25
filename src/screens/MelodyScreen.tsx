@@ -104,6 +104,7 @@ export default function MelodyScreen() {
   const {
     notes: sungNotes,
     pitchHistory,
+    chartLayoutOriginTs,
     pitchFrames,
     registeredEvents,
     feed: feedSungNote,
@@ -640,6 +641,7 @@ export default function MelodyScreen() {
 
         <MelodyPitchChart
           history={pitchHistory}
+          layoutOriginTs={chartLayoutOriginTs}
           registeredEvents={activeEvents}
           segmentOverlays={recognitionMode === 'contour' ? segmentOverlays : []}
           active={isActive}
