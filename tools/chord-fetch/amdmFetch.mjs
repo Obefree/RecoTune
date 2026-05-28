@@ -256,14 +256,34 @@ function collectAmdmSongUrls(searchHtml, artist, title) {
     .slice(0, MAX_URLS_PER_SEARCH);
 }
 
+function firstTitleWord(title) {
+  const m = String(title ?? '')
+    .trim()
+    .match(/^[\p{L}\p{N}]+/u);
+  return m?.[0] ?? '';
+}
+
 /** Search query variants for AmDm (artist/title order, title-only, translit, layout). */
 export function buildAmdmSearchQueries(artist, title) {
   const a = String(artist ?? '').trim();
   const t = String(title ?? '').trim();
+  const shortT = firstTitleWord(t);
   const out = [];
   const add = (q) => {
     const s = q.replace(/\s+/g, ' ').trim();
     if (s.length >= 2 && !out.includes(s)) out.push(s);
+  };
+  const addTitleAliases = (titleText) => {
+    if (!titleText) return;
+    add(titleText);
+    const latT = translitRuToLat(titleText);
+    if (latT && latT !== titleText.toLowerCase()) add(latT);
+    if (/[a-z]/i.test(titleText) && !/[а-яё]/i.test(titleText)) {
+      add(swapKeyboardLayout(titleText, EN_TO_RU, RU_TO_EN));
+    }
+    if (/[а-яё]/i.test(titleText)) {
+      add(swapKeyboardLayout(titleText, RU_TO_EN, EN_TO_RU));
+    }
   };
   if (a && t) {
     add(`${a} ${t}`);
@@ -271,17 +291,14 @@ export function buildAmdmSearchQueries(artist, title) {
     const latA = translitRuToLat(a);
     const latT = translitRuToLat(t);
     if (latA && latT) add(`${latA} ${latT}`);
+    if (shortT.length >= 3 && shortT !== t) {
+      add(`${a} ${shortT}`);
+      add(shortT);
+    }
   }
   if (t) {
-    add(t);
-    const latT = translitRuToLat(t);
-    if (latT && latT !== t.toLowerCase()) add(latT);
-    if (/[a-z]/i.test(t) && !/[а-яё]/i.test(t)) {
-      add(swapKeyboardLayout(t, EN_TO_RU, RU_TO_EN));
-    }
-    if (/[а-яё]/i.test(t)) {
-      add(swapKeyboardLayout(t, RU_TO_EN, EN_TO_RU));
-    }
+    addTitleAliases(t);
+    if (shortT.length >= 3 && shortT !== t) addTitleAliases(shortT);
   }
   if (a) {
     add(a);
@@ -292,6 +309,10 @@ export function buildAmdmSearchQueries(artist, title) {
       for (const alias of aliases) {
         add(`${alias} ${t}`);
         add(`${t} ${alias}`);
+        if (shortT.length >= 3 && shortT !== t) {
+          add(`${alias} ${shortT}`);
+          add(`${shortT} ${alias}`);
+        }
       }
     }
   }

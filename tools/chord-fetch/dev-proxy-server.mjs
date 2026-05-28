@@ -7,6 +7,9 @@
 import http from 'node:http';
 import { handleChordFetchRequest } from './amdmFetch.mjs';
 
+/** Bump when parser/proxy behavior changes — compare with GET /health in app settings. */
+export const CHORD_FETCH_PROXY_VERSION = '2026-05-28-amdm-validate';
+
 const PORT = Number(process.env.CHORD_FETCH_PORT || 8787);
 
 function json(res, status, body) {
@@ -43,6 +46,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
     json(res, 200, {
       ok: true,
+      version: CHORD_FETCH_PROXY_VERSION,
       hint: 'POST /fetch with { provider, artist, title }',
       port: PORT,
     });
@@ -80,6 +84,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`RecoTune chord-fetch dev proxy: http://0.0.0.0:${PORT}/fetch`);
+  console.log(`RecoTune chord-fetch dev proxy: http://0.0.0.0:${PORT}/fetch (${CHORD_FETCH_PROXY_VERSION})`);
   console.log('Приложение подставит этот URL в Expo Go (тот же Wi‑Fi, что Metro).');
+  console.log('После git pull перезапустите прокси — иначе телефон получит старый парсер.');
 });

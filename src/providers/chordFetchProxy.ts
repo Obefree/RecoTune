@@ -45,6 +45,14 @@ export const CHORD_FETCH_STAGE_LABEL: Record<ChordFetchStage, string> = {
 
 export const CHORD_FETCH_TIMEOUT_MS = 15_000;
 
+function chordFetchNotFoundMessage(serverDetail?: string): string {
+  const detail = serverDetail?.trim();
+  if (typeof __DEV__ !== 'undefined' && __DEV__ && detail) {
+    return detail.length > 100 ? `${detail.slice(0, 97)}…` : detail;
+  }
+  return 'Не найдено';
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -143,7 +151,7 @@ export async function postChordFetchProxy(
           ? ' Источник временно недоступен.'
           : '';
     if (res.status === 404) {
-      throw new ChordFetchError('Не найдено');
+      throw new ChordFetchError(chordFetchNotFoundMessage(detail));
     }
     throw new ChordFetchError(detail || `Ошибка HTTP ${res.status}.${hint}`);
   }
@@ -152,7 +160,7 @@ export async function postChordFetchProxy(
   if (contentType.includes('application/json')) {
     const data = (await res.json()) as ChordProxyResponse;
     if (data.stub || data.error?.trim()) {
-      throw new ChordFetchError('Не найдено');
+      throw new ChordFetchError(chordFetchNotFoundMessage(data.error));
     }
     const body = (data.chordPro ?? data.text ?? '').trim();
     if (!body) {
@@ -223,6 +231,10 @@ function artistTitleFetchVariants(artist: string, title: string): { artist: stri
   add({ artist: a, title: t });
   if (a && t) add({ artist: t, title: a });
   if (t) add({ artist: a || t, title: t });
+  const firstWord = t.match(/^[\p{L}\p{N}]+/u)?.[0];
+  if (firstWord && firstWord.length >= 3 && firstWord !== t) {
+    add({ artist: a, title: firstWord });
+  }
   return variants;
 }
 

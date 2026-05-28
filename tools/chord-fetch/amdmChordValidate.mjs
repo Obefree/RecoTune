@@ -2,7 +2,8 @@
  * ChordPro body validation for AmDm parse (aligned with app isVerifiedChordProLyrics).
  */
 
-const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
+/** Matches [G], [Am], [Gsus4], [A7/C#] — aligned with app songContent.ts */
+const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]*(?:\/[A-G][#b♯♭\d]*)?[^\]]*\]/i;
 const CHORD_TOKEN_RE = /^[A-G](?:#|b|♯|♭)?(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\d+|m7|7|9|11|13|6|\d+)?(?:\/[A-G](?:#|b|♯|♭)?)?$/i;
 
 export const AMDM_MIN_BODY_LINES = 4;

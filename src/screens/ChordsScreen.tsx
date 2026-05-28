@@ -762,6 +762,15 @@ export default function ChordsScreen() {
   const practiceRecRef = useRef<Audio.Recording | null>(null);
   const practiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  /* ── Practice chord progression ── */
+  const [practiceInput, setPracticeInput]     = useState('');
+  const [practiceChords, setPracticeChords]   = useState<string[]>([]);
+  const [practiceChordIdx, setPracticeChordIdx] = useState(0);
+  const [practiceSong, setPracticeSong]       = useState<SongEntry | null>(null);
+  const [chordFetchLoading, setChordFetchLoading] = useState(false);
+  const [chordFetchProgress, setChordFetchProgress] = useState<OnDemandAutoProgress | null>(null);
+  const [onDemandAttribution, setOnDemandAttribution] = useState<ProviderAttribution | null>(null);
+
   /* ── Lyrics in practice ── */
   const [practiceLyrics, setPracticeLyrics] = useState('');
   /** Always normalized for display/scroll (edit mode keeps raw practiceLyrics). */
@@ -1402,15 +1411,6 @@ export default function ChordsScreen() {
     if (!a && !t) return;
     setResultAndFetch({ artist: a || 'Unknown', title: t || 'Unknown' });
   }
-
-  /* ── Practice chord progression ── */
-  const [practiceInput, setPracticeInput]     = useState('');
-  const [practiceChords, setPracticeChords]   = useState<string[]>([]);
-  const [practiceChordIdx, setPracticeChordIdx] = useState(0);
-  const [practiceSong, setPracticeSong]       = useState<SongEntry | null>(null);
-  const [chordFetchLoading, setChordFetchLoading] = useState(false);
-  const [chordFetchProgress, setChordFetchProgress] = useState<OnDemandAutoProgress | null>(null);
-  const [onDemandAttribution, setOnDemandAttribution] = useState<ProviderAttribution | null>(null);
 
   /* ── Song library ── */
   const [showLibrary, setShowLibrary]         = useState(false);

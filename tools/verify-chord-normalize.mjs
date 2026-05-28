@@ -10,7 +10,7 @@ const CHORD_SUFFIX =
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
-const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
+const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]*(?:\/[A-G][#b♯♭\d]*)?[^\]]*\]/i;
 const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
 const LYRIC_PRONOUN_TOKENS = new Set(['I']);
 

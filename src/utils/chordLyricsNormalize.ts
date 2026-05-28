@@ -10,7 +10,7 @@
  * - "G\\nBut I'm a creep" / "But [G]I'm a creep" → chord on last word, not before I'm
  */
 
-const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]/i;
+const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]*(?:\/[A-G][#b♯♭\d]*)?[^\]]*\]/i;
 
 /** Guitar/bass tab row — must stay one line in practice UI (no word-wrap). */
 export function isTablatureLine(line: string): boolean {
