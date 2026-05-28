@@ -1,10 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  PanResponder, useWindowDimensions, Alert,
+  useWindowDimensions, Alert,
   StatusBar, Pressable,
 } from 'react-native';
 import { Video, AVPlaybackStatus } from 'expo-av';
+import SeekBar from '../components/SeekBar';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Ionicons } from '@expo/vector-icons';
@@ -89,7 +90,7 @@ function VideoTapZones({
 export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { setTabBarHidden } = useTabBarVisibility();
+  const { setTabBarHidden, setMediaSegHidden } = useTabBarVisibility();
 
   const [videos, setVideos]         = useState<VideoItem[]>([]);
   const [currentIdx, setCurrentIdx] = useState(-1);
@@ -104,7 +105,8 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const current    = currentIdx >= 0 && currentIdx < videos.length ? videos[currentIdx] : null;
   const videoRef   = useRef<Video>(null);
   const durRef     = useRef(0);
-  const seekBarW   = useRef(1);
+  const videoSeekingRef = useRef(false);
+  const wasPlayingBeforeScrubRef = useRef(false);
   const hideTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const VIDEO_H  = Math.round(width * 9 / 16);   // normal inline height
@@ -149,28 +151,25 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
 
   useEffect(() => {
     setTabBarHidden(fullscreen);
-  }, [fullscreen, setTabBarHidden]);
+    setMediaSegHidden(fullscreen);
+  }, [fullscreen, setTabBarHidden, setMediaSegHidden]);
 
   useFocusEffect(useCallback(() => () => {
     setFullscreen(false);
     StatusBar.setHidden(false, 'fade');
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     setTabBarHidden(false);
-  }, [setTabBarHidden]));
+    setMediaSegHidden(false);
+  }, [setTabBarHidden, setMediaSegHidden]));
 
-  /* ── Seek PanResponder ── */
-  const seekPan = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder:  () => true,
-    onPanResponderGrant: (e) => {
-      const p = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekBarW.current));
-      videoRef.current?.setPositionAsync(p * durRef.current * 1000).catch(() => {});
-    },
-    onPanResponderMove: (e) => {
-      const p = Math.max(0, Math.min(1, e.nativeEvent.locationX / seekBarW.current));
-      videoRef.current?.setPositionAsync(p * durRef.current * 1000).catch(() => {});
-    },
-  })).current;
+  const handleVideoSeek = useCallback(async (seconds: number) => {
+    const v = videoRef.current;
+    if (!v || durRef.current <= 0) return;
+    try {
+      await v.setPositionAsync(Math.round(seconds * 1000));
+      setPos(Math.round(seconds * 10) / 10);
+    } catch {}
+  }, []);
 
   /* ── Pick videos ── */
   const pickVideos = useCallback(async () => {
@@ -224,7 +223,9 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const onStatus = useCallback((st: AVPlaybackStatus) => {
     if (!st.isLoaded) return;
     const d = Math.floor((st.durationMillis ?? 0) / 1000);
-    setPos(Math.floor((st.positionMillis ?? 0) / 1000));
+    if (!videoSeekingRef.current) {
+      setPos(Math.round((st.positionMillis ?? 0) / 100) / 10);
+    }
     setDur(d); durRef.current = d;
     setIsPlaying(st.isPlaying);
     if (st.didJustFinish && currentIdx < videos.length - 1) playNext();
@@ -238,32 +239,9 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
     bumpControls();
   }, [bumpControls]);
 
-  /* ── Seek bar ── */
-  function SeekBar() {
-    const pct = dur > 0 ? (pos / dur) * 100 : 0;
-    return (
-      <View style={styles.seekRow}>
-        <Text style={styles.seekTime}>{fmtMs(pos * 1000)}</Text>
-        <View
-          style={styles.seekTrack}
-          onLayout={e => { seekBarW.current = e.nativeEvent.layout.width; }}
-          {...seekPan.panHandlers}
-        >
-          {/* background line */}
-          <View style={styles.seekBg} />
-          {/* filled portion */}
-          <View style={[styles.seekFill, { width: pct + '%' as any }]} />
-          {/* thumb — sits ON the line */}
-          <View style={[styles.seekThumb, { left: pct + '%' as any }]} />
-        </View>
-        <Text style={styles.seekTime}>{fmtMs(dur * 1000)}</Text>
-      </View>
-    );
-  }
-
   /* ── Controls overlay ── */
   function Controls({ inFullscreen }: { inFullscreen: boolean }) {
-    if (!ctrlsVis) return null;
+    if (inFullscreen && !ctrlsVis) return null;
     return (
       <View style={[styles.overlay, inFullscreen && { paddingBottom: 20 }]}>
         <View style={styles.overlayTop}>
@@ -275,7 +253,33 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
           )}
         </View>
 
-        <SeekBar />
+        <View style={styles.seekRow}>
+          <Text style={styles.seekTime}>{fmtMs(pos * 1000)}</Text>
+          <View style={styles.seekTrackWrap}>
+            <SeekBar
+              position={pos}
+              duration={dur}
+              color="#40c4ff"
+              onScrubStart={() => {
+                videoSeekingRef.current = true;
+                const v = videoRef.current;
+                if (!v) return;
+                void v.getStatusAsync().then(st => {
+                  if (st.isLoaded) wasPlayingBeforeScrubRef.current = st.isPlaying;
+                  if (st.isLoaded && st.isPlaying) v.pauseAsync().catch(() => {});
+                });
+              }}
+              onScrubEnd={() => {
+                videoSeekingRef.current = false;
+                if (wasPlayingBeforeScrubRef.current) {
+                  videoRef.current?.playAsync().catch(() => {});
+                }
+              }}
+              onSeek={handleVideoSeek}
+            />
+          </View>
+          <Text style={styles.seekTime}>{fmtMs(dur * 1000)}</Text>
+        </View>
 
         <View style={styles.ctrlRow}>
           {inFullscreen && (
@@ -343,69 +347,45 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
     );
   };
 
+  const zoneW = fullscreen ? fsW : width;
+  const zoneH = fullscreen ? fsH : VIDEO_H;
+
   return (
-    <View style={[styles.container, { paddingTop: embedded ? 8 : insets.top }]}>
+    <View style={[styles.container, { paddingTop: fullscreen ? 0 : (embedded ? 8 : insets.top) }]}>
 
-      {/* ── Inline player (always rendered — never unmounts Video) ── */}
-      <View style={[styles.player, { height: VIDEO_H + 90 }]}>
-        {current ? (
-          <>
-            <View style={styles.videoWrap}>
-              <Video
-                ref={videoRef}
-                source={{ uri: current.uri }}
-                style={[styles.video, { height: VIDEO_H }]}
-                resizeMode={'contain' as any}
-                rate={playbackRate}
-                shouldCorrectPitch
-                shouldPlay
-                onPlaybackStatusUpdate={onStatus}
-              />
-              {!fullscreen && (
-                <VideoTapZones
-                  width={width}
-                  height={VIDEO_H}
-                  seekBack={seekBackTap}
-                  seekForward={seekForwardTap}
-                  bumpControls={bumpControls}
-                  syncRate={syncRate}
-                />
-              )}
-            </View>
-            {!fullscreen && <Controls inFullscreen={false} />}
-          </>
-        ) : (
-          <TouchableOpacity style={[styles.videoPlaceholder, { height: VIDEO_H }]} onPress={pickVideos}>
-            <Ionicons name="film-outline" size={48} color="#2a2a3a" />
-            <Text style={styles.placeholderText}>Выберите видео из списка ниже</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      {/* Single Video instance — shell resizes for fullscreen (no duplicate player) */}
+      {current ? (
+        <View
+          style={
+            fullscreen
+              ? [StyleSheet.absoluteFillObject, styles.fsOverlay]
+              : [styles.player, { height: VIDEO_H + 90 }]
+          }
+        >
+          <View style={[styles.videoWrap, fullscreen && styles.videoWrapFs]}>
+            <Video
+              ref={videoRef}
+              source={{ uri: current.uri }}
+              style={fullscreen ? styles.videoFs : [styles.video, { height: VIDEO_H }]}
+              resizeMode={'contain' as any}
+              rate={playbackRate}
+              shouldCorrectPitch
+              shouldPlay
+              progressUpdateIntervalMillis={100}
+              onPlaybackStatusUpdate={onStatus}
+            />
+            <VideoTapZones
+              width={zoneW}
+              height={zoneH}
+              seekBack={seekBackTap}
+              seekForward={seekForwardTap}
+              bumpControls={bumpControls}
+              syncRate={syncRate}
+            />
+          </View>
+          <Controls inFullscreen={fullscreen} />
 
-      {/* ── Fullscreen overlay (no Modal — avoids Video remount) ── */}
-      {fullscreen && current && (
-        <View style={[StyleSheet.absoluteFillObject, styles.fsOverlay, { width: fsW, height: fsH }]}>
-          <Video
-            ref={videoRef}
-            source={{ uri: current.uri }}
-            style={{ width: fsW, height: fsH }}
-            resizeMode={'contain' as any}
-            rate={playbackRate}
-            shouldCorrectPitch
-            shouldPlay={isPlaying}
-            onPlaybackStatusUpdate={onStatus}
-          />
-          <VideoTapZones
-            width={fsW}
-            height={fsH}
-            seekBack={seekBackTap}
-            seekForward={seekForwardTap}
-            bumpControls={bumpControls}
-            syncRate={syncRate}
-          />
-          <Controls inFullscreen />
-
-          {showSwitcher && (
+          {fullscreen && showSwitcher && (
             <View style={styles.switcher}>
               <Text style={styles.switcherTitle}>ВИДЕО</Text>
               <FlatList
@@ -428,10 +408,19 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
             </View>
           )}
         </View>
-      )}
+      ) : !fullscreen ? (
+        <View style={[styles.player, { height: VIDEO_H + 90 }]}>
+          <TouchableOpacity style={[styles.videoPlaceholder, { height: VIDEO_H }]} onPress={pickVideos}>
+            <Ionicons name="film-outline" size={48} color="#2a2a3a" />
+            <Text style={styles.placeholderText}>Выберите видео из списка ниже</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
+      {!fullscreen && (
+      <>
       {/* Prev/Next nav */}
-      {current && videos.length > 1 && !fullscreen && (
+      {current && videos.length > 1 && (
         <View style={styles.navRow}>
           <TouchableOpacity onPress={playPrev} disabled={currentIdx <= 0} style={styles.navBtn}>
             <Ionicons name="chevron-back" size={18} color={currentIdx > 0 ? '#40c4ff' : '#2a2a3a'} />
@@ -468,22 +457,19 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
           </TouchableOpacity>
         }
       />
+      </>
+      )}
     </View>
   );
 }
 
-/* ── Track line is 4px tall, container is 28px; thumb is 16px centered on line ── */
-const TRACK_H  = 4;
-const THUMB_D  = 16;
-const BAR_H    = 28;
-const TRACK_TOP = (BAR_H - TRACK_H) / 2;   // 12
-const THUMB_TOP = (BAR_H - THUMB_D) / 2;   // 6
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0f' },
   player:    { width: '100%', backgroundColor: '#000', position: 'relative' },
-  videoWrap: { position: 'relative', width: '100%' },
-  video:     { width: '100%' },
+  videoWrap:   { position: 'relative', width: '100%' },
+  videoWrapFs: { flex: 1 },
+  video:       { width: '100%' },
+  videoFs:     { flex: 1, width: '100%', height: '100%' },
   videoPlaceholder: { width: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0d0d14' },
   placeholderText:  { color: '#2a2a3a', fontSize: 13, marginTop: 10 },
 
@@ -495,12 +481,9 @@ const styles = StyleSheet.create({
   overlayTop:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   videoTitle:  { flex: 1, color: '#bbb', fontSize: 12, fontWeight: '600', marginRight: 8 },
 
-  seekRow:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  seekTime:  { color: '#777', fontSize: 10, width: 34, textAlign: 'center' },
-  seekTrack: { flex: 1, height: BAR_H, position: 'relative' },
-  seekBg:    { position: 'absolute', left: 0, right: 0, top: TRACK_TOP, height: TRACK_H, backgroundColor: '#444', borderRadius: 2 },
-  seekFill:  { position: 'absolute', left: 0,            top: TRACK_TOP, height: TRACK_H, backgroundColor: '#40c4ff', borderRadius: 2 },
-  seekThumb: { position: 'absolute', top: THUMB_TOP, width: THUMB_D, height: THUMB_D, borderRadius: THUMB_D / 2, backgroundColor: '#40c4ff', marginLeft: -(THUMB_D / 2) },
+  seekRow:       { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  seekTime:      { color: '#777', fontSize: 10, width: 34, textAlign: 'center' },
+  seekTrackWrap: { flex: 1 },
 
   ctrlRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 2 },
   ctrlBtn:   { alignItems: 'center', padding: 8 },

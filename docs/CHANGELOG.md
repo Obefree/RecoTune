@@ -6,6 +6,7 @@
 
 ### 2026-05-28
 
+- **Media / Видео:** стабильный scrub (общий `SeekBar`), один плеер без двойных контролов, fullscreen без seg bar. См. [docs/features/2026-05-28-video-player-scrub-fullscreen.md](./features/2026-05-28-video-player-scrub-fullscreen.md).
 - **Chords / авто полностью:** probe прокси, цепочка AmDm → UG → pesni.ru с телефона, `npm start` поднимает dev-stack, упрощён ⚙. См. [docs/features/2026-05-28-auto-chord-full-automatic.md](./features/2026-05-28-auto-chord-full-automatic.md).
 - **Chords / UG:** табы через vendored [ultimate-api](https://github.com/joncardasis/ultimate-api) (Flask `:5000`), поиск в Node; `npm run dev-stack`. См. [docs/features/2026-05-28-ultimate-api-ug-integration.md](./features/2026-05-28-ultimate-api-ug-integration.md).
 - **Chords / dev-proxy:** fix chord-marker validation (`[G]`, `[Am]`), перезапуск прокси после pull, dev-ошибки от API. См. [docs/features/2026-05-28-chord-fetch-validate-restart.md](./features/2026-05-28-chord-fetch-validate-restart.md).

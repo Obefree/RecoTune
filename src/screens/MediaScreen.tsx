@@ -13,6 +13,7 @@ import PlayerScreen from './PlayerScreen';
 import VideoScreen from './VideoScreen';
 
 import { useLocale } from '../context/LocaleContext';
+import { useTabBarVisibility } from '../context/TabBarVisibility';
 
 
 
@@ -25,6 +26,7 @@ export default function MediaScreen() {
   const insets = useSafeAreaInsets();
 
   const { t } = useLocale();
+  const { mediaSegHidden } = useTabBarVisibility();
 
   const [segment, setSegment] = useState<Segment>('record');
 
@@ -46,6 +48,7 @@ export default function MediaScreen() {
 
     <View style={styles.wrapper}>
 
+      {!mediaSegHidden && (
       <View style={[styles.segBar, { paddingTop: insets.top + 6 }]}>
 
         {segments.map(s => {
@@ -75,6 +78,7 @@ export default function MediaScreen() {
         })}
 
       </View>
+      )}
 
       <View style={styles.body}>
 
