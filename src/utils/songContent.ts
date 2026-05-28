@@ -95,7 +95,7 @@ export function songContentBadgeLabel(badge: SongContentBadge): string {
     case 'chords':
       return 'текст ✓';
     case 'progression':
-      return 'прогрессия';
+      return 'прогрессия, не таб';
     case 'metadata':
       return 'метаданные';
     default:
@@ -127,12 +127,14 @@ export function contentQualityScore(song: SongEntry): number {
   return 0;
 }
 
-/** Short progression for library list rows (builtin, metadata, search hits). */
+/** Short progression for library list rows — never infer chords from unverified lyrics. */
 export function libraryListChordSnippet(song: SongEntry): string {
   const resolved = resolveSongEntry(song);
   const direct = resolved.chords?.trim();
   if (direct) return direct;
-  const fromLyrics = [...new Set(extractChordSequence(resolved.lyrics))].slice(0, 12);
-  if (fromLyrics.length) return fromLyrics.join(' ');
+  if (hasVerifiedPracticeLyrics(resolved)) {
+    const fromLyrics = [...new Set(extractChordSequence(resolved.lyrics))].slice(0, 12);
+    if (fromLyrics.length) return fromLyrics.join(' ');
+  }
   return '';
 }

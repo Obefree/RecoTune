@@ -1,8 +1,4 @@
-/** Текст песен: lyrics.ovh (без сторонних music-ID API). */
-
-import { normalizeLyricsChords } from './chordLyricsNormalize';
-
-export { normalizeLyricsChords };
+/** Текст песен: lyrics.ovh (plain text only — not ChordPro / not for practice tab). */
 
 export async function fetchLyricsOvh(artist: string, title: string): Promise<string | null> {
   try {
@@ -10,7 +6,7 @@ export async function fetchLyricsOvh(artist: string, title: string): Promise<str
       `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`,
     );
     const data = await res.json();
-    if (!data.error && data.lyrics) return normalizeLyricsChords(data.lyrics);
+    if (!data.error && data.lyrics) return String(data.lyrics).trim() || null;
   } catch { /* offline */ }
   return null;
 }

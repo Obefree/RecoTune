@@ -754,9 +754,13 @@ export default function ChordsScreen() {
     const t = practiceLyrics.trim();
     if (!t) return '';
     if (practiceSong) {
-      return resolveLyricsText({ ...practiceSong, lyrics: t }) ?? t;
+      const entry = { ...practiceSong, lyrics: t };
+      const verified = resolveLyricsText(entry);
+      if (verified) return verified;
+      if (hasVerifiedPracticeLyrics(entry)) return t;
+      return '';
     }
-    return normalizeLyricsChords(t);
+    return '';
   }, [practiceLyrics, practiceSong]);
   const [practiceContentHint, setPracticeContentHint] = useState<string | null>(null);
   const [practiceFetchHint, setPracticeFetchHint] = useState<string | null>(null);
@@ -2669,7 +2673,7 @@ export default function ChordsScreen() {
                 scrollEnabled={false}
               />
             </ScrollView>
-          ) : practiceLyrics ? (
+          ) : practiceLyricsDisplay ? (
             <GestureScrollView
               ref={lyricsScrollRef}
               style={[styles.lyricsScroll, { flex: 1 }]}
@@ -2855,18 +2859,22 @@ export default function ChordsScreen() {
               {lyricsLoading ? (
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
               ) : identifyChordedLyrics ? (
-                <View style={styles.resultChordedLyrics}>
-                  {identifyChordedLyrics.split('\n').map((line, li) => (
-                    <ChordLyricsLine
-                      key={`identify-line-${li}`}
-                      line={line}
-                      currentChord=""
-                      lineIdx={li}
-                      activeChordPos={null}
-                      onChordTap={() => {}}
-                    />
-                  ))}
-                </View>
+                lyricsSource === 'library' && libraryMatch && hasVerifiedPracticeLyrics(libraryMatch) ? (
+                  <View style={styles.resultChordedLyrics}>
+                    {identifyChordedLyrics.split('\n').map((line, li) => (
+                      <ChordLyricsLine
+                        key={`identify-line-${li}`}
+                        line={line}
+                        currentChord=""
+                        lineIdx={li}
+                        activeChordPos={null}
+                        onChordTap={() => {}}
+                      />
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.identifyPlainLyrics}>{identifyChordedLyrics}</Text>
+                )
               ) : (
                 <Text style={styles.identifyLyricsEmpty}>Текст не найден (каталог / lyrics.ovh)</Text>
               )}
@@ -3229,13 +3237,18 @@ export default function ChordsScreen() {
                     </View>
                     <Text style={styles.libItemArtist}>{item.artist}</Text>
                     {(() => {
+                      const badge = songContentBadge(resolved);
                       const chordSnippet = libraryListChordSnippet(resolved);
+                      const label =
+                        badge === 'progression' && chordSnippet
+                          ? `прогр.: ${chordSnippet}`
+                          : chordSnippet || (badge === 'metadata' ? 'без аккордов' : '—');
                       return (
                         <Text
                           style={[styles.libItemChords, !chordSnippet && styles.libItemChordsMuted]}
                           numberOfLines={1}
                         >
-                          {chordSnippet || '—'}
+                          {label}
                         </Text>
                       );
                     })()}
@@ -4445,6 +4458,7 @@ const styles = StyleSheet.create({
   resultChordedLyrics: { paddingTop: 4 },
   lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   identifyLyricsEmpty: { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
+  identifyPlainLyrics: { color: '#bbb', fontSize: 14, lineHeight: 22, marginTop: 8 },
 
   cancelBtn:  { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
   cancelText: { color: '#888', fontSize: 13 },

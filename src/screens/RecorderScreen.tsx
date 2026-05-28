@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   Alert, Animated, Modal, TextInput, ScrollView, Pressable, Platform, useWindowDimensions,
+  AppState, type AppStateStatus,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
@@ -29,6 +30,7 @@ import {
   type RecordingInputInfo,
 } from '../utils/studioAudioRouting';
 import RecordingInputPicker from '../components/RecordingInputPicker';
+import { applyRecordingBackgroundAudioMode } from '../utils/recordingAudioMode';
 
 interface Recording {
   id: string;
@@ -68,6 +70,19 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
   const qualityRef = useRef<RecQuality>(DEFAULT_QUALITY);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { audioRoutingRef.current = audioRouting; }, [audioRouting]);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if ((next === 'background' || next === 'inactive') && isRecordingRef.current) {
+        const routing = audioRoutingRef.current;
+        const playThroughEarpieceAndroid =
+          routing.mode === 'manual' && routing.output === 'earpiece';
+        void applyRecordingBackgroundAudioMode({ playThroughEarpieceAndroid });
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   const anyRecModalOpen = showQuality || renameRec !== null;
   useEffect(() => {
@@ -81,6 +96,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
   const [playDur, setPlayDur]           = useState(0);
 
   const recRef     = useRef<Audio.Recording | null>(null);
+  const isRecordingRef = useRef(false);
   const soundRef   = useRef<Audio.Sound | null>(null);
   const recordingsRef = useRef<Recording[]>([]);
   const busyRef    = useRef(false);   // prevents concurrent stop/start
@@ -330,7 +346,9 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
       const uri = recRef.current.getURI();
       recRef.current = null;
       setIsRecording(false);
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      try {
+        await applyStudioAudioMode(audioRoutingRef.current, { recording: false });
+      } catch {}
       if (uri) {
         const ts  = Date.now();
         const ext = uri.split('.').pop() ?? 'm4a';

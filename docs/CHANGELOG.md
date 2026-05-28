@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### 2026-05-28
+
+- **Chords / База + Практика + НАЙТИ:** быстрый metadata-поиск (SQL `LIKE`), честные бейджи и сниппеты («прогрессия, не таб»), практика только verified ChordPro, lyrics.ovh без fake-аккордов. См. [docs/features/2026-05-28-search-chords-studio-background-rec.md](./features/2026-05-28-search-chords-studio-background-rec.md).
+- **Studio / Recorder:** запись продолжается в фоне (`staysActiveInBackground`, `AppState`, Android `FOREGROUND_SERVICE_MICROPHONE`). См. тот же файл.
+
 ### 2026-05-25
 
 - **Melody / график:** фиксированный `layoutOriginTs`, time-based cap скролла, raw→stabilizer (без двойного EMA) — playhead не «убегает» после ~1 с. См. [docs/features/2026-05-25-melody-chart-scroll-origin-fix.md](./features/2026-05-25-melody-chart-scroll-origin-fix.md).

@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, ScrollView,
   Alert, Animated, TextInput, Modal, PanResponder, Pressable, Platform,
-  useWindowDimensions,
+  useWindowDimensions, AppState, type AppStateStatus,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
+import { applyRecordingBackgroundAudioMode } from '../utils/recordingAudioMode';
 import { assertPlaybackFileExists } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -276,6 +277,7 @@ export default function StudioScreen() {
   /** Без проекта — список на весь экран; с проектом — полоса сессий, ниже дорожки */
   const sessionsListCompactH = Math.min(220, Math.max(120, Math.round(windowHeight * 0.24)));
   const [isRecording, setIsRecording]     = useState(false);
+  const [recInBackground, setRecInBackground] = useState(false);
   const [recDuration, setRecDuration]     = useState(0);
   const [playingAll, setPlayingAll]       = useState(false);
   const [soloTrackId, setSoloTrackId]     = useState<string | null>(null);
@@ -321,6 +323,7 @@ export default function StudioScreen() {
   const allSoundTrackIds                 = useRef<string[]>([]);
 
   const recRef      = useRef<Audio.Recording | null>(null);
+  const isRecordingRef = useRef(false);
   const allSounds   = useRef<Audio.Sound[]>([]);
   const soloSound   = useRef<Audio.Sound | null>(null);
   const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -332,6 +335,21 @@ export default function StudioScreen() {
   const sessionsRef      = useRef(sessions);
   useEffect(() => { activeSessionRef.current = activeSession; }, [activeSession]);
   useEffect(() => { sessionsRef.current      = sessions;      }, [sessions]);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      const bg = next === 'background' || next === 'inactive';
+      setRecInBackground(bg && isRecordingRef.current);
+      if (bg && isRecordingRef.current) {
+        const routing = audioRoutingRef.current;
+        const playThroughEarpieceAndroid =
+          routing.mode === 'manual' && routing.output === 'earpiece';
+        void applyRecordingBackgroundAudioMode({ playThroughEarpieceAndroid });
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   const dotOpacity = useRef(new Animated.Value(1)).current;
   const dotLoop    = useRef<Animated.CompositeAnimation | null>(null);
@@ -468,7 +486,9 @@ export default function StudioScreen() {
   useFocusEffect(useCallback(() => {
     loadSessions();
     return () => {
-      killAllSounds();
+      if (!isRecordingRef.current) {
+        killAllSounds();
+      }
       killSolo();
       setTabBarHidden(false);
       setShowQuality(false);
@@ -768,6 +788,7 @@ export default function StudioScreen() {
       startRef.current = Date.now();
 
       setIsRecording(true);
+      setRecInBackground(false);
       setRecDuration(0);
       timerRef.current = setInterval(() => {
         setRecDuration(Math.floor((Date.now() - startRef.current) / 1000));
@@ -788,7 +809,10 @@ export default function StudioScreen() {
       const uri = recRef.current.getURI();
       recRef.current = null;
       setIsRecording(false);
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      setRecInBackground(false);
+      try {
+        await applyStudioAudioMode(audioRoutingRef.current, { recording: false });
+      } catch {}
 
       // Use refs to get the guaranteed-fresh session state
       const currentSession  = activeSessionRef.current;
@@ -819,6 +843,7 @@ export default function StudioScreen() {
       }
     } catch (e) {
       setIsRecording(false);
+      setRecInBackground(false);
       Alert.alert('Stop error', String(e));
     }
   }, [saveSessions, killAllSounds]);
@@ -1316,6 +1341,9 @@ function normArr(arr){
                   <View style={styles.recordingRow}>
                     <Animated.View style={[styles.recDot, { opacity: dotOpacity }]} />
                     <Text style={styles.recDuration}>{fmt(recDuration)}</Text>
+                    {recInBackground ? (
+                      <Text style={styles.recBackgroundHint}>запись в фоне</Text>
+                    ) : null}
                     <TouchableOpacity onPress={stopRecording} style={styles.stopBtn}>
                       <Ionicons name="stop" size={22} color="#fff" />
                       <Text style={styles.stopBtnText}>STOP REC</Text>
@@ -1886,6 +1914,7 @@ const styles = StyleSheet.create({
   recordingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingVertical: 10 },
   recDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#ff1744' },
   recDuration: { color: '#ff5252', fontSize: 22, fontWeight: '700', letterSpacing: 2, minWidth: 56 },
+  recBackgroundHint: { color: '#ff9800', fontSize: 11, fontWeight: '600' },
   stopBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#ff1744', paddingHorizontal: 18, paddingVertical: 9, borderRadius: 18 },
   stopBtnText: { color: '#fff', fontWeight: '700', fontSize: 12, letterSpacing: 1 },
 

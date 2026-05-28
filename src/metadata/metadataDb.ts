@@ -136,17 +136,38 @@ export async function searchMetadataTracks(
     return hits;
   }
 
+  const qNorm = normalizeSearchText(q);
+  const tokens = qNorm.split(/\s+/).filter(t => t.length >= 2);
+  const likeClauses: string[] = [];
+  const likeArgs: string[] = [];
+  if (tokens.length > 0) {
+    for (const t of tokens.slice(0, 4)) {
+      likeClauses.push('search_text LIKE ?');
+      likeArgs.push(`%${t}%`);
+    }
+  } else if (qNorm.length >= 2) {
+    likeClauses.push('search_text LIKE ?');
+    likeArgs.push(`%${qNorm}%`);
+  }
+
+  if (!likeClauses.length) return [];
+
+  const whereSql = `WHERE ${likeClauses.join(' AND ')}`;
+  const scanLimit = Math.min(Math.max(limit * 8, 120), 600);
   const rows = await db.getAllAsync<MetadataTrackRow & { builtin_song_id: string | null }>(
     `SELECT id, artist_id AS artistId, artist_name AS artistName, title, album, year, duration_ms AS durationMs,
             mbid, search_text AS searchText, builtin_song_id AS builtinSongId
-     FROM metadata_tracks`,
+     FROM metadata_tracks
+     ${whereSql}
+     LIMIT ?`,
+    ...likeArgs,
+    scanLimit,
   );
 
   const hits: MetadataSearchHit[] = [];
   for (const row of rows) {
     const { score, kind } = scoreSongAgainstQuery(q, row.title, row.artistName);
     const albumNorm = normalizeSearchText(row.album ?? '');
-    const qNorm = normalizeSearchText(q);
     let finalScore = score;
     if (albumNorm.includes(qNorm) && qNorm.length >= 2) finalScore = Math.max(finalScore, 40);
 

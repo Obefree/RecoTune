@@ -84,7 +84,7 @@ async function mergeMetadataHits(
     const resolved = resolveSongEntry(song);
     const key = metadataDedupeKey(resolved.title, resolved.artist);
     const provider: ProviderId = 'builtin';
-    if (h.score < 35 && !h.linkedSong) continue;
+    if (h.score < 12 && !h.linkedSong && h.matchKind === 'fuzzy') continue;
     merge(map, {
       id: resolved.id,
       title: resolved.title,

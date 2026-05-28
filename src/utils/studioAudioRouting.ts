@@ -235,8 +235,13 @@ export async function applyStudioAudioMode(
   const recording = opts?.recording ?? false;
   const manual = routing.mode === 'manual';
   const playThroughEarpieceAndroid = manual && routing.output === 'earpiece';
+  if (recording) {
+    const { applyRecordingBackgroundAudioMode } = await import('./recordingAudioMode');
+    await applyRecordingBackgroundAudioMode({ playThroughEarpieceAndroid });
+    return;
+  }
   await Audio.setAudioModeAsync({
-    allowsRecordingIOS: recording || manual,
+    allowsRecordingIOS: manual,
     playsInSilentModeIOS: true,
     playThroughEarpieceAndroid,
     shouldDuckAndroid: true,
