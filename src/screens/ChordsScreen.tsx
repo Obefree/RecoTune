@@ -55,7 +55,11 @@ import {
   PESNI_FETCH_STAGE_LABEL,
 } from '../providers/pesniRuProvider';
 import type { ProviderAttribution } from '../providers/types';
-import { searchProviders, searchResultToSongEntry } from '../providers/registry';
+import {
+  LIBRARY_SEARCH_PAGE_SIZE,
+  searchProviders,
+  searchResultToSongEntry,
+} from '../providers/registry';
 import type { SongSearchResult } from '../providers/types';
 import { combinedArtistTitle } from '../utils/searchNormalize';
 import {
@@ -1417,6 +1421,9 @@ export default function ChordsScreen() {
   const [libProviderMeta, setLibProviderMeta] = useState<Map<string, ProviderId>>(new Map());
   const [libSearchRank, setLibSearchRank] = useState<Map<string, number>>(new Map());
   const [libSearchBusy, setLibSearchBusy]     = useState(false);
+  const [libSearchHasMore, setLibSearchHasMore] = useState(false);
+  const [libSearchLoadingMore, setLibSearchLoadingMore] = useState(false);
+  const libSearchOffsetRef = useRef(0);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [chordFetchProbeStatus, setChordFetchProbeStatus] = useState<string | null>(null);
   const [chordFetchProbeBusy, setChordFetchProbeBusy] = useState(false);
@@ -1492,30 +1499,82 @@ export default function ChordsScreen() {
   const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
 
-  const applyLibSearchResults = useCallback((results: SongSearchResult[]) => {
-    const meta = new Map<string, ProviderId>();
-    const rank = new Map<string, number>();
-    const songs: SongEntry[] = [];
-    const seen = new Set<string>();
-    for (const r of results) {
-      const song = searchResultToSongEntry(r);
-      if (!song) continue;
-      const key = combinedArtistTitle(song.artist, song.title);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rank.set(song.id, songs.length);
-      songs.push(song);
-      meta.set(song.id, r.provider);
+  const applyLibSearchResults = useCallback(
+    (
+      results: SongSearchResult[],
+      opts?: { append?: boolean; prevHits?: SongEntry[]; prevMeta?: Map<string, ProviderId>; prevRank?: Map<string, number> },
+    ) => {
+      const meta = new Map<string, ProviderId>(
+        opts?.append && opts.prevMeta ? opts.prevMeta : [],
+      );
+      const rank = new Map<string, number>(
+        opts?.append && opts.prevRank ? opts.prevRank : [],
+      );
+      const songs: SongEntry[] = opts?.append && opts.prevHits ? [...opts.prevHits] : [];
+      const seen = new Set(songs.map(s => combinedArtistTitle(s.artist, s.title)));
+      for (const r of results) {
+        const song = searchResultToSongEntry(r);
+        if (!song) continue;
+        const key = combinedArtistTitle(song.artist, song.title);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rank.set(song.id, songs.length);
+        songs.push(song);
+        meta.set(song.id, r.provider);
+      }
+      setLibSearchHits(songs);
+      setLibProviderMeta(meta);
+      setLibSearchRank(rank);
+      return songs.length;
+    },
+    [],
+  );
+
+  const loadMoreLibrarySearch = useCallback(async () => {
+    const q = libSearch.trim();
+    if (!q || libSearchBusy || libSearchLoadingMore || !libSearchHasMore) return;
+    setLibSearchLoadingMore(true);
+    try {
+      await initSongLibrary();
+      const offset = libSearchOffsetRef.current;
+      const results = await searchProviders(q, {
+        limit: LIBRARY_SEARCH_PAGE_SIZE,
+        offset,
+        includeRemote: false,
+      });
+      const prevLen = libSearchHits.length;
+      applyLibSearchResults(results, {
+        append: true,
+        prevHits: libSearchHits,
+        prevMeta: libProviderMeta,
+        prevRank: libSearchRank,
+      });
+      libSearchOffsetRef.current = offset + LIBRARY_SEARCH_PAGE_SIZE;
+      setLibSearchHasMore(results.length >= LIBRARY_SEARCH_PAGE_SIZE);
+      if (results.length === 0 && prevLen > 0) setLibSearchHasMore(false);
+    } catch (err) {
+      if (__DEV__) console.warn('[RecoTune] library search load-more failed', err);
+      setLibSearchHasMore(false);
+    } finally {
+      setLibSearchLoadingMore(false);
     }
-    setLibSearchHits(songs);
-    setLibProviderMeta(meta);
-    setLibSearchRank(rank);
-  }, []);
+  }, [
+    libSearch,
+    libSearchBusy,
+    libSearchLoadingMore,
+    libSearchHasMore,
+    libSearchHits,
+    libProviderMeta,
+    libSearchRank,
+    applyLibSearchResults,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
     const q = libSearch.trim();
     const run = async () => {
+      libSearchOffsetRef.current = 0;
+      setLibSearchHasMore(false);
       if (libraryInitError) {
         setLibSearchHits([]);
         setLibProviderMeta(new Map());
@@ -1533,9 +1592,15 @@ export default function ChordsScreen() {
       setLibSearchBusy(true);
       try {
         await initSongLibrary();
-        const results = await searchProviders(q, { limit: 150, includeRemote: false });
+        const results = await searchProviders(q, {
+          limit: LIBRARY_SEARCH_PAGE_SIZE,
+          offset: 0,
+          includeRemote: false,
+        });
         if (cancelled) return;
         applyLibSearchResults(results);
+        libSearchOffsetRef.current = LIBRARY_SEARCH_PAGE_SIZE;
+        setLibSearchHasMore(results.length >= LIBRARY_SEARCH_PAGE_SIZE);
       } catch (err) {
         if (__DEV__) console.warn('[RecoTune] library search failed', err);
         if (!cancelled) applyLibSearchResults([]);
@@ -1545,7 +1610,7 @@ export default function ChordsScreen() {
     };
     const t = setTimeout(() => { void run(); }, 90);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [libSearch, librarySongs, libraryInitError, applyLibSearchResults]);
+  }, [libSearch, libraryInitError, applyLibSearchResults]);
 
   const libResults = (() => {
     const q = libSearch.trim();
@@ -1574,7 +1639,10 @@ export default function ChordsScreen() {
 
   const libCountLabel = (() => {
     const q = libSearch.trim();
-    if (q) return `${libResults.length} найдено`;
+    if (q) {
+      const suffix = libSearchHasMore ? '+' : '';
+      return `${libResults.length}${suffix} найдено`;
+    }
     if (libFavOnly) return `${libResults.length} избранных`;
     return `${libResults.length} из ${allSongs.length}`;
   })();
@@ -1597,23 +1665,20 @@ export default function ChordsScreen() {
   }
 
   function chordFetchProgressLabel(progress: OnDemandAutoProgress | null): string {
-    if (!progress) return 'Подгрузка таба… (pesni.ru → AmDm)';
+    if (!progress) return '';
     if (progress.source === 'pesni_ru') {
-      return PESNI_FETCH_STAGE_LABEL[progress.stage] ?? 'Ищем на pesni.ru…';
+      return PESNI_FETCH_STAGE_LABEL[progress.stage] ?? '';
     }
-    return CHORD_FETCH_STAGE_LABEL[progress.stage] ?? 'Ищем на AmDm…';
+    return CHORD_FETCH_STAGE_LABEL[progress.stage] ?? '';
   }
 
   function chordFetchErrorHint(e: unknown): string {
-    const msg = e instanceof ChordFetchError ? e.message : 'Подгрузка таба не удалась.';
-    return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
+    const msg = e instanceof ChordFetchError ? e.message : 'Таб не найден.';
+    return msg.length > 120 ? `${msg.slice(0, 117)}…` : msg;
   }
 
   function librarySearchEmptyHint(): string {
-    return (
-      'Ничего не найдено — проверьте написание (латиница/кириллица, раскладка). ' +
-      'Ищем по каталогу, pesni.ru, метаданным и «Мои». Полный таб подгружается автоматически после выбора песни.'
-    );
+    return 'Ничего не найдено.';
   }
 
   function libraryFavoritesEmptyHint(): string {
@@ -1683,7 +1748,7 @@ export default function ChordsScreen() {
   async function runAutoChordEnrichment(initial: SongEntry) {
     if (chordFetchLoading) return;
     setChordFetchLoading(true);
-    setChordFetchProgress({ source: 'pesni_ru', stage: 'search' });
+    setChordFetchProgress({ source: 'ultimate_guitar', stage: 'search' });
     setAutoChordFetchDone(false);
     try {
       const result = await enrichSongForPractice(initial);
@@ -1717,8 +1782,15 @@ export default function ChordsScreen() {
     await saveProviderSettings(toSave);
     setProviderSettings(toSave);
     if (libSearch.trim()) {
-      const results = await searchProviders(libSearch, { limit: 150, includeRemote: false });
+      libSearchOffsetRef.current = 0;
+      const results = await searchProviders(libSearch, {
+        limit: LIBRARY_SEARCH_PAGE_SIZE,
+        offset: 0,
+        includeRemote: false,
+      });
       applyLibSearchResults(results);
+      libSearchOffsetRef.current = LIBRARY_SEARCH_PAGE_SIZE;
+      setLibSearchHasMore(results.length >= LIBRARY_SEARCH_PAGE_SIZE);
     }
   }
 
@@ -1906,7 +1978,7 @@ export default function ChordsScreen() {
     if (!base || chordFetchLoading) return;
     const slugHint = pesniSlugFromResultId(base.id) ?? undefined;
     setChordFetchLoading(true);
-    setChordFetchProgress({ source: 'pesni_ru', stage: 'search' });
+    setChordFetchProgress({ source: 'ultimate_guitar', stage: 'search' });
     try {
       const { detail, provider } = await fetchOnDemandChordSheetAuto(
         base.artist,
@@ -2359,7 +2431,7 @@ export default function ChordsScreen() {
         </TouchableOpacity>
       </View>
       {practiceFetchHint ? (
-        <Text style={styles.practiceFetchHint} numberOfLines={5}>
+        <Text style={styles.practiceFetchHint} numberOfLines={2}>
           {practiceFetchHint}
         </Text>
       ) : null}
@@ -2370,18 +2442,13 @@ export default function ChordsScreen() {
         </Text>
       ) : null}
       {chordFetchLoading ? (
-        <View style={{ alignItems: 'center', paddingVertical: 4, gap: 4 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <ActivityIndicator size="small" color="#7c4dff" />
-            <Text style={{ color: '#666', fontSize: 10 }}>
+        <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+          <ActivityIndicator size="small" color="#7c4dff" />
+          {chordFetchProgressLabel(chordFetchProgress) ? (
+            <Text style={{ color: '#666', fontSize: 10, marginTop: 4 }}>
               {chordFetchProgressLabel(chordFetchProgress)}
             </Text>
-          </View>
-          <Text style={{ color: '#555', fontSize: 9 }} numberOfLines={2}>
-            {chordFetchProgress?.source === 'amdm'
-              ? `→ AmDm${effectiveChordFetchUrl(providerSettings) ? ` (${effectiveChordFetchUrl(providerSettings)})` : ''}`
-              : '→ pesni.ru, при ошибке — AmDm'}
-          </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -3217,6 +3284,15 @@ export default function ChordsScreen() {
             nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
+            onEndReached={() => {
+              if (libSearch.trim() && libSearchHasMore) void loadMoreLibrarySearch();
+            }}
+            onEndReachedThreshold={0.35}
+            ListFooterComponent={
+              libSearchLoadingMore ? (
+                <ActivityIndicator size="small" color="#7c4dff" style={{ marginVertical: 12 }} />
+              ) : null
+            }
             contentContainerStyle={libResults.length === 0 ? styles.libListEmptyContent : styles.libListContent}
             ListEmptyComponent={
               libSearch.trim() ? (
@@ -3331,7 +3407,7 @@ export default function ChordsScreen() {
               showsVerticalScrollIndicator
             >
             <Text style={{ color: '#666', fontSize: 11, marginBottom: 10 }}>
-              Выберите песню в поиске — таб подгрузится сам: сначала pesni.ru (HTTPS с телефона), при ошибке — AmDm через прокси на ПК в той же Wi‑Fi. Настраивать источники не нужно.
+              Таб подгружается сам: UG → AmDm (прокси на ПК) → pesni.ru.
             </Text>
             {providerSettings && (
               <>
@@ -3343,9 +3419,9 @@ export default function ChordsScreen() {
                     marginBottom: 10,
                   }}
                 >
-                  <Text style={{ color: '#9cf', fontSize: 12, fontWeight: '700' }}>Режим: авто</Text>
-                  <Text style={{ color: '#888', fontSize: 11, marginTop: 4, lineHeight: 16 }}>
-                    pesni.ru → AmDm · поиск в каталоге всегда включает pesni.ru, SQLite и метаданные
+                  <Text style={{ color: '#9cf', fontSize: 12, fontWeight: '700' }}>Авто</Text>
+                  <Text style={{ color: '#888', fontSize: 11, marginTop: 4 }}>
+                    UG → AmDm → pesni.ru
                   </Text>
                 </View>
                 <View
@@ -3501,7 +3577,7 @@ export default function ChordsScreen() {
                         size={20}
                         color={PROVIDER_BADGE_COLORS.pesni_ru}
                       />
-                      <Text style={{ color: '#ddd', marginLeft: 10 }}>Отключить pesni.ru в цепочке</Text>
+                      <Text style={{ color: '#ddd', marginLeft: 10 }}>Без pesni.ru в цепочке</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
@@ -3569,11 +3645,24 @@ export default function ChordsScreen() {
                   </>
                 ) : null}
                 <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28', opacity: 0.45 }}
-                  disabled
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                  onPress={() => {
+                    const next = {
+                      ...providerSettings,
+                      enabled: {
+                        ...providerSettings.enabled,
+                        ultimate_guitar: !providerSettings.enabled.ultimate_guitar,
+                      },
+                    };
+                    void persistProviderSettings(next);
+                  }}
                 >
-                  <Ionicons name="square-outline" size={22} color={PROVIDER_BADGE_COLORS.ultimate_guitar} />
-                  <Text style={{ color: '#ddd', marginLeft: 10, flex: 1 }}>Доп. источник (скоро)</Text>
+                  <Ionicons
+                    name={providerSettings.enabled.ultimate_guitar !== false ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={PROVIDER_BADGE_COLORS.ultimate_guitar}
+                  />
+                  <Text style={{ color: '#ddd', marginLeft: 10, flex: 1 }}>Ultimate Guitar в цепочке</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}

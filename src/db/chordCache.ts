@@ -14,7 +14,7 @@ export type ChordCachePayload = {
   difficulty: 1 | 2 | 3;
   sourceUrl?: string;
   /** Marker for SQLite / practice: on-demand fetch with verified ChordPro. */
-  lyricsSource?: 'fetch-amdm' | 'fetch-pesni-ru';
+  lyricsSource?: 'fetch-amdm' | 'fetch-ug' | 'fetch-pesni-ru';
 };
 
 function cacheKey(provider: OnDemandChordProviderId, artist: string, title: string): string {
@@ -91,9 +91,11 @@ export function chordCacheToSongDetail(
     genre:
       payload.lyricsSource === 'fetch-amdm'
         ? 'fetch-amdm'
-        : payload.lyricsSource === 'fetch-pesni-ru'
-          ? 'fetch-pesni-ru'
-          : 'Таб из интернета',
+        : payload.lyricsSource === 'fetch-ug'
+          ? 'fetch-ug'
+          : payload.lyricsSource === 'fetch-pesni-ru'
+            ? 'fetch-pesni-ru'
+            : 'Таб из интернета',
     lyrics: payload.lyrics,
     chordProVerified: true,
     provider,

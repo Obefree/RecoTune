@@ -111,10 +111,11 @@ export async function metadataTrackToSongEntry(track: MetadataTrackRow): Promise
 
 export async function searchMetadataTracks(
   query: string,
-  options?: { limit?: number },
+  options?: { limit?: number; offset?: number },
 ): Promise<MetadataSearchHit[]> {
   const db = await getSongLibraryDb();
   const limit = options?.limit ?? 80;
+  const offset = Math.max(options?.offset ?? 0, 0);
   const q = query.trim();
 
   if (!q) {
@@ -156,7 +157,7 @@ export async function searchMetadataTracks(
   if (!likeClauses.length) return [];
 
   const whereSql = `WHERE ${likeClauses.join(' AND ')}`;
-  const scanLimit = Math.min(Math.max(limit * 8, 120), 600);
+  const scanLimit = Math.min(Math.max((offset + limit) * 8, 120), 800);
   const rows = await db.getAllAsync<MetadataTrackRow & { builtin_song_id: string | null }>(
     `SELECT id, artist_id AS artistId, artist_name AS artistName, title, album, year, duration_ms AS durationMs,
             mbid, search_text AS searchText, builtin_song_id AS builtinSongId
@@ -192,7 +193,7 @@ export async function searchMetadataTracks(
     ),
   );
 
-  return hits.slice(0, limit);
+  return hits.slice(offset, offset + limit);
 }
 
 export function metadataDedupeKey(title: string, artist: string): string {

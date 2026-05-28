@@ -460,10 +460,20 @@ export async function handleChordFetchRequest(body) {
   }
 
   if (provider === 'ultimate_guitar') {
-    return {
-      status: 501,
-      payload: { error: 'Этот источник пока недоступен. Используйте provider amdm.' },
-    };
+    const { fetchUgChordPro } = await import('./ugFetch.mjs');
+    const result = await fetchUgChordPro(artist, title);
+    if (result.stub || !result.chordPro?.trim()) {
+      return {
+        status: result.code === 'blocked' ? 503 : 404,
+        payload: {
+          error: result.error ?? 'Таб не найден на Ultimate Guitar',
+          code: result.code,
+          stub: true,
+          sourceUrl: result.sourceUrl,
+        },
+      };
+    }
+    return { status: 200, payload: result };
   }
 
   if (provider !== 'amdm') {

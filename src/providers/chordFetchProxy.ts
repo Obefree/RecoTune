@@ -35,11 +35,12 @@ export type ChordFetchStage = 'connect' | 'search' | 'verify' | 'cache';
 
 export type ChordFetchProgress = (stage: ChordFetchStage, detail?: string) => void;
 
+/** Empty = UI shows spinner only. */
 export const CHORD_FETCH_STAGE_LABEL: Record<ChordFetchStage, string> = {
-  connect: 'Подключаемся к прокси…',
-  search: 'Ищем на AmDm…',
-  verify: 'Проверяем текст и аккорды…',
-  cache: 'Сохраняем в библиотеку…',
+  connect: '',
+  search: '',
+  verify: '',
+  cache: '',
 };
 
 export const CHORD_FETCH_TIMEOUT_MS = 15_000;
@@ -136,14 +137,12 @@ export async function postChordFetchProxy(
       /* not JSON */
     }
     const hint =
-      res.status === 501
-        ? ' Этот источник пока недоступен — используйте «Табы онлайн».'
-        : res.status === 429
-          ? ' Слишком много запросов — повторите позже.'
-          : ` ${chordFetchDevProxyErrorSuffix()}`;
-    throw new ChordFetchError(
-      detail || `Подгрузка таба не удалась (HTTP ${res.status}).${hint}`,
-    );
+      res.status === 429
+        ? ' Слишком много запросов.'
+        : res.status === 503
+          ? ' Источник временно недоступен.'
+          : '';
+    throw new ChordFetchError(detail || `Ошибка HTTP ${res.status}.${hint}`);
   }
 
   const contentType = res.headers.get('content-type') ?? '';
@@ -176,6 +175,7 @@ function proxyResponseToPayload(
   raw: ChordProxyResponse,
   artist: string,
   title: string,
+  provider: OnDemandChordProviderId = 'amdm',
 ): ChordCachePayload {
   const body = (raw.chordPro ?? raw.text ?? '').trim();
   if (!body) {
@@ -200,7 +200,7 @@ function proxyResponseToPayload(
     bpm: parsed.bpm,
     difficulty: parsed.difficulty,
     sourceUrl: raw.sourceUrl,
-    lyricsSource: 'fetch-amdm',
+    lyricsSource: provider === 'ultimate_guitar' ? 'fetch-ug' : 'fetch-amdm',
   };
 }
 
@@ -228,7 +228,12 @@ export async function probeChordFetchEndpoint(proxyUrl: string): Promise<string>
   const url = proxyUrl.trim();
   if (!url) return 'URL не задан';
   try {
-    const raw = await postChordFetchProxy('amdm', 'Radiohead', 'Creep', url);
+    let raw: ChordProxyResponse;
+    try {
+      raw = await postChordFetchProxy('ultimate_guitar', 'Radiohead', 'Creep', url);
+    } catch {
+      raw = await postChordFetchProxy('amdm', 'Radiohead', 'Creep', url);
+    }
     const body = (raw.chordPro ?? raw.text ?? '').trim();
     if (!body || isChordProStubBody(body)) return 'Ответ пустой или заглушка';
     return `OK — ${body.split('\n').length} строк`;
@@ -253,12 +258,6 @@ export async function fetchOnDemandChordSheet(
     throw new ChordFetchError(`Подгрузка табов недоступна. ${chordFetchSetupHint()}`);
   }
 
-  if (provider === 'ultimate_guitar') {
-    throw new ChordFetchError(
-      'Ultimate Guitar пока недоступен — используйте «Таб из интернета» (AmDm).',
-    );
-  }
-
   const id = stableOnDemandUserId(provider, title, artist);
   const cached = await getChordCache(provider, artist, title);
   if (cached) {
@@ -275,7 +274,7 @@ export async function fetchOnDemandChordSheet(
     onProgress?.('search', `${v.artist} — ${v.title}`);
     const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl);
     onProgress?.('verify');
-    const payload = proxyResponseToPayload(raw, v.artist, v.title);
+    const payload = proxyResponseToPayload(raw, v.artist, v.title, provider);
     if (payload.lyrics && isChordProStubBody(payload.lyrics)) {
       throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
     }

@@ -8,8 +8,8 @@ import { searchMetadataTracks } from './metadataDb';
 import { isBundledMetadataSeeded } from './metadataSync';
 import type { MetadataTrackRow } from './types';
 
-/** Max hits returned from bundled chunk scan (UI + merge). */
-export const METADATA_SEARCH_RESULT_CAP = 50;
+/** Max hits per metadata page (UI + merge). */
+export const METADATA_SEARCH_RESULT_CAP = 150;
 
 /** Chunk scan starts at this query length; shorter queries use builtin SQLite only. */
 export const METADATA_MIN_CHUNK_QUERY_LEN = 2;
@@ -22,15 +22,19 @@ export const BUNDLED_CATALOG_HINT = METADATA_BUNDLED_TOTAL_HINT;
  */
 export async function searchBundledMetadata(
   query: string,
-  options?: { limit?: number },
+  options?: { limit?: number; offset?: number },
 ): Promise<MetadataSearchHit[]> {
-  const limit = Math.min(options?.limit ?? METADATA_SEARCH_RESULT_CAP, METADATA_SEARCH_RESULT_CAP);
+  const limit = Math.min(
+    options?.limit ?? METADATA_SEARCH_RESULT_CAP,
+    METADATA_SEARCH_RESULT_CAP,
+  );
+  const offset = Math.max(options?.offset ?? 0, 0);
   const q = query.trim();
   if (q.length < METADATA_MIN_CHUNK_QUERY_LEN) return [];
 
   const qNorm = normalizeSearchText(q);
   const hits: MetadataSearchHit[] = [];
-  const candidateCap = limit * 4;
+  const candidateCap = (offset + limit) * 4;
 
   for (const chunk of BUNDLED_METADATA_CHUNKS) {
     for (const t of chunk.tracks) {
@@ -62,34 +66,35 @@ export async function searchBundledMetadata(
     ),
   );
 
-  const top = hits.slice(0, limit);
-  for (const h of top) {
+  const page = hits.slice(offset, offset + limit);
+  for (const h of page) {
     if (h.builtinSongId) {
       h.linkedSong = await getSongById(h.builtinSongId);
       if (h.linkedSong) h.score += 15;
     }
   }
 
-  return top;
+  return page;
 }
 
 /** Prefer SQLite when full offline index exists; otherwise scan bundled chunks. */
 export async function searchMetadataCatalog(
   query: string,
-  options?: { limit?: number },
+  options?: { limit?: number; offset?: number },
 ): Promise<MetadataSearchHit[]> {
   const q = query.trim();
   if (!q) return [];
 
-  const limit = options?.limit ?? METADATA_SEARCH_RESULT_CAP;
+  const limit = Math.min(options?.limit ?? METADATA_SEARCH_RESULT_CAP, METADATA_SEARCH_RESULT_CAP);
+  const offset = Math.max(options?.offset ?? 0, 0);
   const count = await getMetadataTrackCount();
   const seeded = await isBundledMetadataSeeded();
   const useSqlite = seeded && count >= Math.floor(METADATA_BUNDLED_TOTAL_HINT * 0.9);
 
   if (useSqlite) {
-    const sqliteHits = await searchMetadataTracks(q, { limit });
+    const sqliteHits = await searchMetadataTracks(q, { limit, offset });
     if (sqliteHits.length > 0) return sqliteHits;
-    return searchBundledMetadata(q, { limit });
+    return searchBundledMetadata(q, { limit, offset });
   }
-  return searchBundledMetadata(q, { limit });
+  return searchBundledMetadata(q, { limit, offset });
 }

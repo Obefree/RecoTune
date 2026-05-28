@@ -39,10 +39,10 @@ export async function ensureSongInUserLibrary(
         ? song.genre
         : provider === 'amdm'
           ? 'fetch-amdm'
-          : provider === 'pesni_ru'
-            ? 'fetch-pesni-ru'
-            : provider === 'ultimate_guitar'
-              ? 'Таб из интернета'
+          : provider === 'ultimate_guitar'
+            ? 'fetch-ug'
+            : provider === 'pesni_ru'
+              ? 'fetch-pesni-ru'
               : 'ChordPro',
   };
   await upsertUserSong(persisted);

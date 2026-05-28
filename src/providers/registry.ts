@@ -79,8 +79,12 @@ async function mergeMetadataHits(
   map: Map<string, SongSearchResult>,
   query: string,
   limit: number,
+  offset: number,
 ): Promise<void> {
-  const metaHits = await searchMetadataCatalog(query, { limit: Math.min(limit, 80) });
+  const metaHits = await searchMetadataCatalog(query, {
+    limit: Math.min(limit, 150),
+    offset,
+  });
   for (const h of metaHits) {
     const song = await metadataTrackToSongEntry(h);
     const resolved = resolveSongEntry(song);
@@ -118,6 +122,8 @@ function merge(
 
  */
 
+export const LIBRARY_SEARCH_PAGE_SIZE = 50;
+
 export async function searchProviders(
 
   query: string,
@@ -126,21 +132,28 @@ export async function searchProviders(
 
     limit?: number;
 
+    offset?: number;
+
     includeRemote?: boolean;
+
+    /** pesni.ru hits — only on first page by default (low priority). */
+    includePesni?: boolean;
 
   },
 
 ): Promise<SongSearchResult[]> {
   await initSongLibrary();
 
-  const limit = options?.limit ?? 80;
+  const pageSize = options?.limit ?? LIBRARY_SEARCH_PAGE_SIZE;
+  const offset = Math.max(options?.offset ?? 0, 0);
+  const fetchCap = offset + pageSize;
 
   const q = query.trim();
 
   const map = new Map<string, SongSearchResult>();
 
   if (!q) {
-    const all = await searchSongsSmart('', { limit });
+    const all = await searchSongsSmart('', { limit: fetchCap });
     for (const h of all) {
       const provider: ProviderId = h.id.startsWith('custom_') ? 'user' : 'builtin';
       merge(map, {
@@ -153,10 +166,10 @@ export async function searchProviders(
         song: h,
       });
     }
-    return [...map.values()].slice(0, limit);
+    return [...map.values()].slice(offset, fetchCap);
   }
 
-  const smartHits = await searchSongsSmart(q, { limit });
+  const smartHits = await searchSongsSmart(q, { limit: fetchCap });
 
   for (const h of smartHits) {
 
@@ -176,11 +189,12 @@ export async function searchProviders(
     });
   }
 
-  await mergeMetadataHits(map, q, limit);
+  await mergeMetadataHits(map, q, pageSize, offset);
 
-  if (q.length >= 2) {
+  const includePesni = options?.includePesni !== false && offset === 0;
+  if (includePesni && q.length >= 2) {
     try {
-      const pesniLimit = Math.min(limit, 50);
+      const pesniLimit = Math.min(pageSize, 50);
       const hits = await pesniRuProvider.search(q, pesniLimit);
       for (const hit of hits) merge(map, hit);
     } catch {
@@ -220,7 +234,7 @@ export async function searchProviders(
 
   );
 
-  return sorted.slice(0, limit);
+  return sorted.slice(offset, fetchCap);
 }
 
 

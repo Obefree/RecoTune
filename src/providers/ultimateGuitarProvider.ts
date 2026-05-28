@@ -1,11 +1,14 @@
-import { fetchOnDemandChordSheet } from './chordFetchProxy';
+import {
+  fetchOnDemandChordSheet,
+  type ChordFetchProgress,
+} from './chordFetchProxy';
 import type { ProviderAttribution, SongDetail } from './types';
 
 export function ultimateGuitarAttribution(): ProviderAttribution {
   return {
-    label: 'Доп. источник (скоро)',
+    label: 'Ultimate Guitar',
     url: 'https://www.ultimate-guitar.com/',
-    licenseNote: 'Пока недоступен в приложении.',
+    licenseNote: 'Подгрузка через прокси на ПК (npm run dev-proxy).',
   };
 }
 
@@ -13,6 +16,13 @@ export function ultimateGuitarAttribution(): ProviderAttribution {
 export async function fetchUltimateGuitarChordSheet(
   artist: string,
   title: string,
+  onProgress?: ChordFetchProgress,
 ): Promise<SongDetail> {
-  return fetchOnDemandChordSheet('ultimate_guitar', artist, title, ultimateGuitarAttribution);
+  return fetchOnDemandChordSheet(
+    'ultimate_guitar',
+    artist,
+    title,
+    ultimateGuitarAttribution,
+    onProgress,
+  );
 }

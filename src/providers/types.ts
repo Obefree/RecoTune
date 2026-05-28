@@ -131,7 +131,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
 
   pesni_ru: 'Табы с pesni.ru',
 
-  ultimate_guitar: 'Доп. источник (скоро)',
+  ultimate_guitar: 'Ultimate Guitar',
 
 };
 

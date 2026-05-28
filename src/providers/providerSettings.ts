@@ -23,10 +23,10 @@ export type ProviderSettings = {
   /** Legacy: dev proxy URL hint dismissed (auto-fill via autoChordProxy). */
   devProxyUrlHintDismissed?: boolean;
   /**
-   * On-demand tab chain: `auto` = pesni.ru then AmDm.
-   * `pesni_ru` / `amdm` — only in collapsed advanced settings.
+   * On-demand tab chain: `auto` = Ultimate Guitar → AmDm → pesni.ru.
+   * Single-source overrides — only in collapsed advanced settings.
    */
-  onDemandChordSource: 'auto' | 'pesni_ru' | 'amdm';
+  onDemandChordSource: 'auto' | 'ultimate_guitar' | 'pesni_ru' | 'amdm';
 };
 
 const DEFAULTS: ProviderSettings = {
@@ -75,7 +75,9 @@ export async function getProviderSettings(): Promise<ProviderSettings> {
         ? 'amdm'
         : raw.onDemandChordSource === 'pesni_ru'
           ? 'pesni_ru'
-          : 'auto',
+          : raw.onDemandChordSource === 'ultimate_guitar'
+            ? 'ultimate_guitar'
+            : 'auto',
   };
   return cache;
 }

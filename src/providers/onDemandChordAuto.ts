@@ -14,11 +14,13 @@ import {
   type PesniFetchStage,
 } from './pesniRuProvider';
 import { getProviderSettings, type ProviderSettings } from './providerSettings';
+import { fetchUltimateGuitarChordSheet } from './ultimateGuitarProvider';
 import type { OnDemandChordProviderId, SongDetail } from './types';
 
 export type OnDemandAutoProgress =
-  | { source: 'pesni_ru'; stage: PesniFetchStage }
-  | { source: 'amdm'; stage: ChordFetchStage };
+  | { source: 'ultimate_guitar'; stage: ChordFetchStage }
+  | { source: 'amdm'; stage: ChordFetchStage }
+  | { source: 'pesni_ru'; stage: PesniFetchStage };
 
 export type OnDemandChainAttempt = {
   source: OnDemandChordProviderId;
@@ -34,7 +36,9 @@ export type OnDemandAutoFetchResult = {
 };
 
 function sourceLabel(source: OnDemandChordProviderId): string {
-  return source === 'pesni_ru' ? 'pesni.ru' : 'AmDm';
+  if (source === 'ultimate_guitar') return 'UG';
+  if (source === 'pesni_ru') return 'pesni.ru';
+  return 'AmDm';
 }
 
 export function shortOnDemandError(e: unknown, source: OnDemandChordProviderId): string {
@@ -42,39 +46,32 @@ export function shortOnDemandError(e: unknown, source: OnDemandChordProviderId):
     if (e instanceof PesniRuError) return e.message;
     return pesniRuErrorMessage(e);
   }
-  if (e instanceof ChordFetchError) return e.message;
-  return 'Подгрузка не удалась';
+  if (e instanceof ChordFetchError) {
+    const msg = e.message.trim();
+    if (msg.length > 120) return `${msg.slice(0, 117)}…`;
+    return msg;
+  }
+  return 'Не удалось';
 }
 
-/** One Russian message listing what was tried (no stubs). */
+/** One short Russian message when every source failed. */
 export function formatAutoChainFailureMessage(attempts: OnDemandChainAttempt[]): string {
   const tried = attempts.filter(a => !a.skipped && a.error.trim());
-  const skipped = attempts.filter(a => a.skipped);
-
   if (tried.length === 0) {
-    const skipLines = skipped.map(
-      a => `${sourceLabel(a.source)} (${a.skipReason ?? 'недоступен'})`,
-    );
-    return skipLines.length
-      ? `Таб не подгружен: ${skipLines.join('; ')}.`
-      : 'Таб не подгружен — проверьте интернет и написание песни.';
+    return 'Таб не найден.';
   }
-
-  const triedPart = tried.map(a => `${sourceLabel(a.source)}: ${a.error}`).join('; ');
-  let msg = `Таб не найден. Пробовали: ${triedPart}.`;
-  if (skipped.length) {
-    const skipPart = skipped
-      .map(a => `${sourceLabel(a.source)} — ${a.skipReason ?? 'пропущен'}`)
-      .join('; ');
-    msg += ` Не пробовали: ${skipPart}.`;
+  if (tried.length === 1) {
+    return `Таб не найден: ${tried[0].error}`;
   }
-  return msg;
+  const parts = tried.map(a => `${sourceLabel(a.source)} — ${a.error}`).join('; ');
+  return `Таб не найден (${parts}).`;
 }
 
 function resolveChainOrder(settings: ProviderSettings): OnDemandChordProviderId[] {
+  if (settings.onDemandChordSource === 'ultimate_guitar') return ['ultimate_guitar'];
   if (settings.onDemandChordSource === 'amdm') return ['amdm'];
   if (settings.onDemandChordSource === 'pesni_ru') return ['pesni_ru'];
-  return ['pesni_ru', 'amdm'];
+  return ['ultimate_guitar', 'amdm', 'pesni_ru'];
 }
 
 function canTrySource(
@@ -83,6 +80,10 @@ function canTrySource(
   proxyUrl: string,
 ): boolean {
   if (source === 'pesni_ru') return settings.enabled.pesni_ru !== false;
+  if (source === 'ultimate_guitar') {
+    if (settings.enabled.ultimate_guitar === false) return false;
+    return !!proxyUrl;
+  }
   if (settings.enabled.amdm === false) return false;
   return !!proxyUrl;
 }
@@ -92,16 +93,21 @@ function skipReasonFor(
   source: OnDemandChordProviderId,
   proxyUrl: string,
 ): string {
-  if (source === 'pesni_ru') return 'отключено в расширенных настройках';
-  if (settings.enabled.amdm === false) return 'отключено в расширенных настройках';
-  if (!proxyUrl) {
-    return 'прокси на ПК не найден (запустите npm run dev-proxy, одна Wi‑Fi с телефоном)';
+  if (source === 'pesni_ru' && settings.enabled.pesni_ru === false) {
+    return 'отключено';
+  }
+  if (source === 'ultimate_guitar' && settings.enabled.ultimate_guitar === false) {
+    return 'отключено';
+  }
+  if (source === 'amdm' && settings.enabled.amdm === false) return 'отключено';
+  if ((source === 'amdm' || source === 'ultimate_guitar') && !proxyUrl) {
+    return 'нет прокси';
   }
   return 'недоступен';
 }
 
 /**
- * Auto on-demand tab: pesni.ru (HTTPS) → AmDm (Metro :8787), unless advanced mode forces one source.
+ * Auto on-demand tab: Ultimate Guitar → AmDm (proxy) → pesni.ru (HTTPS fallback).
  */
 export async function fetchOnDemandChordSheetAuto(
   artist: string,
@@ -140,9 +146,13 @@ export async function fetchOnDemandChordSheetAuto(
               (stage: PesniFetchStage) => options?.onProgress?.({ source: 'pesni_ru', stage }),
               options?.slugHint,
             )
-          : await fetchAmdmChordSheet(artist, title, (stage: ChordFetchStage) => {
-              options?.onProgress?.({ source: 'amdm', stage });
-            });
+          : source === 'ultimate_guitar'
+            ? await fetchUltimateGuitarChordSheet(artist, title, (stage: ChordFetchStage) => {
+                options?.onProgress?.({ source: 'ultimate_guitar', stage });
+              })
+            : await fetchAmdmChordSheet(artist, title, (stage: ChordFetchStage) => {
+                options?.onProgress?.({ source: 'amdm', stage });
+              });
 
       return { detail, provider: source, attempts };
     } catch (e) {
