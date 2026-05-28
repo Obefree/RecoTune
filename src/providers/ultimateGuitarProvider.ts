@@ -17,6 +17,7 @@ export async function fetchUltimateGuitarChordSheet(
   artist: string,
   title: string,
   onProgress?: ChordFetchProgress,
+  options?: { quiet?: boolean },
 ): Promise<SongDetail> {
   return fetchOnDemandChordSheet(
     'ultimate_guitar',
@@ -24,5 +25,6 @@ export async function fetchUltimateGuitarChordSheet(
     title,
     ultimateGuitarAttribution,
     onProgress,
+    options,
   );
 }

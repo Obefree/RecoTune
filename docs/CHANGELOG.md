@@ -6,6 +6,8 @@
 
 ### 2026-05-28
 
+- **Chords / авто полностью:** probe прокси, цепочка AmDm → UG → pesni.ru с телефона, `npm start` поднимает dev-stack, упрощён ⚙. См. [docs/features/2026-05-28-auto-chord-full-automatic.md](./features/2026-05-28-auto-chord-full-automatic.md).
+- **Chords / UG:** табы через vendored [ultimate-api](https://github.com/joncardasis/ultimate-api) (Flask `:5000`), поиск в Node; `npm run dev-stack`. См. [docs/features/2026-05-28-ultimate-api-ug-integration.md](./features/2026-05-28-ultimate-api-ug-integration.md).
 - **Chords / dev-proxy:** fix chord-marker validation (`[G]`, `[Am]`), перезапуск прокси после pull, dev-ошибки от API. См. [docs/features/2026-05-28-chord-fetch-validate-restart.md](./features/2026-05-28-chord-fetch-validate-restart.md).
 - **Chords / AmDm + UG:** авто-табы AmDm → Ultimate Guitar, pesni.ru выкл по умолчанию (лимиты API), короткое «Не найдено», улучшен scoring AmDm. См. [docs/features/2026-05-28-amdm-ug-pesni-off.md](./features/2026-05-28-amdm-ug-pesni-off.md).
 - **Chords / UG + поиск:** парсер UG в `dev-proxy`, подгрузка результатов поиска при скролле. См. [docs/features/2026-05-28-ug-priority-search-scroll.md](./features/2026-05-28-ug-priority-search-scroll.md).

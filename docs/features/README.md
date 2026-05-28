@@ -11,6 +11,8 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-28 | Полностью авто табы + chords:dev | [2026-05-28-auto-chord-full-automatic.md](./2026-05-28-auto-chord-full-automatic.md) |
+| 2026-05-28 | UG: ultimate-api sidecar + dev-stack | [2026-05-28-ultimate-api-ug-integration.md](./2026-05-28-ultimate-api-ug-integration.md) |
 | 2026-05-28 | Chord fetch: validation, restart proxy | [2026-05-28-chord-fetch-validate-restart.md](./2026-05-28-chord-fetch-validate-restart.md) |
 | 2026-05-28 | AmDm → UG, pesni выкл, «Не найдено» | [2026-05-28-amdm-ug-pesni-off.md](./2026-05-28-amdm-ug-pesni-off.md) |
 | 2026-05-28 | UG → AmDm, поиск со скроллом, короткий UI | [2026-05-28-ug-priority-search-scroll.md](./2026-05-28-ug-priority-search-scroll.md) |

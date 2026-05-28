@@ -12,7 +12,7 @@ export type ResolvedChordFetchUrl = {
 };
 
 /** One-liner for errors / alerts — copy-friendly. */
-export const CHORD_FETCH_DEV_PROXY_CMD = 'npm run dev-proxy';
+export const CHORD_FETCH_DEV_PROXY_CMD = 'npm run chords:dev';
 
 export type EffectiveChordFetchOptions = {
   /** User manually saved URL in ⚙ (do not override Vercel with Metro). */
@@ -217,10 +217,9 @@ function readExpoDebuggerHost(): string | null {
 /** Short hint when chord-fetch endpoint is not configured. */
 export function chordFetchSetupHint(): string {
   return (
-    'Табы с AmDm — через прокси на компьютере.\n' +
-    `1. На ПК в папке RecoTune: ${CHORD_FETCH_DEV_PROXY_CMD}\n` +
-    '2. Телефон и ПК в одной Wi‑Fi, приложение через Expo Go\n' +
-    '3. ⚙ → Подставить авто (http://IP-ПК:8787/fetch)'
+    'Табы подгружаются автоматически при выборе песни.\n' +
+    'AmDm и Ultimate Guitar — через прокси на ПК (npm start поднимет его сам).\n' +
+    'Без ПК — тихий fallback на pesni.ru с телефона.'
   );
 }
 

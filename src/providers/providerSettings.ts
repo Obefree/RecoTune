@@ -23,8 +23,8 @@ export type ProviderSettings = {
   /** Legacy: dev proxy URL hint dismissed (auto-fill via autoChordProxy). */
   devProxyUrlHintDismissed?: boolean;
   /**
-   * On-demand tab chain: `auto` = AmDm → Ultimate Guitar (dev-proxy).
-   * pesni.ru — только если `enabled.pesni_ru` (по умолчанию выкл).
+   * On-demand tab chain: `auto` = AmDm → Ultimate Guitar → pesni.ru (phone fallback).
+   * pesni.ru in search — only if `enabled.pesni_ru`; in auto chain — always last fallback.
    */
   onDemandChordSource: 'auto' | 'ultimate_guitar' | 'pesni_ru' | 'amdm';
 };

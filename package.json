@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
-    "start": "expo start",
+    "start": "node tools/chord-fetch/chords-dev.mjs && expo start",
+    "start:expo": "expo start",
     "start:offline": "expo start --offline -c --port 8088",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -12,6 +13,8 @@
     "verify-metadata-search": "node tools/verify-metadata-search.mjs",
     "verify-chord-normalize": "node tools/verify-chord-normalize.mjs",
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch",
+    "dev-stack": "npm run dev-stack --prefix tools/chord-fetch",
+    "chords:dev": "node tools/chord-fetch/chords-dev.mjs",
     "test-chord-fetch": "node tools/chord-fetch/test-endpoint.mjs"
   },
   "dependencies": {

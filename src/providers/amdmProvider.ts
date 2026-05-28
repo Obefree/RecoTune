@@ -17,6 +17,7 @@ export async function fetchAmdmChordSheet(
   artist: string,
   title: string,
   onProgress?: ChordFetchProgress,
+  options?: { quiet?: boolean },
 ): Promise<SongDetail> {
-  return fetchOnDemandChordSheet('amdm', artist, title, amdmAttribution, onProgress);
+  return fetchOnDemandChordSheet('amdm', artist, title, amdmAttribution, onProgress, options);
 }

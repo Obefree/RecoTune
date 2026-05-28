@@ -44,6 +44,8 @@ export const CHORD_FETCH_STAGE_LABEL: Record<ChordFetchStage, string> = {
 };
 
 export const CHORD_FETCH_TIMEOUT_MS = 15_000;
+/** Quick probe before AmDm/UG — skip proxy chain fast when PC stack is down. */
+export const CHORD_FETCH_PROBE_TIMEOUT_MS = 3_500;
 
 function chordFetchNotFoundMessage(serverDetail?: string): string {
   const detail = serverDetail?.trim();
@@ -57,6 +59,7 @@ async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs = CHORD_FETCH_TIMEOUT_MS,
+  options?: { quiet?: boolean },
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -64,11 +67,53 @@ async function fetchWithTimeout(
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (e) {
     if (controller.signal.aborted) {
+      if (options?.quiet) {
+        throw new ChordFetchError('Не найдено');
+      }
+      const devSuffix =
+        typeof __DEV__ !== 'undefined' && __DEV__ ? ` ${chordFetchDevProxyErrorSuffix()}` : '';
       throw new ChordFetchError(
-        `Превышено время ожидания (${Math.round(timeoutMs / 1000)} с). ${chordFetchDevProxyErrorSuffix()}`,
+        `Превышено время ожидания (${Math.round(timeoutMs / 1000)} с).${devSuffix}`,
       );
     }
+    if (options?.quiet) {
+      throw new ChordFetchError('Не найдено');
+    }
     throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function healthUrlFromProxyFetchUrl(proxyUrl: string): string {
+  const trimmed = proxyUrl.trim().replace(/\/+$/, '');
+  if (/\/fetch$/i.test(trimmed)) {
+    return trimmed.replace(/\/fetch$/i, '/health');
+  }
+  try {
+    const u = new URL(trimmed);
+    u.pathname = '/health';
+    return u.href;
+  } catch {
+    return `${trimmed}/health`;
+  }
+}
+
+/** GET /health — fast check whether dev-proxy (or compatible server) is reachable. */
+export async function isChordFetchProxyReachable(
+  proxyUrl: string,
+  timeoutMs = CHORD_FETCH_PROBE_TIMEOUT_MS,
+): Promise<boolean> {
+  const url = proxyUrl.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+  const healthUrl = healthUrlFromProxyFetchUrl(url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(healthUrl, { method: 'GET', signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
   } finally {
     clearTimeout(timer);
   }
@@ -107,6 +152,7 @@ export async function postChordFetchProxy(
   artist: string,
   title: string,
   proxyUrl: string,
+  options?: { quiet?: boolean; timeoutMs?: number },
 ): Promise<ChordProxyResponse> {
   const url = proxyUrl.trim();
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -115,25 +161,33 @@ export async function postChordFetchProxy(
 
   let res: Response;
   try {
-    res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain' },
-      body: JSON.stringify({
-        provider,
-        artist: artist.trim(),
-        title: title.trim(),
-      }),
-    });
+    res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain' },
+        body: JSON.stringify({
+          provider,
+          artist: artist.trim(),
+          title: title.trim(),
+        }),
+      },
+      options?.timeoutMs ?? CHORD_FETCH_TIMEOUT_MS,
+      { quiet: options?.quiet },
+    );
   } catch (e) {
     if (e instanceof ChordFetchError) throw e;
+    if (options?.quiet) {
+      throw new ChordFetchError('Не найдено');
+    }
     const msg = e instanceof Error ? e.message : '';
     const cleartextHint =
       proxyUrl.startsWith('http://') && /Network request failed|cleartext/i.test(msg)
         ? ' Проверьте Expo Go и usesCleartextTraffic в сборке.'
         : '';
-    throw new ChordFetchError(
-      `Не удалось подгрузить таб.${cleartextHint} ${chordFetchDevProxyErrorSuffix()}`,
-    );
+    const devSuffix =
+      typeof __DEV__ !== 'undefined' && __DEV__ ? ` ${chordFetchDevProxyErrorSuffix()}` : '';
+    throw new ChordFetchError(`Не удалось подгрузить таб.${cleartextHint}${devSuffix}`);
   }
 
   if (!res.ok) {
@@ -263,6 +317,7 @@ export async function fetchOnDemandChordSheet(
   title: string,
   attribution: () => ProviderAttribution,
   onProgress?: ChordFetchProgress,
+  options?: { quiet?: boolean },
 ): Promise<SongDetail> {
   await ensureAutoChordProxySettings();
   const settings = await getProviderSettings();
@@ -287,7 +342,9 @@ export async function fetchOnDemandChordSheet(
   const tryVariant = async (v: { artist: string; title: string }) => {
     onProgress?.('connect');
     onProgress?.('search', `${v.artist} — ${v.title}`);
-    const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl);
+    const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl, {
+      quiet: options?.quiet,
+    });
     onProgress?.('verify');
     const payload = proxyResponseToPayload(raw, v.artist, v.title, provider);
     if (payload.lyrics && isChordProStubBody(payload.lyrics)) {

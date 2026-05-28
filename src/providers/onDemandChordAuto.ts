@@ -2,7 +2,7 @@ import { ensureAutoChordProxySettings } from './autoChordProxy';
 import { fetchAmdmChordSheet } from './amdmProvider';
 import {
   ChordFetchError,
-  type ChordFetchProgress,
+  isChordFetchProxyReachable,
   type ChordFetchStage,
 } from './chordFetchProxy';
 import { getEffectiveChordFetchUrl } from './chordFetchUrl';
@@ -35,75 +35,65 @@ export type OnDemandAutoFetchResult = {
   attempts: OnDemandChainAttempt[];
 };
 
-function sourceLabel(source: OnDemandChordProviderId): string {
-  if (source === 'ultimate_guitar') return 'UG';
-  if (source === 'pesni_ru') return 'pesni.ru';
-  return 'AmDm';
-}
-
 export function shortOnDemandError(e: unknown, source: OnDemandChordProviderId): string {
   if (source === 'pesni_ru') {
-    if (e instanceof PesniRuError) return e.message;
+    if (e instanceof PesniRuError) {
+      const msg = e.message.trim();
+      return msg.length > 80 ? 'Не найдено' : msg;
+    }
     return pesniRuErrorMessage(e);
   }
   if (e instanceof ChordFetchError) {
-    const msg = e.message.trim();
-    if (msg.length > 120) return `${msg.slice(0, 117)}…`;
-    return msg;
+    return 'Не найдено';
   }
-  return 'Не удалось';
+  return 'Не найдено';
 }
 
 /** One short Russian message when every source failed. */
-export function formatAutoChainFailureMessage(attempts: OnDemandChainAttempt[]): string {
-  const tried = attempts.filter(a => !a.skipped && a.error.trim());
-  const skippedProxy = attempts.filter(
-    a =>
-      a.skipped &&
-      (a.source === 'amdm' || a.source === 'ultimate_guitar') &&
-      a.skipReason?.includes('прокси'),
-  );
-  if (skippedProxy.length >= 1 && tried.length === 0) {
-    return 'Запустите npm run dev-proxy на ПК (одна Wi‑Fi с телефоном).';
-  }
-
-  const failedAmdm = tried.some(a => a.source === 'amdm');
-  const failedUg = tried.some(a => a.source === 'ultimate_guitar');
-  if (failedAmdm && failedUg) return 'Не найдено';
-  if (failedAmdm || failedUg) return 'Не найдено';
-
-  if (tried.length === 0) return 'Не найдено';
-  return tried[0].error.length > 80 ? 'Не найдено' : tried[0].error;
+export function formatAutoChainFailureMessage(_attempts: OnDemandChainAttempt[]): string {
+  return 'Не найдено';
 }
 
 function resolveChainOrder(settings: ProviderSettings): OnDemandChordProviderId[] {
   if (settings.onDemandChordSource === 'ultimate_guitar') return ['ultimate_guitar'];
   if (settings.onDemandChordSource === 'amdm') return ['amdm'];
   if (settings.onDemandChordSource === 'pesni_ru') return ['pesni_ru'];
-  return ['amdm', 'ultimate_guitar'];
+  return ['amdm', 'ultimate_guitar', 'pesni_ru'];
+}
+
+function isAutoMode(settings: ProviderSettings): boolean {
+  return settings.onDemandChordSource === 'auto';
 }
 
 function canTrySource(
   settings: ProviderSettings,
   source: OnDemandChordProviderId,
   proxyUrl: string,
+  proxyReachable: boolean,
 ): boolean {
-  if (source === 'pesni_ru') return settings.enabled.pesni_ru === true;
+  if (source === 'pesni_ru') {
+    if (settings.onDemandChordSource === 'pesni_ru') return true;
+    if (isAutoMode(settings)) return true;
+    return settings.enabled.pesni_ru === true;
+  }
   if (source === 'ultimate_guitar') {
     if (settings.enabled.ultimate_guitar === false) return false;
-    return !!proxyUrl;
+    return !!proxyUrl && proxyReachable;
   }
   if (settings.enabled.amdm === false) return false;
-  return !!proxyUrl;
+  return !!proxyUrl && proxyReachable;
 }
 
 function skipReasonFor(
   settings: ProviderSettings,
   source: OnDemandChordProviderId,
   proxyUrl: string,
+  proxyReachable: boolean,
 ): string {
-  if (source === 'pesni_ru' && settings.enabled.pesni_ru === false) {
-    return 'отключено';
+  if (source === 'pesni_ru') {
+    if (settings.onDemandChordSource === 'pesni_ru') return 'недоступен';
+    if (isAutoMode(settings)) return 'пропущен';
+    if (settings.enabled.pesni_ru === false) return 'отключено';
   }
   if (source === 'ultimate_guitar' && settings.enabled.ultimate_guitar === false) {
     return 'отключено';
@@ -112,11 +102,14 @@ function skipReasonFor(
   if ((source === 'amdm' || source === 'ultimate_guitar') && !proxyUrl) {
     return 'нет прокси';
   }
+  if ((source === 'amdm' || source === 'ultimate_guitar') && !proxyReachable) {
+    return 'прокси недоступен';
+  }
   return 'недоступен';
 }
 
 /**
- * Auto on-demand tab: AmDm → Ultimate Guitar (dev-proxy). pesni.ru — только если явно включён.
+ * Auto on-demand tab: AmDm → Ultimate Guitar (proxy) → pesni.ru (silent phone fallback).
  */
 export async function fetchOnDemandChordSheetAuto(
   artist: string,
@@ -132,16 +125,18 @@ export async function fetchOnDemandChordSheetAuto(
     userExplicit: settings.chordFetchProxyUserSet === true,
   });
 
+  const proxyReachable = proxyUrl ? await isChordFetchProxyReachable(proxyUrl) : false;
+
   const chain = resolveChainOrder(settings);
   const attempts: OnDemandChainAttempt[] = [];
 
   for (const source of chain) {
-    if (!canTrySource(settings, source, proxyUrl)) {
+    if (!canTrySource(settings, source, proxyUrl, proxyReachable)) {
       attempts.push({
         source,
         error: '',
         skipped: true,
-        skipReason: skipReasonFor(settings, source, proxyUrl),
+        skipReason: skipReasonFor(settings, source, proxyUrl, proxyReachable),
       });
       continue;
     }
@@ -158,10 +153,10 @@ export async function fetchOnDemandChordSheetAuto(
           : source === 'ultimate_guitar'
             ? await fetchUltimateGuitarChordSheet(artist, title, (stage: ChordFetchStage) => {
                 options?.onProgress?.({ source: 'ultimate_guitar', stage });
-              })
+              }, { quiet: true })
             : await fetchAmdmChordSheet(artist, title, (stage: ChordFetchStage) => {
                 options?.onProgress?.({ source: 'amdm', stage });
-              });
+              }, { quiet: true });
 
       return { detail, provider: source, attempts };
     } catch (e) {
