@@ -178,7 +178,7 @@ export async function searchProviders(
 
   await mergeMetadataHits(map, q, limit);
 
-  if (q.length >= 2 && (await isProviderEnabled('pesni_ru'))) {
+  if (q.length >= 2) {
     try {
       const pesniLimit = Math.min(limit, 50);
       const hits = await pesniRuProvider.search(q, pesniLimit);

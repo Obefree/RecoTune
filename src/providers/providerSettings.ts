@@ -22,8 +22,11 @@ export type ProviderSettings = {
   legacyArchiveImported: boolean;
   /** Legacy: dev proxy URL hint dismissed (auto-fill via autoChordProxy). */
   devProxyUrlHintDismissed?: boolean;
-  /** On-demand full tab: pesni.ru (HTTPS) or AmDm (PC proxy). */
-  onDemandChordSource: 'pesni_ru' | 'amdm';
+  /**
+   * On-demand tab chain: `auto` = pesni.ru then AmDm.
+   * `pesni_ru` / `amdm` — only in collapsed advanced settings.
+   */
+  onDemandChordSource: 'auto' | 'pesni_ru' | 'amdm';
 };
 
 const DEFAULTS: ProviderSettings = {
@@ -37,7 +40,7 @@ const DEFAULTS: ProviderSettings = {
     pesni_ru: true,
     ultimate_guitar: true,
   },
-  onDemandChordSource: 'pesni_ru',
+  onDemandChordSource: 'auto',
   chordProUrl: '',
   chordFetchProxyUrl: '',
   metadataSyncBaseUrl: '',
@@ -68,7 +71,11 @@ export async function getProviderSettings(): Promise<ProviderSettings> {
     legacyArchiveImported: raw.legacyArchiveImported === true,
     devProxyUrlHintDismissed: raw.devProxyUrlHintDismissed === true,
     onDemandChordSource:
-      raw.onDemandChordSource === 'amdm' ? 'amdm' : 'pesni_ru',
+      raw.onDemandChordSource === 'amdm'
+        ? 'amdm'
+        : raw.onDemandChordSource === 'pesni_ru'
+          ? 'pesni_ru'
+          : 'auto',
   };
   return cache;
 }

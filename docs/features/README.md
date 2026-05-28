@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-28 | Авто-цепочка табов pesni.ru → AmDm | [2026-05-28-auto-chord-source-chain.md](./2026-05-28-auto-chord-source-chain.md) |
 | 2026-05-28 | pesni.ru API: табы с телефона, поиск | [2026-05-28-pesni-ru-api.md](./2026-05-28-pesni-ru-api.md) |
 | 2026-05-28 | AmDm: умный подбор таба, этапы загрузки | [2026-05-28-amdm-chord-fetch-smart-resolve.md](./2026-05-28-amdm-chord-fetch-smart-resolve.md) |
 | 2026-05-28 | Поиск metadata, честные табы, Studio REC в фоне | [2026-05-28-search-chords-studio-background-rec.md](./2026-05-28-search-chords-studio-background-rec.md) |
