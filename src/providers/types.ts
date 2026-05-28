@@ -16,10 +16,12 @@ export type ProviderId =
 
   | 'amdm'
 
+  | 'pesni_ru'
+
   | 'ultimate_guitar';
 
-/** On-demand chord fetch (explicit user tap + proxy; not bulk search). */
-export type OnDemandChordProviderId = 'amdm' | 'ultimate_guitar';
+/** On-demand chord fetch (explicit user tap; pesni.ru direct or AmDm via proxy). */
+export type OnDemandChordProviderId = 'amdm' | 'pesni_ru' | 'ultimate_guitar';
 
 
 
@@ -105,6 +107,8 @@ export const PROVIDER_BADGE_COLORS: Record<ProviderId, string> = {
 
   amdm: '#42a5f5',
 
+  pesni_ru: '#26a69a',
+
   ultimate_guitar: '#ef5350',
 
 };
@@ -124,6 +128,8 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   lyrics: 'Текст',
 
   amdm: 'Табы с AmDm',
+
+  pesni_ru: 'Табы с pesni.ru',
 
   ultimate_guitar: 'Доп. источник (скоро)',
 

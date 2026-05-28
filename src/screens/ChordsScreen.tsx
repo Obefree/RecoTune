@@ -48,6 +48,14 @@ import {
   probeChordFetchEndpoint,
 } from '../providers/chordFetchProxy';
 import { fetchAmdmChordSheet } from '../providers/amdmProvider';
+import {
+  fetchPesniRuChordSheet,
+  pesniRuErrorMessage,
+  pesniSlugFromResultId,
+  PESNI_FETCH_STAGE_LABEL,
+  type PesniFetchStage,
+} from '../providers/pesniRuProvider';
+import { PesniRuError } from '../providers/pesniRuApi';
 import type { OnDemandChordProviderId, ProviderAttribution } from '../providers/types';
 import { searchProviders, searchResultToSongEntry } from '../providers/registry';
 import type { SongSearchResult } from '../providers/types';
@@ -1589,20 +1597,54 @@ export default function ChordsScreen() {
     });
   }
 
+  function onDemandChordSource(settings?: ProviderSettings | null): 'pesni_ru' | 'amdm' {
+    return settings?.onDemandChordSource === 'amdm' ? 'amdm' : 'pesni_ru';
+  }
+
   function practiceFetchHintForSettings(settings: ProviderSettings): string | null {
+    const source = onDemandChordSource(settings);
+    if (source === 'pesni_ru') {
+      if (settings.enabled.pesni_ru === false) {
+        return 'Включите «Табы с pesni.ru» в ⚙ Подгрузка табов';
+      }
+      return null;
+    }
     const url = effectiveChordFetchUrl(settings);
     if (!url) {
       return chordFetchSetupHint();
     }
     if (!settings.enabled.amdm) {
-      return 'Включите «Табы с AmDm» в ⚙ Источники песен';
+      return 'Включите «Табы с AmDm» в ⚙ Подгрузка табов';
     }
     return null;
   }
 
+  function chordFetchStageLabel(
+    stage: ChordFetchStage | PesniFetchStage | null,
+    source: 'pesni_ru' | 'amdm',
+  ): string {
+    if (!stage) return 'Подгрузка таба… до 15 с';
+    if (source === 'pesni_ru') {
+      if (stage === 'connect') return PESNI_FETCH_STAGE_LABEL.search;
+      return PESNI_FETCH_STAGE_LABEL[stage as PesniFetchStage] ?? 'Подгрузка с pesni.ru…';
+    }
+    return CHORD_FETCH_STAGE_LABEL[stage as ChordFetchStage] ?? 'Подгрузка таба…';
+  }
+
   function chordFetchErrorHint(e: unknown): string {
-    const msg = e instanceof ChordFetchError ? e.message : 'Подгрузка таба не удалась';
+    const msg =
+      e instanceof ChordFetchError
+        ? e.message
+        : e instanceof PesniRuError
+          ? e.message
+          : pesniRuErrorMessage(e);
     return msg.length > 120 ? `${msg.slice(0, 120)}…` : msg;
+  }
+
+  function onDemandFetchButtonLabel(settings?: ProviderSettings | null): string {
+    return onDemandChordSource(settings) === 'pesni_ru'
+      ? 'Подгрузить таб с pesni.ru'
+      : 'Подгрузить таб с AmDm';
   }
 
   function librarySearchEmptyHint(): string {
@@ -1641,8 +1683,36 @@ export default function ChordsScreen() {
     let working = resolved;
 
     let onlineFetchErr: string | null = null;
-    const proxyUrl = effectiveChordFetchUrl(settings);
-    if (proxyUrl && settings.enabled.amdm !== false) {
+    const source = onDemandChordSource(settings);
+    const slugHint = pesniSlugFromResultId(resolved.id) ?? undefined;
+
+    const tryPesni = async (): Promise<boolean> => {
+      if (settings.enabled.pesni_ru === false) return false;
+      try {
+        const detail = await fetchPesniRuChordSheet(
+          resolved.artist,
+          resolved.title,
+          stage => setChordFetchStage(stage),
+          slugHint,
+        );
+        const persisted = await ensureSongInUserLibrary(detail, 'pesni_ru');
+        await upsertUserSong(persisted);
+        await reloadLibrary();
+        const full = await loadSongForPractice(persisted);
+        setOnDemandAttribution(detail.attribution ?? null);
+        working = full;
+        setOnDemandAttribution(detail.attribution ?? null);
+        return hasVerifiedPracticeLyrics(full);
+      } catch (e) {
+        if (__DEV__) console.warn('[RecoTune] pesni.ru tab fetch', e);
+        onlineFetchErr = chordFetchErrorHint(e);
+        return false;
+      }
+    };
+
+    const tryAmdm = async (): Promise<boolean> => {
+      const proxyUrl = effectiveChordFetchUrl(settings);
+      if (!proxyUrl || settings.enabled.amdm === false) return false;
       try {
         const detail = await fetchAmdmChordSheet(resolved.artist, resolved.title, stage => {
           setChordFetchStage(stage);
@@ -1651,15 +1721,30 @@ export default function ChordsScreen() {
         await upsertUserSong(persisted);
         await reloadLibrary();
         const full = await loadSongForPractice(persisted);
-        setOnDemandAttribution(detail.attribution ?? null);
-        if (hasVerifiedPracticeLyrics(full)) {
-          return { song: full, lyrics: full.lyrics!, hint: null, stillNeedsFetch: false };
-        }
         working = full;
+        setOnDemandAttribution(detail.attribution ?? null);
+        return hasVerifiedPracticeLyrics(full);
       } catch (e) {
-        if (__DEV__) console.warn('[RecoTune] online tab fetch', e);
+        if (__DEV__) console.warn('[RecoTune] AmDm tab fetch', e);
         onlineFetchErr = chordFetchErrorHint(e);
+        return false;
       }
+    };
+
+    if (source === 'pesni_ru') {
+      if (await tryPesni()) {
+        return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
+      }
+      await tryAmdm();
+    } else {
+      if (await tryAmdm()) {
+        return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
+      }
+      await tryPesni();
+    }
+
+    if (hasVerifiedPracticeLyrics(working)) {
+      return { song: working, lyrics: working.lyrics!, hint: null, stillNeedsFetch: false };
     }
 
     const stillNeedsFetch = needsOnDemandChordFetch(working);
@@ -1895,19 +1980,55 @@ export default function ChordsScreen() {
     }
   }
 
-  async function runOnDemandChordFetch(
-    _provider: OnDemandChordProviderId = 'amdm',
-    options?: { silent?: boolean },
-  ) {
+  async function runOnDemandChordFetch(options?: { silent?: boolean }) {
     const base = practiceSong;
     if (!base || chordFetchLoading) return;
+    const settings = await getProviderSettings();
+    const source = onDemandChordSource(settings);
+    const slugHint = pesniSlugFromResultId(base.id) ?? undefined;
     setChordFetchLoading(true);
     setChordFetchStage('search');
     try {
-      const detail = await fetchAmdmChordSheet(base.artist, base.title, stage => {
-        setChordFetchStage(stage);
-      });
-      const persisted = await ensureSongInUserLibrary(detail, 'amdm');
+      let detail = null as Awaited<ReturnType<typeof fetchPesniRuChordSheet>> | null;
+      let provider: OnDemandChordProviderId = source;
+
+      const fetchPesni = () =>
+        fetchPesniRuChordSheet(base.artist, base.title, stage => setChordFetchStage(stage), slugHint);
+      const fetchAmdm = () =>
+        fetchAmdmChordSheet(base.artist, base.title, stage => setChordFetchStage(stage));
+
+      if (source === 'pesni_ru' && settings.enabled.pesni_ru !== false) {
+        try {
+          detail = await fetchPesni();
+          provider = 'pesni_ru';
+        } catch (pesniErr) {
+          if (settings.enabled.amdm !== false && effectiveChordFetchUrl(settings)) {
+            detail = await fetchAmdm();
+            provider = 'amdm';
+          } else {
+            throw pesniErr;
+          }
+        }
+      } else if (settings.enabled.amdm !== false && effectiveChordFetchUrl(settings)) {
+        try {
+          detail = await fetchAmdm();
+          provider = 'amdm';
+        } catch (amdmErr) {
+          if (settings.enabled.pesni_ru !== false) {
+            detail = await fetchPesni();
+            provider = 'pesni_ru';
+          } else {
+            throw amdmErr;
+          }
+        }
+      } else if (settings.enabled.pesni_ru !== false) {
+        detail = await fetchPesni();
+        provider = 'pesni_ru';
+      } else {
+        throw new ChordFetchError(practiceFetchHintForSettings(settings) ?? chordFetchSetupHint());
+      }
+
+      const persisted = await ensureSongInUserLibrary(detail, provider);
       await upsertUserSong(persisted);
       await reloadLibrary();
       setOnDemandAttribution(detail.attribution ?? null);
@@ -1941,13 +2062,21 @@ export default function ChordsScreen() {
     if (!practiceSong || !needsOnDemandChordFetch(practiceSong)) return;
     void (async () => {
       const settings = await getProviderSettings();
-      const proxyUrl = effectiveChordFetchUrl(settings);
-      if (!settings.enabled.amdm || !proxyUrl) {
-        setPracticeFetchHint(practiceFetchHintForSettings(settings) ?? chordFetchSetupHint());
+      const hint = practiceFetchHintForSettings(settings);
+      if (hint) {
+        setPracticeFetchHint(hint);
         void openProviderSettings();
         return;
       }
-      void runOnDemandChordFetch('amdm');
+      if (
+        onDemandChordSource(settings) === 'amdm' &&
+        !effectiveChordFetchUrl(settings)
+      ) {
+        setPracticeFetchHint(chordFetchSetupHint());
+        void openProviderSettings();
+        return;
+      }
+      void runOnDemandChordFetch();
     })();
   }
 
@@ -2373,14 +2502,20 @@ export default function ChordsScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <ActivityIndicator size="small" color="#7c4dff" />
             <Text style={{ color: '#666', fontSize: 10 }}>
-              {chordFetchStage
-                ? CHORD_FETCH_STAGE_LABEL[chordFetchStage]
-                : 'Подгрузка таба… до 15 с'}
+              {chordFetchStageLabel(
+                chordFetchStage,
+                onDemandChordSource(providerSettings),
+              )}
             </Text>
           </View>
-          {!effectiveChordFetchUrl(providerSettings) ? (
+          {onDemandChordSource(providerSettings) === 'amdm' &&
+          !effectiveChordFetchUrl(providerSettings) ? (
             <Text style={styles.practiceFetchHint} numberOfLines={4}>
               {chordFetchSetupHint()}
+            </Text>
+          ) : onDemandChordSource(providerSettings) === 'pesni_ru' ? (
+            <Text style={{ color: '#555', fontSize: 9 }} numberOfLines={1}>
+              → pesni.ru (HTTPS)
             </Text>
           ) : (
             <Text style={{ color: '#555', fontSize: 9 }} numberOfLines={1}>
@@ -2779,7 +2914,9 @@ export default function ChordsScreen() {
                   ) : (
                     <Ionicons name="cloud-download-outline" size={16} color="#fff" />
                   )}
-                  <Text style={styles.lyricsEmptyBtnText}>Подгрузить таб с AmDm</Text>
+                  <Text style={styles.lyricsEmptyBtnText}>
+                    {onDemandFetchButtonLabel(providerSettings)}
+                  </Text>
                 </TouchableOpacity>
               ) : null}
               <TouchableOpacity style={styles.lyricsEmptyBtn} onPress={() => setLyricsEditMode(true)}>
@@ -3336,10 +3473,74 @@ export default function ChordsScreen() {
               showsVerticalScrollIndicator
             >
             <Text style={{ color: '#666', fontSize: 11, marginBottom: 10 }}>
-              Каталог и «Мои» — офлайн. Полный таб с AmDm — прокси на компьютере (телефон и ПК в одной Wi‑Fi).
+              Каталог и «Мои» — офлайн. Полный таб: pesni.ru с телефона (HTTPS) или AmDm через прокси на ПК (одна Wi‑Fi).
             </Text>
             {providerSettings && (
               <>
+                <Text style={{ color: '#888', fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
+                  Источник табов по умолчанию
+                </Text>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                  onPress={() => {
+                    void persistProviderSettings({
+                      ...providerSettings,
+                      onDemandChordSource: 'pesni_ru',
+                    });
+                  }}
+                >
+                  <Ionicons
+                    name={providerSettings.onDemandChordSource !== 'amdm' ? 'radio-button-on' : 'radio-button-off'}
+                    size={20}
+                    color={PROVIDER_BADGE_COLORS.pesni_ru}
+                  />
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={{ color: '#ddd' }}>pesni.ru (без ПК)</Text>
+                    <Text style={{ color: '#666', fontSize: 10, marginTop: 2 }}>
+                      до 60 запросов/мин · при ошибке — AmDm, если включён
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                  onPress={() => {
+                    void persistProviderSettings({
+                      ...providerSettings,
+                      onDemandChordSource: 'amdm',
+                    });
+                  }}
+                >
+                  <Ionicons
+                    name={providerSettings.onDemandChordSource === 'amdm' ? 'radio-button-on' : 'radio-button-off'}
+                    size={20}
+                    color={PROVIDER_BADGE_COLORS.amdm}
+                  />
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={{ color: '#ddd' }}>AmDm (прокси на ПК)</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                  onPress={() => {
+                    const next = {
+                      ...providerSettings,
+                      enabled: { ...providerSettings.enabled, pesni_ru: !providerSettings.enabled.pesni_ru },
+                    };
+                    void persistProviderSettings(next);
+                  }}
+                >
+                  <Ionicons
+                    name={providerSettings.enabled.pesni_ru !== false ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={PROVIDER_BADGE_COLORS.pesni_ru}
+                  />
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={{ color: '#ddd' }}>Табы с pesni.ru</Text>
+                    <Text style={{ color: '#666', fontSize: 10, marginTop: 2 }}>
+                      поиск в каталоге и подгрузка с телефона
+                    </Text>
+                  </View>
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
                   onPress={() => {

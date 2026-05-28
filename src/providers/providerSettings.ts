@@ -22,6 +22,8 @@ export type ProviderSettings = {
   legacyArchiveImported: boolean;
   /** Legacy: dev proxy URL hint dismissed (auto-fill via autoChordProxy). */
   devProxyUrlHintDismissed?: boolean;
+  /** On-demand full tab: pesni.ru (HTTPS) or AmDm (PC proxy). */
+  onDemandChordSource: 'pesni_ru' | 'amdm';
 };
 
 const DEFAULTS: ProviderSettings = {
@@ -32,8 +34,10 @@ const DEFAULTS: ProviderSettings = {
     chordpro_url: true,
     lyrics: true,
     amdm: true,
+    pesni_ru: true,
     ultimate_guitar: true,
   },
+  onDemandChordSource: 'pesni_ru',
   chordProUrl: '',
   chordFetchProxyUrl: '',
   metadataSyncBaseUrl: '',
@@ -63,6 +67,8 @@ export async function getProviderSettings(): Promise<ProviderSettings> {
     metadataFullIndexOffline: raw.metadataFullIndexOffline === true,
     legacyArchiveImported: raw.legacyArchiveImported === true,
     devProxyUrlHintDismissed: raw.devProxyUrlHintDismissed === true,
+    onDemandChordSource:
+      raw.onDemandChordSource === 'amdm' ? 'amdm' : 'pesni_ru',
   };
   return cache;
 }

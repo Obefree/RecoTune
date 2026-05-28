@@ -23,6 +23,8 @@ export function isChordProVerified(song: SongEntry): boolean {
   if (song.chordProVerified === true) return true;
   if (BUILTIN_VERIFIED_IDS.has(song.id)) return true;
   if (song.id.startsWith('custom_amdm_')) return true;
+  if (song.id.startsWith('pesni_ru_')) return true;
+  if (song.id.startsWith('custom_pesni_')) return true;
   if (song.id.startsWith('custom_chordpro_')) return true;
   return false;
 }
@@ -117,7 +119,7 @@ export function countAnnotatedInEntries(songs: SongEntry[]): number {
 }
 
 export const PROGRESSION_ONLY_HINT =
-  'Полный таб с AmDm — запустите прокси на ПК (npm run dev-proxy) или нажмите «Подгрузить таб с AmDm».';
+  'Полный таб — включите «Табы с pesni.ru» в ⚙ или AmDm через прокси на ПК (npm run dev-proxy).';
 
 export function contentQualityScore(song: SongEntry): number {
   if (hasVerifiedPracticeLyrics(song)) {

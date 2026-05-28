@@ -21,8 +21,11 @@ export async function ensureSongInUserLibrary(
     provider === 'chordpro_url' || song.id.startsWith('chordpro_url_');
   const fromOnDemand =
     provider === 'amdm' ||
+    provider === 'pesni_ru' ||
     provider === 'ultimate_guitar' ||
     song.id.startsWith('custom_amdm_') ||
+    song.id.startsWith('pesni_ru_') ||
+    song.id.startsWith('custom_pesni_') ||
     song.id.startsWith('custom_ug_');
 
   if (!fromChordProUrl && !fromOnDemand) return song;
@@ -36,9 +39,11 @@ export async function ensureSongInUserLibrary(
         ? song.genre
         : provider === 'amdm'
           ? 'fetch-amdm'
-          : provider === 'ultimate_guitar'
-            ? 'Таб из интернета'
-            : 'ChordPro',
+          : provider === 'pesni_ru'
+            ? 'fetch-pesni-ru'
+            : provider === 'ultimate_guitar'
+              ? 'Таб из интернета'
+              : 'ChordPro',
   };
   await upsertUserSong(persisted);
   return persisted;

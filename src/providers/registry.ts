@@ -17,6 +17,8 @@ import { chordproUrlProvider } from './chordproUrlProvider';
 
 import { lyricsProvider } from './lyricsProvider';
 
+import { pesniRuProvider } from './pesniRuProvider';
+
 import { isProviderEnabled } from './providerSettings';
 
 import type { ProviderId, SongProvider, SongSearchResult } from './types';
@@ -176,6 +178,16 @@ export async function searchProviders(
 
   await mergeMetadataHits(map, q, limit);
 
+  if (q.length >= 2 && (await isProviderEnabled('pesni_ru'))) {
+    try {
+      const pesniLimit = Math.min(limit, 50);
+      const hits = await pesniRuProvider.search(q, pesniLimit);
+      for (const hit of hits) merge(map, hit);
+    } catch {
+      /* skip failed pesni.ru */
+    }
+  }
+
   if (options?.includeRemote !== false) {
 
     for (const p of REMOTE_PROVIDERS) {
@@ -229,6 +241,6 @@ export async function getEnabledProviders(): Promise<SongProvider[]> {
 
 
 
-export { builtinProvider, userProvider, chordproUrlProvider, lyricsProvider };
+export { builtinProvider, userProvider, chordproUrlProvider, lyricsProvider, pesniRuProvider };
 
 

@@ -9,6 +9,7 @@
 |------|------|
 | `src/providers/chordFetchProxy.ts` | POST на `chordFetchProxyUrl`, ошибки без silent fail |
 | `src/providers/amdmProvider.ts` | `fetchAmdmChordSheet` |
+| `src/providers/pesniRuProvider.ts` | `fetchPesniRuChordSheet` (HTTPS, см. [2026-05-28-pesni-ru-api.md](./2026-05-28-pesni-ru-api.md)) |
 | `src/providers/ultimateGuitarProvider.ts` | `fetchUltimateGuitarChordSheet` |
 | `src/providers/providerSettings.ts` | toggles `amdm` / `ultimate_guitar` (off), `chordFetchProxyUrl` |
 | `src/providers/types.ts` | `ProviderId`, `OnDemandChordProviderId` |

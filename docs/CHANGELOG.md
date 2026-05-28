@@ -6,6 +6,7 @@
 
 ### 2026-05-28
 
+- **Chords / pesni.ru:** поиск и on-demand табы по HTTPS (без ПК-прокси), кэш SQLite, fallback AmDm. См. [docs/features/2026-05-28-pesni-ru-api.md](./features/2026-05-28-pesni-ru-api.md).
 - **Chords / AmDm:** несколько кандидатов с поиска, сверка исполнителя на странице, понятные ошибки, этапы «Ищем… / Проверяем…», гид [docs/guides/chords-search-and-tabs-ru.md](./guides/chords-search-and-tabs-ru.md). См. [docs/features/2026-05-28-amdm-chord-fetch-smart-resolve.md](./features/2026-05-28-amdm-chord-fetch-smart-resolve.md).
 - **Chords / База + Практика + НАЙТИ:** быстрый metadata-поиск (SQL `LIKE`), честные бейджи и сниппеты («прогрессия, не таб»), практика только verified ChordPro, lyrics.ovh без fake-аккордов. См. [docs/features/2026-05-28-search-chords-studio-background-rec.md](./features/2026-05-28-search-chords-studio-background-rec.md).
 - **Studio / Recorder:** запись продолжается в фоне (`staysActiveInBackground`, `AppState`, Android `FOREGROUND_SERVICE_MICROPHONE`). См. тот же файл.
