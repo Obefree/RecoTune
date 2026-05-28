@@ -6,7 +6,8 @@
 
 ### 2026-05-28
 
-- **Chords / UG + поиск:** авто-табы UG → AmDm → pesni.ru, парсер UG в `dev-proxy`, подгрузка результатов поиска при скролле, короткий UI. См. [docs/features/2026-05-28-ug-priority-search-scroll.md](./features/2026-05-28-ug-priority-search-scroll.md).
+- **Chords / AmDm + UG:** авто-табы AmDm → Ultimate Guitar, pesni.ru выкл по умолчанию (лимиты API), короткое «Не найдено», улучшен scoring AmDm. См. [docs/features/2026-05-28-amdm-ug-pesni-off.md](./features/2026-05-28-amdm-ug-pesni-off.md).
+- **Chords / UG + поиск:** парсер UG в `dev-proxy`, подгрузка результатов поиска при скролле. См. [docs/features/2026-05-28-ug-priority-search-scroll.md](./features/2026-05-28-ug-priority-search-scroll.md).
 - **Chords / авто-табы:** без ручного выбора источника — цепочка pesni.ru → AmDm, поиск всегда с pesni.ru. См. [docs/features/2026-05-28-auto-chord-source-chain.md](./features/2026-05-28-auto-chord-source-chain.md).
 - **Chords / pesni.ru:** поиск и on-demand табы по HTTPS (без ПК-прокси), кэш SQLite, fallback AmDm. См. [docs/features/2026-05-28-pesni-ru-api.md](./features/2026-05-28-pesni-ru-api.md).
 - **Chords / AmDm:** несколько кандидатов с поиска, сверка исполнителя на странице, понятные ошибки, этапы «Ищем… / Проверяем…», гид [docs/guides/chords-search-and-tabs-ru.md](./guides/chords-search-and-tabs-ru.md). См. [docs/features/2026-05-28-amdm-chord-fetch-smart-resolve.md](./features/2026-05-28-amdm-chord-fetch-smart-resolve.md).

@@ -136,6 +136,9 @@ async function searchUgCandidates(artist, title) {
     let text;
     try {
       const { res, text: body } = await fetchHtml(searchUrl);
+      if (res.status === 403 || isCloudflareHtml(body)) {
+        return { blocked: true, rows: [], searchUrl };
+      }
       if (!res.ok) continue;
       text = body;
     } catch {
@@ -227,7 +230,7 @@ export async function fetchUgChordPro(artist, title) {
   let lastFail = { error: 'Таб не найден на Ultimate Guitar.', code: 'not_found', sourceUrl: undefined };
 
   for (const { url, score } of search.rows.slice(0, MAX_TAB_ATTEMPTS)) {
-    if (score < 30) continue;
+    if (score < 20) continue;
     let html;
     try {
       const { res, text } = await fetchHtml(url);

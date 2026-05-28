@@ -100,7 +100,7 @@ curl -s -X POST http://127.0.0.1:8787/fetch -H "Content-Type: application/json" 
 
 | `amdm` | Поиск на amdm.ru → первая подходящая ссылка → парс `<pre>` с `podbor__chord` → ChordPro |
 
-| `ultimate_guitar` | HTTP 501 + текст «подключите парсер» |
+| `ultimate_guitar` | ChordPro через `ugFetch.mjs` (как AmDm) |
 
 
 

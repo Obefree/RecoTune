@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-28 | AmDm → UG, pesni выкл, «Не найдено» | [2026-05-28-amdm-ug-pesni-off.md](./2026-05-28-amdm-ug-pesni-off.md) |
 | 2026-05-28 | UG → AmDm, поиск со скроллом, короткий UI | [2026-05-28-ug-priority-search-scroll.md](./2026-05-28-ug-priority-search-scroll.md) |
 | 2026-05-28 | Авто-цепочка табов pesni.ru → AmDm | [2026-05-28-auto-chord-source-chain.md](./2026-05-28-auto-chord-source-chain.md) |
 | 2026-05-28 | pesni.ru API: табы с телефона, поиск | [2026-05-28-pesni-ru-api.md](./2026-05-28-pesni-ru-api.md) |

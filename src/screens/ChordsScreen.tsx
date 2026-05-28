@@ -1673,8 +1673,12 @@ export default function ChordsScreen() {
   }
 
   function chordFetchErrorHint(e: unknown): string {
-    const msg = e instanceof ChordFetchError ? e.message : 'Таб не найден.';
-    return msg.length > 120 ? `${msg.slice(0, 117)}…` : msg;
+    if (e instanceof ChordFetchError) {
+      const msg = e.message.trim();
+      if (msg === 'Не найдено' || msg.startsWith('Запустите npm run dev-proxy')) return msg;
+      return msg.length > 80 ? 'Не найдено' : msg;
+    }
+    return 'Не найдено';
   }
 
   function librarySearchEmptyHint(): string {
@@ -1748,7 +1752,7 @@ export default function ChordsScreen() {
   async function runAutoChordEnrichment(initial: SongEntry) {
     if (chordFetchLoading) return;
     setChordFetchLoading(true);
-    setChordFetchProgress({ source: 'ultimate_guitar', stage: 'search' });
+    setChordFetchProgress({ source: 'amdm', stage: 'search' });
     setAutoChordFetchDone(false);
     try {
       const result = await enrichSongForPractice(initial);
@@ -1978,7 +1982,7 @@ export default function ChordsScreen() {
     if (!base || chordFetchLoading) return;
     const slugHint = pesniSlugFromResultId(base.id) ?? undefined;
     setChordFetchLoading(true);
-    setChordFetchProgress({ source: 'ultimate_guitar', stage: 'search' });
+    setChordFetchProgress({ source: 'amdm', stage: 'search' });
     try {
       const { detail, provider } = await fetchOnDemandChordSheetAuto(
         base.artist,
@@ -3407,7 +3411,7 @@ export default function ChordsScreen() {
               showsVerticalScrollIndicator
             >
             <Text style={{ color: '#666', fontSize: 11, marginBottom: 10 }}>
-              Таб подгружается сам: UG → AmDm (прокси на ПК) → pesni.ru.
+              Таб подгружается сам: AmDm → Ultimate Guitar (прокси на ПК, npm run dev-proxy).
             </Text>
             {providerSettings && (
               <>
@@ -3421,7 +3425,7 @@ export default function ChordsScreen() {
                 >
                   <Text style={{ color: '#9cf', fontSize: 12, fontWeight: '700' }}>Авто</Text>
                   <Text style={{ color: '#888', fontSize: 11, marginTop: 4 }}>
-                    UG → AmDm → pesni.ru
+                    AmDm → Ultimate Guitar
                   </Text>
                 </View>
                 <View
@@ -3528,7 +3532,7 @@ export default function ChordsScreen() {
                         size={18}
                         color="#7c4dff"
                       />
-                      <Text style={{ color: '#ddd', marginLeft: 8 }}>Авто (pesni.ru → AmDm)</Text>
+                      <Text style={{ color: '#ddd', marginLeft: 8 }}>Авто (AmDm → UG)</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}
@@ -3573,11 +3577,11 @@ export default function ChordsScreen() {
                       }}
                     >
                       <Ionicons
-                        name={providerSettings.enabled.pesni_ru !== false ? 'checkbox' : 'square-outline'}
+                        name={providerSettings.enabled.pesni_ru === true ? 'checkbox' : 'square-outline'}
                         size={20}
                         color={PROVIDER_BADGE_COLORS.pesni_ru}
                       />
-                      <Text style={{ color: '#ddd', marginLeft: 10 }}>Без pesni.ru в цепочке</Text>
+                      <Text style={{ color: '#ddd', marginLeft: 10 }}>Включить pesni.ru (поиск и цепочка)</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}

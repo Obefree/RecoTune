@@ -59,17 +59,11 @@ function parseRateLimitHeaders(headers: Headers): PesniRuRateLimit {
   };
 }
 
-function rateLimitMessage(rate: PesniRuRateLimit, retryAfterSec?: number): string {
-  const parts: string[] = ['Лимит pesni.ru: 60 запросов в минуту с вашего IP.'];
-  if (rate.remaining != null && rate.limit != null) {
-    parts.push(`Осталось: ${rate.remaining}/${rate.limit}.`);
-  }
+function rateLimitMessage(_rate: PesniRuRateLimit, retryAfterSec?: number): string {
   if (retryAfterSec != null && retryAfterSec > 0) {
-    parts.push(`Повторите через ~${retryAfterSec} с.`);
-  } else {
-    parts.push('Повторите через минуту.');
+    return `Слишком много запросов к pesni.ru. Повторите через ~${retryAfterSec} с.`;
   }
-  return parts.join(' ');
+  return 'Слишком много запросов к pesni.ru. Повторите позже.';
 }
 
 async function pesniFetchJson<T>(path: string, init?: RequestInit): Promise<{ data: T; rate: PesniRuRateLimit }> {

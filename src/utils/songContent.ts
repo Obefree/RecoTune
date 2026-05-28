@@ -119,7 +119,7 @@ export function countAnnotatedInEntries(songs: SongEntry[]): number {
 }
 
 export const PROGRESSION_ONLY_HINT =
-  'Полный таб — включите «Табы с pesni.ru» в ⚙ или AmDm через прокси на ПК (npm run dev-proxy).';
+  'Полный таб — AmDm / Ultimate Guitar через прокси на ПК (npm run dev-proxy).';
 
 export function contentQualityScore(song: SongEntry): number {
   if (hasVerifiedPracticeLyrics(song)) {

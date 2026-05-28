@@ -57,21 +57,30 @@ export function shortOnDemandError(e: unknown, source: OnDemandChordProviderId):
 /** One short Russian message when every source failed. */
 export function formatAutoChainFailureMessage(attempts: OnDemandChainAttempt[]): string {
   const tried = attempts.filter(a => !a.skipped && a.error.trim());
-  if (tried.length === 0) {
-    return 'Таб не найден.';
+  const skippedProxy = attempts.filter(
+    a =>
+      a.skipped &&
+      (a.source === 'amdm' || a.source === 'ultimate_guitar') &&
+      a.skipReason?.includes('прокси'),
+  );
+  if (skippedProxy.length >= 1 && tried.length === 0) {
+    return 'Запустите npm run dev-proxy на ПК (одна Wi‑Fi с телефоном).';
   }
-  if (tried.length === 1) {
-    return `Таб не найден: ${tried[0].error}`;
-  }
-  const parts = tried.map(a => `${sourceLabel(a.source)} — ${a.error}`).join('; ');
-  return `Таб не найден (${parts}).`;
+
+  const failedAmdm = tried.some(a => a.source === 'amdm');
+  const failedUg = tried.some(a => a.source === 'ultimate_guitar');
+  if (failedAmdm && failedUg) return 'Не найдено';
+  if (failedAmdm || failedUg) return 'Не найдено';
+
+  if (tried.length === 0) return 'Не найдено';
+  return tried[0].error.length > 80 ? 'Не найдено' : tried[0].error;
 }
 
 function resolveChainOrder(settings: ProviderSettings): OnDemandChordProviderId[] {
   if (settings.onDemandChordSource === 'ultimate_guitar') return ['ultimate_guitar'];
   if (settings.onDemandChordSource === 'amdm') return ['amdm'];
   if (settings.onDemandChordSource === 'pesni_ru') return ['pesni_ru'];
-  return ['ultimate_guitar', 'amdm', 'pesni_ru'];
+  return ['amdm', 'ultimate_guitar'];
 }
 
 function canTrySource(
@@ -79,7 +88,7 @@ function canTrySource(
   source: OnDemandChordProviderId,
   proxyUrl: string,
 ): boolean {
-  if (source === 'pesni_ru') return settings.enabled.pesni_ru !== false;
+  if (source === 'pesni_ru') return settings.enabled.pesni_ru === true;
   if (source === 'ultimate_guitar') {
     if (settings.enabled.ultimate_guitar === false) return false;
     return !!proxyUrl;
@@ -107,7 +116,7 @@ function skipReasonFor(
 }
 
 /**
- * Auto on-demand tab: Ultimate Guitar → AmDm (proxy) → pesni.ru (HTTPS fallback).
+ * Auto on-demand tab: AmDm → Ultimate Guitar (dev-proxy). pesni.ru — только если явно включён.
  */
 export async function fetchOnDemandChordSheetAuto(
   artist: string,

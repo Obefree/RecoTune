@@ -23,8 +23,8 @@ export type ProviderSettings = {
   /** Legacy: dev proxy URL hint dismissed (auto-fill via autoChordProxy). */
   devProxyUrlHintDismissed?: boolean;
   /**
-   * On-demand tab chain: `auto` = Ultimate Guitar → AmDm → pesni.ru.
-   * Single-source overrides — only in collapsed advanced settings.
+   * On-demand tab chain: `auto` = AmDm → Ultimate Guitar (dev-proxy).
+   * pesni.ru — только если `enabled.pesni_ru` (по умолчанию выкл).
    */
   onDemandChordSource: 'auto' | 'ultimate_guitar' | 'pesni_ru' | 'amdm';
 };
@@ -37,7 +37,7 @@ const DEFAULTS: ProviderSettings = {
     chordpro_url: true,
     lyrics: true,
     amdm: true,
-    pesni_ru: true,
+    pesni_ru: false,
     ultimate_guitar: true,
   },
   onDemandChordSource: 'auto',

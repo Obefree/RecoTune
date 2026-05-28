@@ -8,6 +8,12 @@ export const AMDM_FETCH_UA = 'RecoTune-chord-fetch/1.0 (on-demand; single song p
 
 const MAX_URLS_PER_SEARCH = 8;
 const MIN_PRE_CHORD_DIVS = 3;
+const AMDM_DEV_LOG = process.env.RECO_CHORD_FETCH_DEBUG === '1';
+
+/** Normalized artist tokens accepted on the tab page (e.g. Кино ↔ Цой). */
+const ARTIST_PAGE_ALIASES = {
+  кино: ['кино', 'цой', 'tsoi', 'coy', 'viktor', 'victor'],
+};
 
 const CYR_TO_LAT = {
   а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
@@ -73,17 +79,32 @@ function decodeHtml(s) {
     .replace(/&#39;/gi, "'");
 }
 
+function artistSlugVariants(artist) {
+  const base = slugify(artist);
+  const lat = translitRuToLat(artist).replace(/\s+/g, '_').replace(/^_+|_+$/g, '');
+  return [...new Set([base, lat].filter(Boolean))];
+}
+
 function scoreAmdmLink(href, artist, title) {
   const path = href.toLowerCase();
-  const a = slugify(artist);
-  const t = slugify(title);
+  const artistSlugs = artistSlugVariants(artist);
+  const titleSlugs = [
+    slugify(title),
+    translitRuToLat(title).replace(/\s+/g, '_').replace(/^_+|_+$/g, ''),
+  ].filter(Boolean);
   let score = 0;
-  if (a && path.includes(`/akkordi/${a}/`)) score += 60;
-  if (t && path.includes(t)) score += 35;
-  if (a && path.includes(`/${a}/`)) score += 15;
-  if (a === 'kino' && path.includes('/akkordi/kino/')) score += 45;
-  if (a === 'kino' && path.includes('/leningrad/')) score -= 35;
-  if (path.includes('peredelannye')) score -= 25;
+  for (const a of artistSlugs) {
+    if (a && path.includes(`/akkordi/${a}/`)) score += 60;
+    if (a && path.includes(`/${a}/`)) score += 15;
+    if (a === 'kino' && path.includes('/akkordi/kino/')) score += 45;
+  }
+  for (const t of titleSlugs) {
+    if (t && path.includes(t)) score += 35;
+  }
+  const wantsKino = artistSlugs.some(a => a === 'kino' || a === 'кино') ||
+    normalizeMatch(artist) === 'кино';
+  if (wantsKino && path.includes('/leningrad/')) score -= 60;
+  if (path.includes('peredelannye')) score -= 50;
   return score;
 }
 
@@ -189,6 +210,15 @@ function scorePageTitleMatch(parsed, expectedArtist, expectedTitle) {
   if (ea && pa) {
     if (ea === pa) artistScore = 50;
     else if (pa.includes(ea) || ea.includes(pa)) artistScore = 35;
+    else {
+      const aliases = ARTIST_PAGE_ALIASES[ea];
+      if (aliases?.some(a => pa.includes(a) || a.includes(pa))) artistScore = 40;
+    }
+  }
+  const eaLat = translitRuToLat(expectedArtist).replace(/\s+/g, '');
+  const paLat = translitRuToLat(parsed.artist).replace(/\s+/g, '');
+  if (eaLat.length >= 2 && paLat.length >= 2 && (paLat === eaLat || paLat.includes(eaLat))) {
+    artistScore = Math.max(artistScore, 40);
   }
   const etLat = translitRuToLat(expectedTitle);
   const ptLat = translitRuToLat(parsed.title);
@@ -199,11 +229,11 @@ function scorePageTitleMatch(parsed, expectedArtist, expectedTitle) {
 }
 
 function pageMatchesRequest(match, expectedArtist, expectedTitle) {
-  if (match.titleScore < 40) return false;
+  if (match.titleScore < 35) return false;
   const ea = expectedArtist.trim();
   if (!ea || /^unknown$/i.test(ea)) return match.titleScore >= 55;
   if (match.artistScore >= 25) return true;
-  return match.titleScore >= 70 && match.artistScore >= 15;
+  return match.titleScore >= 65 && match.artistScore >= 12;
 }
 
 async function fetchText(url) {
@@ -371,6 +401,13 @@ async function fetchAmdmFromSearchHtml(searchHtml, artist, title) {
   const candidates = collectAmdmSongUrls(searchHtml, artist, title);
   if (!candidates.length) {
     return { ok: false, code: 'not_found', error: 'На AmDm не найдено ссылок на подбор' };
+  }
+
+  if (AMDM_DEV_LOG) {
+    console.error(
+      '[amdm] candidates',
+      candidates.map(c => `${c.score}\t${c.url}`).join('\n'),
+    );
   }
 
   let lastFail = { error: 'Таб не найден на AmDm', code: 'not_found', sourceUrl: candidates[0]?.url };

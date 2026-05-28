@@ -142,6 +142,9 @@ export async function postChordFetchProxy(
         : res.status === 503
           ? ' Источник временно недоступен.'
           : '';
+    if (res.status === 404) {
+      throw new ChordFetchError('Не найдено');
+    }
     throw new ChordFetchError(detail || `Ошибка HTTP ${res.status}.${hint}`);
   }
 
@@ -149,7 +152,7 @@ export async function postChordFetchProxy(
   if (contentType.includes('application/json')) {
     const data = (await res.json()) as ChordProxyResponse;
     if (data.stub || data.error?.trim()) {
-      throw new ChordFetchError(data.error?.trim() || 'Таб не найден на сайте.');
+      throw new ChordFetchError('Не найдено');
     }
     const body = (data.chordPro ?? data.text ?? '').trim();
     if (!body) {

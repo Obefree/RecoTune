@@ -191,7 +191,10 @@ export async function searchProviders(
 
   await mergeMetadataHits(map, q, pageSize, offset);
 
-  const includePesni = options?.includePesni !== false && offset === 0;
+  const includePesni =
+    options?.includePesni !== false &&
+    offset === 0 &&
+    (await isProviderEnabled('pesni_ru'));
   if (includePesni && q.length >= 2) {
     try {
       const pesniLimit = Math.min(pageSize, 50);
