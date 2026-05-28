@@ -6,6 +6,7 @@
 
 ### 2026-05-28
 
+- **Chords / dev-proxy:** fix chord-marker validation (`[G]`, `[Am]`), перезапуск прокси после pull, dev-ошибки от API. См. [docs/features/2026-05-28-chord-fetch-validate-restart.md](./features/2026-05-28-chord-fetch-validate-restart.md).
 - **Chords / AmDm + UG:** авто-табы AmDm → Ultimate Guitar, pesni.ru выкл по умолчанию (лимиты API), короткое «Не найдено», улучшен scoring AmDm. См. [docs/features/2026-05-28-amdm-ug-pesni-off.md](./features/2026-05-28-amdm-ug-pesni-off.md).
 - **Chords / UG + поиск:** парсер UG в `dev-proxy`, подгрузка результатов поиска при скролле. См. [docs/features/2026-05-28-ug-priority-search-scroll.md](./features/2026-05-28-ug-priority-search-scroll.md).
 - **Chords / авто-табы:** без ручного выбора источника — цепочка pesni.ru → AmDm, поиск всегда с pesni.ru. См. [docs/features/2026-05-28-auto-chord-source-chain.md](./features/2026-05-28-auto-chord-source-chain.md).

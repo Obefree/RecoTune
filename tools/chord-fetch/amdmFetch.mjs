@@ -104,6 +104,8 @@ function scoreAmdmLink(href, artist, title) {
   const wantsKino = artistSlugs.some(a => a === 'kino' || a === 'кино') ||
     normalizeMatch(artist) === 'кино';
   if (wantsKino && path.includes('/leningrad/')) score -= 60;
+  if (wantsKino && path.includes('/akkordi/kino/')) score += 80;
+  if (wantsKino && path.includes('pesni_iz_kino_i_multfilmov')) score -= 100;
   if (path.includes('peredelannye')) score -= 50;
   return score;
 }
