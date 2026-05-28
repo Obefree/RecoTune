@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   Alert, Animated, Modal, TextInput, ScrollView, Pressable, Platform, useWindowDimensions,
-  AppState, type AppStateStatus,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
@@ -30,7 +29,7 @@ import {
   type RecordingInputInfo,
 } from '../utils/studioAudioRouting';
 import RecordingInputPicker from '../components/RecordingInputPicker';
-import { applyRecordingBackgroundAudioMode } from '../utils/recordingAudioMode';
+import { useRecordingBackground, warnExpoGoBackgroundRecording } from '../hooks/useRecordingBackground';
 
 interface Recording {
   id: string;
@@ -57,6 +56,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
   const recorderModalScrollMaxH = Math.max(260, Math.round(windowH * 0.72) - insets.top - insets.bottom - 24);
   const [recordings, setRecordings]   = useState<Recording[]>([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [recInBackground, setRecInBackground] = useState(false);
   const [recDur, setRecDur]           = useState(0);
   const [loading, setLoading]         = useState(true);
   const [renameRec, setRenameRec]     = useState<Recording | null>(null);
@@ -72,18 +72,6 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
   useEffect(() => { audioRoutingRef.current = audioRouting; }, [audioRouting]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
-      if ((next === 'background' || next === 'inactive') && isRecordingRef.current) {
-        const routing = audioRoutingRef.current;
-        const playThroughEarpieceAndroid =
-          routing.mode === 'manual' && routing.output === 'earpiece';
-        void applyRecordingBackgroundAudioMode({ playThroughEarpieceAndroid });
-      }
-    });
-    return () => sub.remove();
-  }, []);
-
   const anyRecModalOpen = showQuality || renameRec !== null;
   useEffect(() => {
     setTabBarHidden(anyRecModalOpen);
@@ -97,6 +85,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
 
   const recRef     = useRef<Audio.Recording | null>(null);
   const isRecordingRef = useRef(false);
+  const stoppingRecRef = useRef(false);
   const soundRef   = useRef<Audio.Sound | null>(null);
   const recordingsRef = useRef<Recording[]>([]);
   const busyRef    = useRef(false);   // prevents concurrent stop/start
@@ -208,6 +197,29 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
     };
   }, [killSound, load, setTabBarHidden]));
 
+  const handleRecordingInterrupted = useCallback(() => {
+    if (!isRecordingRef.current) return;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    recRef.current = null;
+    setIsRecording(false);
+    setRecInBackground(false);
+    Alert.alert(
+      'Запись прервана',
+      'Система остановила микрофон (часто в Expo Go или без dev build). Соберите приложение: npx expo run:android / run:ios.',
+    );
+  }, []);
+
+  useRecordingBackground({
+    isRecording,
+    isRecordingRef,
+    recRef,
+    stoppingRef: stoppingRecRef,
+    playThroughEarpieceAndroid:
+      audioRouting.mode === 'manual' && audioRouting.output === 'earpiece',
+    onInBackgroundChange: setRecInBackground,
+    onRecordingInterrupted: handleRecordingInterrupted,
+  });
+
   /* ─── Playback ─── */
   const togglePlay = useCallback(async (rec: Recording) => {
     if (busyRef.current) return;
@@ -233,14 +245,14 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
           if (!st.isLoaded) return;
           setIsPlaying(st.isPlaying);
           if (!playbackSeekingRef.current) {
-            setPlayPos(st.positionMillis / 1000);
+            setPlayPos(Math.round(st.positionMillis / 100) / 10);
           }
           if (st.durationMillis) setPlayDur(st.durationMillis / 1000);
           if (st.didJustFinish) {
             soundRef.current = null;
             setPlayingId(null);
             setIsPlaying(false);
-            setPlayPos(0);
+            if (!playbackSeekingRef.current) setPlayPos(0);
           }
         }
       );
@@ -269,7 +281,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
     if (!soundRef.current) return;
     try {
       await soundRef.current.setStatusAsync({ positionMillis: Math.round(seconds * 1000) });
-      setPlayPos(seconds);
+      setPlayPos(Math.round(seconds * 10) / 10);
     } catch {}
   }, []);
 
@@ -325,6 +337,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
   const startRecording = async () => {
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission denied'); return; }
+    warnExpoGoBackgroundRecording();
     killSound();
     await applyStudioAudioMode(audioRoutingRef.current, { recording: true });
     const rec = new Audio.Recording();
@@ -342,10 +355,12 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
     if (!recRef.current) return;
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     try {
+      stoppingRecRef.current = true;
       await recRef.current.stopAndUnloadAsync();
       const uri = recRef.current.getURI();
       recRef.current = null;
       setIsRecording(false);
+      setRecInBackground(false);
       try {
         await applyStudioAudioMode(audioRoutingRef.current, { recording: false });
       } catch {}
@@ -363,7 +378,10 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
       }
     } catch (e) {
       setIsRecording(false);
+      setRecInBackground(false);
       Alert.alert('Stop error', String(e));
+    } finally {
+      stoppingRecRef.current = false;
     }
   };
 
@@ -490,6 +508,9 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
           <View style={styles.recDurRow}>
             <Animated.View style={[styles.recDot, { opacity: dotOpacity }]} />
             <Text style={styles.recDurText}>{fmt(recDur)}</Text>
+            {recInBackground ? (
+              <Text style={styles.recBackgroundHint}>запись в фоне</Text>
+            ) : null}
           </View>
         )}
         <TouchableOpacity
@@ -635,6 +656,7 @@ const styles = StyleSheet.create({
   recDurRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#ff1744' },
   recDurText: { color: '#ff5252', fontSize: 28, fontWeight: '700', letterSpacing: 2 },
+  recBackgroundHint: { color: '#ff9800', fontSize: 11, fontWeight: '600' },
   recBtn: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#1e1e28', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#333' },
   recBtnActive: { backgroundColor: '#ff1744', borderColor: '#ff1744' },
   hint: { color: '#444', fontSize: 12, marginTop: 10, letterSpacing: 1 },

@@ -79,7 +79,7 @@ export default function PlayerScreen() {
     if (!s || durRef.current <= 0) return;
     try {
       await s.setPositionAsync(Math.round(seconds * 1000));
-      setPos(Math.floor(seconds));
+      setPos(Math.round(seconds * 10) / 10);
     } catch {}
   }, []);
 
@@ -155,11 +155,11 @@ export default function PlayerScreen() {
       const playbackUri = await assertPlaybackFileExists(q[idx].uri);
       const { sound } = await Audio.Sound.createAsync(
         { uri: playbackUri },
-        { shouldPlay: true },
+        { shouldPlay: true, progressUpdateIntervalMillis: 100 },
         (status: AVPlaybackStatus) => {
           if (!status.isLoaded) return;
           if (!playerSeekingRef.current) {
-            setPos(Math.floor((status.positionMillis ?? 0) / 1000));
+            setPos(Math.round((status.positionMillis ?? 0) / 100) / 10);
           }
           setDur(Math.floor((status.durationMillis ?? 0) / 1000));
           setIsPlaying(status.isPlaying);

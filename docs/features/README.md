@@ -73,6 +73,7 @@
 | 2026-05-21 | Melody + Media tabs, детектор спетых нот v2 | [2026-05-20-sung-notes-v2-tabs.md](./2026-05-20-sung-notes-v2-tabs.md) |
 | 2026-05-20 | Release: краш playback Studio, URI + MediaControl | [2026-05-20-playback-crash-fix.md](./2026-05-20-playback-crash-fix.md) |
 | 2026-05-20 | Фон + кнопки наушников / lock screen | [2026-05-20-background-headset-controls.md](./2026-05-20-background-headset-controls.md) |
+| 2026-05-28 | Фон REC v2 + ползунок (seek до resume, 100 ms) | [2026-05-28-background-rec-seek-scrub-v2.md](./2026-05-28-background-rec-seek-scrub-v2.md) |
 | 2026-05-20 | Seek без дёрганья, BT-микрофон в настройках | [2026-05-20-seek-scrub-bt-mic.md](./2026-05-20-seek-scrub-bt-mic.md) |
 | 2026-05-20 | Тюнер / практика: история спетых нот, EN default | [2026-05-20-sung-notes-history.md](./2026-05-20-sung-notes-history.md) |
 | 2026-05-20 | Тюнер: хроматический режим (нота + ¢) | [2026-05-20-tuner-chromatic-mode.md](./2026-05-20-tuner-chromatic-mode.md) |

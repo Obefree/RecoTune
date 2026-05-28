@@ -2,12 +2,12 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, ScrollView,
   Alert, Animated, TextInput, Modal, PanResponder, Pressable, Platform,
-  useWindowDimensions, AppState, type AppStateStatus,
+  useWindowDimensions,
 } from 'react-native';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
+import { useRecordingBackground, warnExpoGoBackgroundRecording } from '../hooks/useRecordingBackground';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
-import { applyRecordingBackgroundAudioMode } from '../utils/recordingAudioMode';
 import { assertPlaybackFileExists } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -324,6 +324,7 @@ export default function StudioScreen() {
 
   const recRef      = useRef<Audio.Recording | null>(null);
   const isRecordingRef = useRef(false);
+  const stoppingRecRef = useRef(false);
   const allSounds   = useRef<Audio.Sound[]>([]);
   const soloSound   = useRef<Audio.Sound | null>(null);
   const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -336,20 +337,6 @@ export default function StudioScreen() {
   useEffect(() => { activeSessionRef.current = activeSession; }, [activeSession]);
   useEffect(() => { sessionsRef.current      = sessions;      }, [sessions]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
-
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
-      const bg = next === 'background' || next === 'inactive';
-      setRecInBackground(bg && isRecordingRef.current);
-      if (bg && isRecordingRef.current) {
-        const routing = audioRoutingRef.current;
-        const playThroughEarpieceAndroid =
-          routing.mode === 'manual' && routing.output === 'earpiece';
-        void applyRecordingBackgroundAudioMode({ playThroughEarpieceAndroid });
-      }
-    });
-    return () => sub.remove();
-  }, []);
 
   const dotOpacity = useRef(new Animated.Value(1)).current;
   const dotLoop    = useRef<Animated.CompositeAnimation | null>(null);
@@ -483,6 +470,30 @@ export default function StudioScreen() {
     if (s) s.stopAsync().catch(() => {}).finally(() => s.unloadAsync().catch(() => {}));
   }, []);
 
+  const handleRecordingInterrupted = useCallback(() => {
+    if (!isRecordingRef.current) return;
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    recRef.current = null;
+    setIsRecording(false);
+    setRecInBackground(false);
+    void killAllSounds();
+    Alert.alert(
+      'Запись прервана',
+      'Система остановила микрофон (часто в Expo Go или без dev build). Соберите приложение: npx expo run:android / run:ios.',
+    );
+  }, [killAllSounds]);
+
+  useRecordingBackground({
+    isRecording,
+    isRecordingRef,
+    recRef,
+    stoppingRef: stoppingRecRef,
+    playThroughEarpieceAndroid:
+      audioRouting.mode === 'manual' && audioRouting.output === 'earpiece',
+    onInBackgroundChange: setRecInBackground,
+    onRecordingInterrupted: handleRecordingInterrupted,
+  });
+
   useFocusEffect(useCallback(() => {
     loadSessions();
     return () => {
@@ -516,11 +527,11 @@ export default function StudioScreen() {
       const playbackUri = await assertPlaybackFileExists(track.uri);
       const { sound } = await Audio.Sound.createAsync(
         { uri: playbackUri },
-        { shouldPlay: true, progressUpdateIntervalMillis: 80, volume: playbackVolume(track, false) },
+        { shouldPlay: true, progressUpdateIntervalMillis: 100, volume: playbackVolume(track, false) },
         (st: AVPlaybackStatus) => {
           if (!st.isLoaded) return;
           if (!soloSeekingRef.current) {
-            setSoloPos(st.positionMillis / 1000);
+            setSoloPos(Math.round(st.positionMillis / 100) / 10);
           }
           if (st.durationMillis) setSoloDur(st.durationMillis / 1000);
           if (st.didJustFinish) { soloSound.current = null; setSoloTrackId(null); setSoloPos(0); }
@@ -539,7 +550,10 @@ export default function StudioScreen() {
 
   const handleSoloSeek = useCallback(async (seconds: number) => {
     if (!soloSound.current) return;
-    try { await soloSound.current.setStatusAsync({ positionMillis: Math.round(seconds * 1000) }); } catch {}
+    setSoloPos(seconds);
+    try {
+      await soloSound.current.setStatusAsync({ positionMillis: Math.round(seconds * 1000) });
+    } catch {}
   }, []);
 
   const toggleSoloRemote = useCallback(async () => {
@@ -713,7 +727,7 @@ export default function StudioScreen() {
           const vol = playbackVolume(t, !!mutedRef.current[t.id]);
           return Audio.Sound.createAsync(
             { uri: uris[i] },
-            { shouldPlay: false, positionMillis: off, volume: vol }
+            { shouldPlay: false, positionMillis: off, volume: vol, progressUpdateIntervalMillis: 100 },
           ).then(({ sound }) => sound);
         })
       );
@@ -727,7 +741,8 @@ export default function StudioScreen() {
         if (!st.isLoaded) return;
         if (st.durationMillis) setAllPlayDur((st.durationMillis - ref0off) / 1000);
         if (!masterSeekingRef.current) {
-          setAllPlayPos(Math.max(0, (st.positionMillis - ref0off) / 1000));
+          const sec = Math.max(0, (st.positionMillis - ref0off) / 1000);
+          setAllPlayPos(Math.round(sec * 10) / 10);
         }
         if (st.didJustFinish) killAllSounds();
       });
@@ -751,6 +766,7 @@ export default function StudioScreen() {
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Microphone permission denied'); return; }
 
+    warnExpoGoBackgroundRecording();
     killSolo();
     await killAllSounds();
 
@@ -805,6 +821,7 @@ export default function StudioScreen() {
     await killAllSounds();
 
     try {
+      stoppingRecRef.current = true;
       await recRef.current.stopAndUnloadAsync();
       const uri = recRef.current.getURI();
       recRef.current = null;
@@ -845,6 +862,8 @@ export default function StudioScreen() {
       setIsRecording(false);
       setRecInBackground(false);
       Alert.alert('Stop error', String(e));
+    } finally {
+      stoppingRecRef.current = false;
     }
   }, [saveSessions, killAllSounds]);
 

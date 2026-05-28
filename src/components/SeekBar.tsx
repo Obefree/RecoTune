@@ -1,59 +1,78 @@
 import React, { useRef, useState } from 'react';
 import { View, StyleSheet, PanResponder, GestureResponderEvent } from 'react-native';
 
+const DEFAULT_STEP_SEC = 0.1;
+
 interface Props {
   position: number;   // seconds
   duration: number;   // seconds
-  onSeek: (seconds: number) => void;
-  /** Вызывается при начале перетаскивания (можно поставить на паузу) */
+  onSeek: (seconds: number) => void | Promise<void>;
   onScrubStart?: () => void;
-  /** После отпускания, до onSeek */
+  /** Called after onSeek completes (resume playback here) */
   onScrubEnd?: () => void;
   color?: string;
+  /** Snap thumb to N ms steps (default 100 ms) */
+  stepSec?: number;
+}
+
+function snapSeconds(seconds: number, duration: number, stepSec: number): number {
+  if (duration <= 0) return 0;
+  const step = stepSec > 0 ? stepSec : DEFAULT_STEP_SEC;
+  const snapped = Math.round(seconds / step) * step;
+  return Math.max(0, Math.min(duration, snapped));
 }
 
 export default function SeekBar({
-  position, duration, onSeek, onScrubStart, onScrubEnd, color = '#7c4dff',
+  position,
+  duration,
+  onSeek,
+  onScrubStart,
+  onScrubEnd,
+  color = '#7c4dff',
+  stepSec = DEFAULT_STEP_SEC,
 }: Props) {
-  const widthRef    = useRef(0);
-  const seekingRef  = useRef(false);
+  const widthRef = useRef(0);
+  const grantXRef = useRef(0);
   const [localPos, setLocalPos] = useState<number | null>(null);
 
   const calcSeconds = (x: number) => {
     if (widthRef.current <= 0 || duration <= 0) return 0;
-    return Math.max(0, Math.min(duration, (x / widthRef.current) * duration));
+    return snapSeconds((x / widthRef.current) * duration, duration, stepSec);
   };
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder:  () => true,
+      onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (e: GestureResponderEvent) => {
-        seekingRef.current = true;
         onScrubStart?.();
-        const secs = calcSeconds(e.nativeEvent.locationX);
-        setLocalPos(secs);
+        grantXRef.current = e.nativeEvent.locationX;
+        setLocalPos(calcSeconds(grantXRef.current));
       },
-      onPanResponderMove: (e: GestureResponderEvent) => {
-        const secs = calcSeconds(e.nativeEvent.locationX);
-        setLocalPos(secs);
+      onPanResponderMove: (_e, gestureState) => {
+        const x = grantXRef.current + gestureState.dx;
+        setLocalPos(calcSeconds(x));
       },
-      onPanResponderRelease: (e: GestureResponderEvent) => {
-        const secs = calcSeconds(e.nativeEvent.locationX);
-        setLocalPos(null);
-        seekingRef.current = false;
-        onScrubEnd?.();
-        onSeek(secs);
+      onPanResponderRelease: (_e, gestureState) => {
+        const x = grantXRef.current + gestureState.dx;
+        const secs = calcSeconds(x);
+        void (async () => {
+          try {
+            await Promise.resolve(onSeek(secs));
+          } finally {
+            setLocalPos(null);
+            onScrubEnd?.();
+          }
+        })();
       },
       onPanResponderTerminate: () => {
         setLocalPos(null);
-        seekingRef.current = false;
         onScrubEnd?.();
       },
-    })
+    }),
   ).current;
 
-  const displayed = localPos !== null ? localPos : position;
+  const displayed = localPos !== null ? localPos : snapSeconds(position, duration, stepSec);
   const pct = duration > 0 ? Math.min(1, displayed / duration) * 100 : 0;
 
   return (

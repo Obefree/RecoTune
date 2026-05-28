@@ -11,7 +11,7 @@ export async function applyRecordingBackgroundAudioMode(options?: {
       staysActiveInBackground: true,
       interruptionModeIOS: InterruptionModeIOS.DoNotMix,
       interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      shouldDuckAndroid: true,
+      shouldDuckAndroid: false,
       playThroughEarpieceAndroid: options?.playThroughEarpieceAndroid ?? false,
     });
   } catch {

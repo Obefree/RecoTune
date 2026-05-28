@@ -8,6 +8,7 @@
 
 - **Chords / База + Практика + НАЙТИ:** быстрый metadata-поиск (SQL `LIKE`), честные бейджи и сниппеты («прогрессия, не таб»), практика только verified ChordPro, lyrics.ovh без fake-аккордов. См. [docs/features/2026-05-28-search-chords-studio-background-rec.md](./features/2026-05-28-search-chords-studio-background-rec.md).
 - **Studio / Recorder:** запись продолжается в фоне (`staysActiveInBackground`, `AppState`, Android `FOREGROUND_SERVICE_MICROPHONE`). См. тот же файл.
+- **Studio / Recorder / Player:** фон REC v2 (keep-awake, guard mic, Expo Go hint), ползунок без отскока (seek → resume, шаг 100 ms). См. [docs/features/2026-05-28-background-rec-seek-scrub-v2.md](./features/2026-05-28-background-rec-seek-scrub-v2.md).
 
 ### 2026-05-25
 
