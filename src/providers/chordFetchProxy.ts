@@ -5,7 +5,10 @@ import {
   type ChordCachePayload,
 } from '../db/chordCache';
 import { parseChordProText, chordProToSongEntry } from '../utils/chordProParse';
-import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
+import {
+  chordProRejectionReason,
+  isVerifiedChordProLyrics,
+} from '../utils/chordLyricsNormalize';
 import { combinedArtistTitle } from '../utils/searchNormalize';
 import {
   chordFetchDevProxyErrorSuffix,
@@ -26,6 +29,18 @@ export class ChordFetchError extends Error {
     this.name = 'ChordFetchError';
   }
 }
+
+/** Progress stages for on-demand AmDm fetch (UI). */
+export type ChordFetchStage = 'connect' | 'search' | 'verify' | 'cache';
+
+export type ChordFetchProgress = (stage: ChordFetchStage, detail?: string) => void;
+
+export const CHORD_FETCH_STAGE_LABEL: Record<ChordFetchStage, string> = {
+  connect: 'Подключаемся к прокси…',
+  search: 'Ищем на AmDm…',
+  verify: 'Проверяем текст и аккорды…',
+  cache: 'Сохраняем в библиотеку…',
+};
 
 export const CHORD_FETCH_TIMEOUT_MS = 15_000;
 
@@ -170,8 +185,11 @@ function proxyResponseToPayload(
     throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
   }
   const parsed = parseChordProText(body, raw.title?.trim() || title);
-  if (!parsed.lyrics?.trim() || !isVerifiedChordProLyrics(parsed.lyrics)) {
-    throw new ChordFetchError('Таб слишком короткий или без построчных аккордов — проверьте название.');
+  const rejectReason = chordProRejectionReason(parsed.lyrics);
+  if (!parsed.lyrics?.trim() || rejectReason) {
+    throw new ChordFetchError(
+      rejectReason ?? 'Таб слишком короткий или без построчных аккордов — проверьте название.',
+    );
   }
   return {
     title: raw.title?.trim() || parsed.title,
@@ -224,6 +242,7 @@ export async function fetchOnDemandChordSheet(
   artist: string,
   title: string,
   attribution: () => ProviderAttribution,
+  onProgress?: ChordFetchProgress,
 ): Promise<SongDetail> {
   await ensureAutoChordProxySettings();
   const settings = await getProviderSettings();
@@ -252,11 +271,15 @@ export async function fetchOnDemandChordSheet(
   const variants = artistTitleFetchVariants(artist, title);
 
   const tryVariant = async (v: { artist: string; title: string }) => {
+    onProgress?.('connect');
+    onProgress?.('search', `${v.artist} — ${v.title}`);
     const raw = await postChordFetchProxy(provider, v.artist, v.title, proxyUrl);
+    onProgress?.('verify');
     const payload = proxyResponseToPayload(raw, v.artist, v.title);
     if (payload.lyrics && isChordProStubBody(payload.lyrics)) {
       throw new ChordFetchError('Таб не найден — проверьте исполнителя и название.');
     }
+    onProgress?.('cache');
     await setChordCache(provider, artist, title, payload);
     return chordCacheToSongDetail(payload, provider, id, {
       ...attribution(),

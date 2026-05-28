@@ -270,6 +270,36 @@ function lineIsChordOnly(line: string): boolean {
   });
 }
 
+/** Human-readable reason when lyrics fail verified ChordPro checks (for fetch errors). */
+export function chordProRejectionReason(text?: string | null): string | null {
+  if (!text?.trim()) return 'Пустой текст таба.';
+  const lines = text
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return 'Таб слишком короткий — возможно не та страница на AmDm.';
+  }
+  let linesWithChordMarkers = 0;
+  let linesWithLyricWords = 0;
+  for (const line of lines) {
+    if (CHORD_MARKER_RE.test(line)) linesWithChordMarkers++;
+    const prose = line.replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ');
+    if (/[a-zA-Zа-яА-ЯёЁ]{2,}/.test(prose)) linesWithLyricWords++;
+  }
+  if (lines.every(lineIsChordOnly)) {
+    return 'Только прогрессия без текста — нужен полный подбор.';
+  }
+  if (linesWithChordMarkers < 2) {
+    return 'Нет построчных аккордов в тексте — проверьте название или прокси.';
+  }
+  if (linesWithLyricWords < 2) {
+    return 'Найдено на AmDm, но мало текста песни — попробуйте другое написание.';
+  }
+  return null;
+}
+
 /** Multi-line ChordPro with inline [Am] markers (AmDm parser / builtin seed). */
 export function isVerifiedChordProLyrics(text?: string | null): boolean {
   if (!text?.trim()) return false;

@@ -41,7 +41,12 @@ import {
   syncAllMetadata,
   type MetadataSyncProgress,
 } from '../metadata/metadataSync';
-import { ChordFetchError, probeChordFetchEndpoint } from '../providers/chordFetchProxy';
+import {
+  ChordFetchError,
+  CHORD_FETCH_STAGE_LABEL,
+  type ChordFetchStage,
+  probeChordFetchEndpoint,
+} from '../providers/chordFetchProxy';
 import { fetchAmdmChordSheet } from '../providers/amdmProvider';
 import type { OnDemandChordProviderId, ProviderAttribution } from '../providers/types';
 import { searchProviders, searchResultToSongEntry } from '../providers/registry';
@@ -1394,6 +1399,7 @@ export default function ChordsScreen() {
   const [practiceChordIdx, setPracticeChordIdx] = useState(0);
   const [practiceSong, setPracticeSong]       = useState<SongEntry | null>(null);
   const [chordFetchLoading, setChordFetchLoading] = useState(false);
+  const [chordFetchStage, setChordFetchStage] = useState<ChordFetchStage | null>(null);
   const [onDemandAttribution, setOnDemandAttribution] = useState<ProviderAttribution | null>(null);
 
   /* ── Song library ── */
@@ -1638,7 +1644,9 @@ export default function ChordsScreen() {
     const proxyUrl = effectiveChordFetchUrl(settings);
     if (proxyUrl && settings.enabled.amdm !== false) {
       try {
-        const detail = await fetchAmdmChordSheet(resolved.artist, resolved.title);
+        const detail = await fetchAmdmChordSheet(resolved.artist, resolved.title, stage => {
+          setChordFetchStage(stage);
+        });
         const persisted = await ensureSongInUserLibrary(detail, 'amdm');
         await upsertUserSong(persisted);
         await reloadLibrary();
@@ -1669,6 +1677,7 @@ export default function ChordsScreen() {
   async function runAutoChordEnrichment(initial: SongEntry) {
     if (chordFetchLoading) return;
     setChordFetchLoading(true);
+    setChordFetchStage('search');
     setAutoChordFetchDone(false);
     try {
       const result = await enrichSongForPractice(initial);
@@ -1686,6 +1695,7 @@ export default function ChordsScreen() {
       setPracticeFetchHint(result.hint);
     } finally {
       setChordFetchLoading(false);
+      setChordFetchStage(null);
       setAutoChordFetchDone(true);
     }
   }
@@ -1892,8 +1902,11 @@ export default function ChordsScreen() {
     const base = practiceSong;
     if (!base || chordFetchLoading) return;
     setChordFetchLoading(true);
+    setChordFetchStage('search');
     try {
-      const detail = await fetchAmdmChordSheet(base.artist, base.title);
+      const detail = await fetchAmdmChordSheet(base.artist, base.title, stage => {
+        setChordFetchStage(stage);
+      });
       const persisted = await ensureSongInUserLibrary(detail, 'amdm');
       await upsertUserSong(persisted);
       await reloadLibrary();
@@ -1920,6 +1933,7 @@ export default function ChordsScreen() {
       }
     } finally {
       setChordFetchLoading(false);
+      setChordFetchStage(null);
     }
   }
 
@@ -2358,7 +2372,11 @@ export default function ChordsScreen() {
         <View style={{ alignItems: 'center', paddingVertical: 4, gap: 4 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <ActivityIndicator size="small" color="#7c4dff" />
-            <Text style={{ color: '#666', fontSize: 10 }}>Подгрузка таба… до 15 с</Text>
+            <Text style={{ color: '#666', fontSize: 10 }}>
+              {chordFetchStage
+                ? CHORD_FETCH_STAGE_LABEL[chordFetchStage]
+                : 'Подгрузка таба… до 15 с'}
+            </Text>
           </View>
           {!effectiveChordFetchUrl(providerSettings) ? (
             <Text style={styles.practiceFetchHint} numberOfLines={4}>

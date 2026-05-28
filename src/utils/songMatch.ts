@@ -1,4 +1,6 @@
 import type { SongEntry } from '../data/songDatabase';
+import { BUILTIN_SONGS_SEED } from '../data/builtinSongsSeed';
+import { hasVerifiedPracticeLyrics } from './songContent';
 
 /** Нормализация для сопоставления названий */
 export function normalizeSongText(s: string): string {
@@ -54,4 +56,14 @@ export function findBestSongMatch(
     }
   }
   return bestScore >= minScore ? best : null;
+}
+
+/** Builtin row with verified ChordPro when metadata has no builtin_song_id link. */
+export function findBuiltinVerifiedMatch(
+  artist: string,
+  title: string,
+  minScore = 90,
+): SongEntry | null {
+  const verified = BUILTIN_SONGS_SEED.filter(s => hasVerifiedPracticeLyrics(s));
+  return findBestSongMatch(artist, title, verified, minScore);
 }

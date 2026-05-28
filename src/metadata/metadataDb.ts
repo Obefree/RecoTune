@@ -1,6 +1,7 @@
 import type { SongEntry } from '../data/songDatabase';
 import { enqueueSqliteWrite } from '../db/sqliteWriteLock';
 import { getSongById, getSongLibraryDb } from '../db/songLibrary';
+import { findBuiltinVerifiedMatch } from '../utils/songMatch';
 import { combinedArtistTitle, normalizeSearchText } from '../utils/searchNormalize';
 import { compareSearchHits, scoreSongAgainstQuery, type MatchKind } from '../utils/searchScore';
 import type { MetadataArtistRow, MetadataTrackRow } from './types';
@@ -96,6 +97,8 @@ export async function metadataTrackToSongEntry(track: MetadataTrackRow): Promise
     const linked = await getSongById(track.builtinSongId);
     if (linked) return linked;
   }
+  const builtinMatch = findBuiltinVerifiedMatch(track.artistName, track.title);
+  if (builtinMatch) return builtinMatch;
   return {
     id: `${METADATA_TRACK_ID_PREFIX}${track.id}`,
     title: track.title,

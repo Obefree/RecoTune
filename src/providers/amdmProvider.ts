@@ -1,4 +1,7 @@
-import { fetchOnDemandChordSheet } from './chordFetchProxy';
+import {
+  fetchOnDemandChordSheet,
+  type ChordFetchProgress,
+} from './chordFetchProxy';
 import type { ProviderAttribution, SongDetail } from './types';
 
 export function amdmAttribution(): ProviderAttribution {
@@ -10,6 +13,10 @@ export function amdmAttribution(): ProviderAttribution {
 }
 
 /** Fetch one song from AmDm via configured chord-fetch proxy (not bulk). */
-export async function fetchAmdmChordSheet(artist: string, title: string): Promise<SongDetail> {
-  return fetchOnDemandChordSheet('amdm', artist, title, amdmAttribution);
+export async function fetchAmdmChordSheet(
+  artist: string,
+  title: string,
+  onProgress?: ChordFetchProgress,
+): Promise<SongDetail> {
+  return fetchOnDemandChordSheet('amdm', artist, title, amdmAttribution, onProgress);
 }
