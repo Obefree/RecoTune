@@ -60,7 +60,30 @@ if not exist "android\gradlew.bat" (
 )
 echo.
 
-rem --- Gradle assembleRelease (single ABI, minify via gradle.properties) ---
+rem --- Gradle: stop daemon + wipe app\build (Windows mergeReleaseResources locks) ---
+echo [Step 2b/4] Prepare Gradle: stop daemon, clear android\app\build ...
+if not exist "android\gradlew.bat" (
+  echo [ERROR] android\gradlew.bat still missing after prebuild.
+  pause
+  exit /b 1
+)
+pushd android
+call gradlew.bat --stop >nul 2>&1
+timeout /t 3 /nobreak >nul
+if exist "app\build" (
+  rd /s /q "app\build" 2>nul
+  if exist "app\build" (
+    echo [ERROR] Could not delete android\app\build. Close Android Studio / emulator and retry.
+    popd
+    pause
+    exit /b 1
+  )
+  echo [OK] Cleared android\app\build
+)
+popd
+echo.
+
+rem --- Gradle assembleRelease (single ABI, minify via expo-build-properties) ---
 echo [Step 3/4] Gradle assembleRelease -PreactNativeArchitectures=arm64-v8a ...
 if not exist "android\gradlew.bat" (
   echo [ERROR] android\gradlew.bat still missing.

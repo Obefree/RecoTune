@@ -16,7 +16,11 @@
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch",
     "dev-stack": "npm run dev-stack --prefix tools/chord-fetch",
     "chords:dev": "node tools/chord-fetch/chords-dev.mjs",
-    "test-chord-fetch": "node tools/chord-fetch/test-endpoint.mjs"
+    "test-chord-fetch": "node tools/chord-fetch/test-endpoint.mjs",
+    "prebuild:android": "expo prebuild --platform android",
+    "prebuild:android:clean": "expo prebuild --platform android --clean",
+    "build:android:release": "build-apk-release.bat",
+    "build:android:debug": "build-apk.bat"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -48,6 +52,7 @@
   "devDependencies": {
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",
+    "expo-build-properties": "~1.0.10",
     "typescript": "~5.9.2"
   },
   "overrides": {

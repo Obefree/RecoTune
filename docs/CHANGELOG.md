@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- **Android release build:** `app.config.js` + `expo-build-properties` (minify/shrink/ProGuard survives prebuild), `metro.config.js` blocks `tools/`, `build-apk-release.bat` clears stale `app\build`, `docs/BUILD-ANDROID.md`, npm scripts `build:android:release` / `prebuild:android`.
+
 ### 2026-05-29
 
 - **Chords / справочник:** кнопка «Справочник», полный список схем по инструменту (гитара/укулеле), резолв близких аккордов из песни. См. [docs/features/2026-05-29-chord-reference-dictionary.md](./features/2026-05-29-chord-reference-dictionary.md).
