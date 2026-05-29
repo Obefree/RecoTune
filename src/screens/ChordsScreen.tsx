@@ -42,9 +42,12 @@ import {
 import {
   getPracticeDisplaySettings,
   getSongTranspose,
+  PRACTICE_LYRICS_ZOOM_MAX,
+  PRACTICE_LYRICS_ZOOM_MIN,
   setPracticeLyricsZoom,
   setSongTranspose,
 } from '../settings/practiceDisplaySettings';
+import { probeRemoteChordSearch } from '../providers/remoteChordSearch';
 import { getMetadataTrackCount } from '../metadata/metadataDb';
 import {
   formatMetadataSyncError,
@@ -604,7 +607,7 @@ function ChordLyricsLine({
         horizontal
         nestedScrollEnabled
         showsHorizontalScrollIndicator
-        style={{ marginBottom: 10, maxHeight: 22 }}
+        style={{ marginBottom: 10, maxHeight: Math.max(18, Math.round(22 * displayScale)) }}
         contentContainerStyle={{ alignItems: 'center' }}
       >
         <Text
@@ -693,12 +696,29 @@ function ChordLyricsLine({
     <View pointerEvents="box-none" style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
       {segs.map((seg, i) => {
         const cs = seg.chord ? getChordStyle(seg.chord) : null;
+        const hasLyricUnderChord = Boolean(seg.chord && seg.text.trim());
+        const segmentChordSlot = hasLyricUnderChord
+          ? {
+              minHeight: chordRowH,
+              justifyContent: 'flex-end' as const,
+              alignItems: 'center' as const,
+              alignSelf: 'stretch' as const,
+            }
+          : seg.chord
+            ? chordSlotStyle
+            : { minHeight: chordRowH };
         return (
-          <View key={i} pointerEvents="box-none" style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
-            <View
-              pointerEvents="box-none"
-              style={seg.chord ? chordSlotStyle : { minHeight: chordRowH }}
-            >
+          <View
+            key={i}
+            pointerEvents="box-none"
+            style={{
+              alignItems: hasLyricUnderChord ? 'center' : 'flex-start',
+              marginRight: 4,
+              marginBottom: 4,
+              maxWidth: '100%',
+            }}
+          >
+            <View pointerEvents="box-none" style={segmentChordSlot}>
               {seg.chord && cs ? (
                 <GestureTouchableOpacity
                   activeOpacity={0.7}
@@ -1480,6 +1500,8 @@ export default function ChordsScreen() {
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [libFavOnly, setLibFavOnly]           = useState(false);
   const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
+  /** null = not probed yet; dev-only empty-search hint when false */
+  const [libChordProxyReachable, setLibChordProxyReachable] = useState<boolean | null>(null);
 
   /* ── Song library (SQLite) ── */
   const [librarySongs, setLibrarySongs]       = useState<SongEntry[]>([]);
@@ -1660,6 +1682,21 @@ export default function ChordsScreen() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [libSearch, libraryInitError, applyLibSearchResults]);
 
+  useEffect(() => {
+    if (!showLibrary) return;
+    let cancelled = false;
+    void (async () => {
+      await ensureAutoChordProxySettings();
+      const s = await getProviderSettings();
+      if (!cancelled) setProviderSettings(s);
+      const probe = await probeRemoteChordSearch(2500);
+      if (!cancelled) setLibChordProxyReachable(probe.reachable);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showLibrary]);
+
   const libResults = (() => {
     const q = libSearch.trim();
     let list: SongEntry[];
@@ -1730,11 +1767,16 @@ export default function ChordsScreen() {
   }
 
   function librarySearchEmptyHint(): string {
-    const proxy = effectiveChordFetchUrl(providerSettings);
-    if (!proxy) {
-      return 'Ничего не найдено в офлайн-каталоге. Для поиска на AmDm/UG: npm run chords:dev (прокси на ПК).';
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      const proxy = effectiveChordFetchUrl(providerSettings);
+      if (proxy && libChordProxyReachable === false) {
+        return 'В офлайн-каталоге нет совпадений. Запустите npm start на ПК (прокси :8787).';
+      }
+      if (!proxy) {
+        return 'В офлайн-каталоге нет совпадений. Для AmDm/UG: npm start на ПК (прокси :8787).';
+      }
     }
-    return 'Ничего не найдено. Проверьте прокси (npm run chords:dev) или написание.';
+    return 'Ничего не найдено. Проверьте написание.';
   }
 
   function libraryFavoritesEmptyHint(): string {
@@ -2269,7 +2311,7 @@ export default function ChordsScreen() {
   const practiceCurrentChord = displayPracticeChords[practiceChordIdx] ?? '—';
 
   const applyPracticeLyricsZoom = useCallback((zoom: number) => {
-    const z = Math.min(1.9, Math.max(0.75, zoom));
+    const z = Math.min(PRACTICE_LYRICS_ZOOM_MAX, Math.max(PRACTICE_LYRICS_ZOOM_MIN, zoom));
     practiceLyricsZoomRef.current = z;
     setPracticeLyricsZoomState(z);
     void setPracticeLyricsZoom(z);
@@ -2364,7 +2406,10 @@ export default function ChordsScreen() {
     hasLyricsBody && !showPracticePanel
       ? Math.max(lyricsMinHeightRaw, Math.round(windowH * 0.76), lyricsMinHeightFit)
       : hasLyricsBody
-        ? Math.min(lyricsMinHeightRaw, lyricsMinHeightFit)
+        ? Math.max(
+            Math.min(lyricsMinHeightRaw, lyricsMinHeightFit),
+            Math.round(practiceBodyApproxH * 0.42),
+          )
         : 0;
 
   useEffect(() => {

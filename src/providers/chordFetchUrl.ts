@@ -45,12 +45,17 @@ export function buildChordSearchProxyUrl(proxyFetchUrl: string): string {
   }
   try {
     const u = new URL(trimmed);
+    if (u.port === String(CHORD_FETCH_PROXY_PORT)) {
+      u.pathname = '/search';
+      return u.href.replace(/\/+$/, '');
+    }
     if (u.pathname.includes('fetch-chords')) {
       u.pathname = CHORD_SEARCH_API_PATH;
-      return u.href;
+      return u.href.replace(/\/+$/, '');
     }
-    u.pathname = u.pathname.replace(/\/?$/, '') + '/search';
-    return u.href;
+    const path = u.pathname.replace(/\/+$/, '') || '';
+    u.pathname = path.endsWith('/search') ? path : `${path}/search`;
+    return u.href.replace(/\/+$/, '');
   } catch {
     return `${trimmed}/search`;
   }

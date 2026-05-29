@@ -58,6 +58,26 @@ export function remoteHitToSearchResult(hit: RemoteCatalogHit, query: string): S
   };
 }
 
+export type RemoteChordSearchProbe = {
+  fetchUrl: string;
+  searchUrl: string;
+  reachable: boolean;
+};
+
+/** Probe dev-proxy / Vercel for POST /search (library AmDm/UG hits). */
+export async function probeRemoteChordSearch(
+  timeoutMs = 2800,
+): Promise<RemoteChordSearchProbe> {
+  const settings = await getProviderSettings();
+  const fetchUrl = getEffectiveChordFetchUrl(settings.chordFetchProxyUrl);
+  if (!fetchUrl) {
+    return { fetchUrl: '', searchUrl: '', reachable: false };
+  }
+  const searchUrl = buildChordSearchProxyUrl(fetchUrl);
+  const reachable = await isChordFetchProxyReachable(fetchUrl, timeoutMs);
+  return { fetchUrl, searchUrl, reachable };
+}
+
 /**
  * Live AmDm + UG catalog search via dev-proxy / Vercel (no tab body).
  * Returns [] when proxy URL missing or unreachable.
@@ -69,13 +89,8 @@ export async function searchRemoteChordCatalog(
   const q = query.trim();
   if (q.length < 2) return [];
 
-  const settings = await getProviderSettings();
-  const url = getEffectiveChordFetchUrl(settings.chordFetchProxyUrl);
-  if (!url) return [];
-
-  const searchUrl = buildChordSearchProxyUrl(url);
-  const reachable = await isChordFetchProxyReachable(url, 2800);
-  if (!reachable) return [];
+  const { fetchUrl: url, searchUrl, reachable } = await probeRemoteChordSearch(2800);
+  if (!url || !reachable) return [];
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CHORD_FETCH_TIMEOUT_MS);

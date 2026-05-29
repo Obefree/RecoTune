@@ -2,8 +2,11 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 const SETTINGS_FILE = (FileSystem.documentDirectory ?? '') + 'practice_display_settings.json';
 
+export const PRACTICE_LYRICS_ZOOM_MIN = 0.3;
+export const PRACTICE_LYRICS_ZOOM_MAX = 1.9;
+
 export type PracticeDisplaySettings = {
-  /** 0.75 … 1.75 — pinch / A± for lyrics + chord chips */
+  /** 0.3 … 1.9 — pinch / A± for lyrics + chord chips */
   lyricsZoom: number;
   /** Per-song transpose semitones (song id → offset) */
   transposeBySongId: Record<string, number>;
@@ -23,7 +26,9 @@ async function loadRaw(): Promise<PracticeDisplaySettings> {
     const raw = JSON.parse(await FileSystem.readAsStringAsync(SETTINGS_FILE)) as Partial<PracticeDisplaySettings>;
     return {
       lyricsZoom:
-        typeof raw.lyricsZoom === 'number' && raw.lyricsZoom >= 0.7 && raw.lyricsZoom <= 1.9
+        typeof raw.lyricsZoom === 'number' &&
+        raw.lyricsZoom >= PRACTICE_LYRICS_ZOOM_MIN &&
+        raw.lyricsZoom <= PRACTICE_LYRICS_ZOOM_MAX
           ? raw.lyricsZoom
           : DEFAULTS.lyricsZoom,
       transposeBySongId:
@@ -54,7 +59,10 @@ export async function savePracticeDisplaySettings(
 }
 
 export async function setPracticeLyricsZoom(zoom: number): Promise<number> {
-  const clamped = Math.min(1.9, Math.max(0.75, zoom));
+  const clamped = Math.min(
+    PRACTICE_LYRICS_ZOOM_MAX,
+    Math.max(PRACTICE_LYRICS_ZOOM_MIN, zoom),
+  );
   await savePracticeDisplaySettings({ lyricsZoom: clamped });
   return clamped;
 }
