@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-29 | Справочник аккордов + схемы ukulele/guitar | [2026-05-29-chord-reference-dictionary.md](./2026-05-29-chord-reference-dictionary.md) |
 | 2026-05-29 | Zoom 30%, прокси-поиск, layout Creep | [2026-05-29-zoom-proxy-creep-layout.md](./2026-05-29-zoom-proxy-creep-layout.md) |
 | 2026-05-29 | База: AmDm/UG поиск, zoom, transpose | [2026-05-29-library-search-zoom-transpose.md](./2026-05-29-library-search-zoom-transpose.md) |
 | 2026-05-29 | SeekBar scrub v2 + плавный график голоса | [2026-05-29-seek-scrub-pitch-tracker-fix.md](./2026-05-29-seek-scrub-pitch-tracker-fix.md) |

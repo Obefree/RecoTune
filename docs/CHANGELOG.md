@@ -6,6 +6,7 @@
 
 ### 2026-05-29
 
+- **Chords / справочник:** кнопка «Справочник», полный список схем по инструменту (гитара/укулеле), резолв близких аккордов из песни. См. [docs/features/2026-05-29-chord-reference-dictionary.md](./features/2026-05-29-chord-reference-dictionary.md).
 - **Chords / Практика:** zoom текста 30–190%, dev-подсказка при недоступном прокси, выравнивание аккорда над словом (Creep). См. [docs/features/2026-05-29-zoom-proxy-creep-layout.md](./features/2026-05-29-zoom-proxy-creep-layout.md).
 - **Chords / База + Практика:** живой поиск AmDm+UG через прокси (`POST /search`), pinch/A± масштаб текста, транспонирование ±½ с сохранением на песню. См. [docs/features/2026-05-29-library-search-zoom-transpose.md](./features/2026-05-29-library-search-zoom-transpose.md).
 - **Media / SeekBar + Melody:** стабильный scrub (refs + pageX, lock thumb), cooldown status в видео; плавный график голоса (`smoothCenterMidi`, `chartFrequency`). См. [docs/features/2026-05-29-seek-scrub-pitch-tracker-fix.md](./features/2026-05-29-seek-scrub-pitch-tracker-fix.md).

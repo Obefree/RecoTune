@@ -119,8 +119,9 @@ import {
   importChordProFilesFromUris,
 } from '../library/importExport';
 import { ensureSongInUserLibrary } from '../library/persistProviderSong';
-import { CHORD_DIAGRAM_OPTIONS, getChordShape, getDiagramOption } from '../data/chordShapes';
-import { getBasicChordCatalog } from '../data/basicChordCatalog';
+import { CHORD_DIAGRAM_OPTIONS, getDiagramOption } from '../data/chordShapes';
+import { getFullChordReferenceCatalog } from '../data/basicChordCatalog';
+import { resolveChordShape } from '../data/chordShapeResolve';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -440,11 +441,13 @@ const RECORDINGS_DIR = (FileSystem.documentDirectory ?? '') + 'recordings/';
 
 /* ─── Chord diagram (multi-instrument fingerings in ../data/chordShapes) ─── */
 function ChordDiagram({ name, diagramId, size = 'md' }: { name: string; diagramId: string; size?: 'sm' | 'md' | 'lg' | 'xl' }) {
-  const def = getChordShape(diagramId, name);
+  const resolved = resolveChordShape(diagramId, name);
+  const def = resolved?.shape ?? null;
+  const resolvedLabel = resolved && resolved.resolvedName !== name.trim() ? resolved.resolvedName : null;
   const opt = getDiagramOption(diagramId);
   const stringLabels = opt?.stringLabels ?? [];
 
-  const S = def ? def.frets.length : 6;
+  const S = def ? def.frets.length : (opt?.stringLabels.length ?? 6);
   const NF = 4;
   const G  = size === 'xl' ? 32 : size === 'lg' ? 26 : size === 'sm' ? 16 : 22;
   const FH = size === 'xl' ? 34 : size === 'lg' ? 28 : size === 'sm' ? 18 : 24;
@@ -456,12 +459,12 @@ function ChordDiagram({ name, diagramId, size = 'md' }: { name: string; diagramI
   const DOT = G * 0.40;
 
   if (!def) {
-    const label = (!name || name === '—' || name === '?') ? '?' : name + '\n?';
+    const label = (!name || name === '—' || name === '?') ? '?' : name;
     return (
       <View style={{ width: W, height: H, alignItems: 'center', justifyContent: 'center',
-        borderWidth: 1, borderColor: '#2a2a3a', borderRadius: 8 }}>
-        <Text style={{ color: '#555', fontSize: 11, textAlign: 'center', lineHeight: 16 }}>{label}</Text>
-        <Text style={{ color: '#333', fontSize: 9, marginTop: 2 }}>нет схемы</Text>
+        borderWidth: 1, borderColor: '#2a2a3a', borderRadius: 8, paddingHorizontal: 4 }}>
+        <Text style={{ color: '#555', fontSize: 11, textAlign: 'center', lineHeight: 16 }} numberOfLines={2}>{label}</Text>
+        <Text style={{ color: '#444', fontSize: 9, marginTop: 2, textAlign: 'center' }}>нет схемы для {opt?.label ?? 'инструмента'}</Text>
       </View>
     );
   }
@@ -477,6 +480,11 @@ function ChordDiagram({ name, diagramId, size = 'md' }: { name: string; diagramI
 
   return (
     <View style={{ width: W, height: H, borderWidth: 1, borderColor: '#2a2a3a', borderRadius: 8, overflow: 'hidden' }}>
+      {resolvedLabel ? (
+        <Text style={{ position: 'absolute', left: 2, top: 1, color: '#666', fontSize: 7, zIndex: 2 }} numberOfLines={1}>
+          ≈{resolvedLabel}
+        </Text>
+      ) : null}
       {!showNum ? (
         <View style={{ position:'absolute', left:PL, top:PT - 2, width:(S-1)*G, height:4, backgroundColor:'#aaa', borderRadius:2 }} />
       ) : (
@@ -2369,9 +2377,13 @@ export default function ChordsScreen() {
 
   const col = chordColor(confidence);
 
-  const basicChordSections = useMemo(
-    () => getBasicChordCatalog(chordDiagramId).map(s => ({ title: s.title, data: s.entries })),
+  const fullChordSections = useMemo(
+    () => getFullChordReferenceCatalog(chordDiagramId).map(s => ({ title: s.title, data: s.entries })),
     [chordDiagramId],
+  );
+  const fullChordCount = useMemo(
+    () => fullChordSections.reduce((n, s) => n + s.data.length, 0),
+    [fullChordSections],
   );
 
   const currentInstrumentLabel = CHORD_DIAGRAM_OPTIONS.find(o => o.id === chordDiagramId)?.label ?? '—';
@@ -2563,16 +2575,20 @@ export default function ChordsScreen() {
         </TouchableOpacity>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.practiceChordPillsScroll}
           contentContainerStyle={styles.practiceChordPillsRow}>
-          {displayPracticeChords.map((c, i) => (
-            <TouchableOpacity key={i}
+          {displayPracticeChords.map((c, i) => {
+            const hasShape = !!resolveChordShape(chordDiagramId, c);
+            return (
+            <TouchableOpacity key={`${c}-${i}`}
               style={[styles.practiceChordPill, i === practiceChordIdx && styles.practiceChordPillActive]}
               onPress={() => setPracticeChordIdx(i)}>
               <Text style={[
                 styles.practiceChordPillText,
                 i === practiceChordIdx && styles.practiceChordPillTextActive,
+                !hasShape && styles.practiceChordPillMissing,
               ]}>{c}</Text>
             </TouchableOpacity>
-          ))}
+            );
+          })}
           {displayPracticeChords.length === 0 && (
             <Text style={{ color: '#2a2a3a', fontSize: 9, alignSelf: 'center', paddingHorizontal: 6 }}>нет аккордов — БАЗА</Text>
           )}
@@ -2780,6 +2796,16 @@ export default function ChordsScreen() {
                 accessibilityLabel="Инструмент"
               >
                 <Ionicons name="musical-notes" size={20} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.practiceBarBtnRef}
+                onPress={() => setShowBasicChordsModal(true)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Справочник аккордов"
+              >
+                <Ionicons name="grid-outline" size={16} color="#ff9800" />
+                <Text style={styles.practiceBarBtnRefText}>Справочник</Text>
               </TouchableOpacity>
             </View>
 
@@ -4131,8 +4157,8 @@ export default function ChordsScreen() {
               >
                 <Ionicons name="grid-outline" size={20} color="#ff9800" />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.instrumentModalBasicTitle}>Основные аккорды</Text>
-                  <Text style={styles.instrumentModalBasicSub}>Маж., мин., 7, maj7, m7 · диез/бемоль</Text>
+                  <Text style={styles.instrumentModalBasicTitle}>Справочник аккордов</Text>
+                  <Text style={styles.instrumentModalBasicSub}>Все схемы · гитара / укулеле / …</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#666" />
               </TouchableOpacity>
@@ -4149,8 +4175,10 @@ export default function ChordsScreen() {
         <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.libHeader}>
             <View style={styles.libHeaderTitleBlock}>
-              <Text style={styles.libTitle}>ОСНОВНЫЕ АККОРДЫ</Text>
-              <Text style={styles.libSubtitle}>{currentInstrumentLabel} · схемы как в практике</Text>
+              <Text style={styles.libTitle}>СПРАВОЧНИК</Text>
+              <Text style={styles.libSubtitle}>
+                {currentInstrumentLabel} · {fullChordCount} схем · не только из песни
+              </Text>
             </View>
             <TouchableOpacity onPress={() => setShowBasicChordsModal(false)} style={styles.libClose}>
               <Ionicons name="close" size={24} color="#888" />
@@ -4170,7 +4198,7 @@ export default function ChordsScreen() {
             ))}
           </ScrollView>
           <SectionList
-            sections={basicChordSections}
+            sections={fullChordSections}
             keyExtractor={(item, index) => `${item.name}-${item.label}-${index}`}
             stickySectionHeadersEnabled
             keyboardShouldPersistTaps="handled"
@@ -4366,6 +4394,18 @@ const styles = StyleSheet.create({
     borderColor: '#9575ff44',
   },
   practiceBarBtnIconActive: { backgroundColor: '#9575ff', borderColor: '#fff7' },
+  practiceBarBtnRef: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    backgroundColor: '#1a1a24',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ff980066',
+    minHeight: 46,
+  },
+  practiceBarBtnRefText: { color: '#ff9800', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
 
   instrumentModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
   instrumentModalCenter: { flex: 1, justifyContent: 'center', paddingHorizontal: 14 },
@@ -4543,6 +4583,7 @@ const styles = StyleSheet.create({
   practiceChordPillActive: { backgroundColor: '#ff980022', borderColor: '#ff9800' },
   practiceChordPillText: { color: '#666', fontSize: 11, fontWeight: '700' },
   practiceChordPillTextActive: { color: '#ff9800', fontSize: 12, fontWeight: '800' },
+  practiceChordPillMissing: { color: '#ff525288' },
 
   /* Practice mode */
   voicePanel: { flexDirection: 'row', backgroundColor: '#111118', borderBottomWidth: 1, borderColor: '#1e1e28', padding: 10, gap: 10, alignItems: 'center' },

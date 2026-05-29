@@ -47,6 +47,16 @@ const GUITAR6: Record<string, ChordShape> = {
   'Am7':  { frets: [-1,0,2,0,1,0] },    'Em7':  { frets: [0,2,2,0,3,0] },
   'Dm7':  { frets: [-1,-1,0,2,1,1] },   'Bm7':  { frets: [-1,2,4,2,3,2], barre:2 },
   'Cm7':  { frets: [-1,3,5,3,4,3], barre:3 }, 'Fm7': { frets: [1,3,1,1,1,1], barre:1 },
+  'A7sus4': { frets: [-1,0,2,0,3,0] },
+  'Esus4':{ frets: [0,2,2,2,0,0] },    'Gsus4':{ frets: [3,2,0,0,1,3] },
+  'Bsus4':{ frets: [-1,2,4,4,0,2], barre:2 },
+  'Adim': { frets: [-1,-1,0,1,0,1] },  'Bdim': { frets: [-1,2,3,2,3,2] },
+  'Cdim': { frets: [-1,3,4,3,4,3], barre:3 }, 'Ddim': { frets: [-1,-1,0,1,0,1] },
+  'Edim': { frets: [0,1,2,0,2,0] },    'Fdim': { frets: [1,2,3,1,3,1], barre:1 },
+  'Gdim': { frets: [3,4,3,4,3,4], barre:3 },
+  'Caug': { frets: [-1,3,2,1,1,0] },  'Eaug': { frets: [0,3,2,1,1,0] },
+  'Gaug': { frets: [3,2,1,0,0,3] },   'Aaug': { frets: [-1,0,1,2,2,1] },
+  'Daug': { frets: [-1,-1,0,3,3,2] },
 };
 
 /** Low B + 6-string shapes; low B usually muted; barre drawn from 2nd string when first is muted */
@@ -82,6 +92,12 @@ const UKULELE: Record<string, ChordShape> = {
   'F#m': { frets: [2,1,2,0] }, 'C#m': { frets: [6,4,4,4], barre:4 }, 'G#m': { frets: [4,3,4,2] }, 'D#m': { frets: [3,3,2,1] },
   'Am7': { frets: [0,0,0,0] }, 'Em7': { frets: [0,2,0,2] }, 'Dm7': { frets: [2,2,1,3] },
   'Bm7': { frets: [2,2,2,2] }, 'Cm7': { frets: [0,3,3,3] }, 'Fm7': { frets: [1,3,1,3] },
+  'A7sus4': { frets: [0,1,0,0] },
+  'Adim': { frets: [2,3,2,3] }, 'Bdim': { frets: [3,2,3,2] },
+  'Cdim': { frets: [3,4,3,4] }, 'Ddim': { frets: [1,2,1,2] },
+  'Edim': { frets: [0,1,0,1] }, 'Fdim': { frets: [1,0,1,0] }, 'Gdim': { frets: [0,1,0,1] },
+  'Caug': { frets: [1,0,0,3] }, 'Eaug': { frets: [1,0,0,2] }, 'Aaug': { frets: [2,1,0,0] },
+  'Gaug': { frets: [0,3,2,1] }, 'Daug': { frets: [2,2,2,0] },
 };
 
 /** GDAE, course order low → high */
@@ -115,12 +131,28 @@ const TABLES: Record<string, Record<string, ChordShape>> = {
   bass4: BASS,
 };
 
-export function getChordShape(diagramId: string, chordName: string): ChordShape | null {
+export function listChordShapeKeys(diagramId: string): string[] {
+  const t = TABLES[diagramId];
+  if (!t) return [];
+  return Object.keys(t);
+}
+
+export function getChordShapeTable(diagramId: string): Record<string, ChordShape> | null {
+  return TABLES[diagramId] ?? null;
+}
+
+/** Direct table lookup — prefer {@link resolveChordShape} from chordShapeResolve for UI. */
+export function getChordShapeExact(diagramId: string, chordName: string): ChordShape | null {
   const t = TABLES[diagramId];
   if (!t) return null;
   const key = chordName.trim();
   if (!key || key === '—' || key === '?') return null;
   return t[key] ?? null;
+}
+
+/** @deprecated Use resolveChordShape from chordShapeResolve — kept for internal table access. */
+export function getChordShape(diagramId: string, chordName: string): ChordShape | null {
+  return getChordShapeExact(diagramId, chordName);
 }
 
 export function getDiagramOption(diagramId: string): ChordDiagramOption | undefined {
