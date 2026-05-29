@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 2026-05-29
+
+- **Media / SeekBar + Melody:** стабильный scrub (refs + pageX, lock thumb), cooldown status в видео; плавный график голоса (`smoothCenterMidi`, `chartFrequency`). См. [docs/features/2026-05-29-seek-scrub-pitch-tracker-fix.md](./features/2026-05-29-seek-scrub-pitch-tracker-fix.md).
+
 ### 2026-05-28
 
 - **Media / Видео:** стабильный scrub (общий `SeekBar`), один плеер без двойных контролов, fullscreen без seg bar. См. [docs/features/2026-05-28-video-player-scrub-fullscreen.md](./features/2026-05-28-video-player-scrub-fullscreen.md).

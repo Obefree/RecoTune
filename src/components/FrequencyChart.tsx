@@ -13,8 +13,8 @@ const MIN_CELL_W = 14;
 const CHART_SAMPLE_INTERVAL_MS = 100;
 /** Avg gap below this → treat history as time-clustered and spread by index */
 const CLUSTER_AVG_GAP_MS = 55;
-/** Pitch-mode center smoothing when `smoothCenterMidi` (tuner graph). */
-const CENTER_MIDI_EMA = 0.1;
+/** Pitch-mode center smoothing when `smoothCenterMidi` (tuner / melody graph). */
+const CENTER_MIDI_EMA = 0.07;
 const MARKER_STAGGER_PX = 16;
 /** Playhead anchor — slightly right of center (visible “now” line). */
 const PLAYHEAD_X_RATIO = 0.58;

@@ -241,6 +241,7 @@ export default function MelodyScreen() {
       feedSungNote({
         frequency: stable,
         frameFrequency: raw,
+        chartFrequency: stable,
         signal: msg.signal ?? 0,
         cents: stableInfo.cents,
         frameCents: rawInfo.cents,

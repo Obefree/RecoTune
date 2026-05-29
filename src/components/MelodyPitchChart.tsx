@@ -48,6 +48,7 @@ export default function MelodyPitchChart({
         timeAxis
         layoutOriginTs={layoutOriginTs}
         scrollFollow={active}
+        smoothCenterMidi
         registeredMarkers={markers}
         segmentOverlays={segmentOverlays}
       />

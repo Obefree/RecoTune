@@ -106,6 +106,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const videoRef   = useRef<Video>(null);
   const durRef     = useRef(0);
   const videoSeekingRef = useRef(false);
+  const videoSeekCooldownUntilRef = useRef(0);
   const wasPlayingBeforeScrubRef = useRef(false);
   const hideTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -223,7 +224,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const onStatus = useCallback((st: AVPlaybackStatus) => {
     if (!st.isLoaded) return;
     const d = Math.floor((st.durationMillis ?? 0) / 1000);
-    if (!videoSeekingRef.current) {
+    if (!videoSeekingRef.current && Date.now() >= videoSeekCooldownUntilRef.current) {
       setPos(Math.round((st.positionMillis ?? 0) / 100) / 10);
     }
     setDur(d); durRef.current = d;
@@ -270,6 +271,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
                 });
               }}
               onScrubEnd={() => {
+                videoSeekCooldownUntilRef.current = Date.now() + 300;
                 videoSeekingRef.current = false;
                 if (wasPlayingBeforeScrubRef.current) {
                   videoRef.current?.playAsync().catch(() => {});

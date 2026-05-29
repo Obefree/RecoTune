@@ -20,10 +20,10 @@ const A4_MIDI = 69;
 /** ~4 semitones — reject harmonic jumps (aligned with TunerEngine melody profile). */
 const CHART_JUMP_RATIO = 1.26;
 const CHART_JUMP_BLEND = 0.42;
-const CHART_EMA_ALPHA = 0.28;
+const CHART_EMA_ALPHA = 0.22;
 /** Max vertical step per chart sample (~100 ms). */
-const CHART_MAX_CENTS_STEP = 42;
-const CHART_FREQ_RING = 5;
+const CHART_MAX_CENTS_STEP = 32;
+const CHART_FREQ_RING = 7;
 
 function freqToMidi(freq: number): number {
   return 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
@@ -60,10 +60,9 @@ export class ChartFreqStabilizer {
     this.display = null;
   }
 
-  process(rawHz: number): number {
+  process(rawHz: number): number | null {
     if (!Number.isFinite(rawHz) || rawHz < 55) {
-      this.reset();
-      return rawHz;
+      return this.display;
     }
 
     this.ring.push(rawHz);
