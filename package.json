@@ -12,6 +12,7 @@
     "ingest-metadata": "node tools/ingest-musicbrainz-metadata.mjs --target=5000 --limit-artists=80 --max-pages=12",
     "verify-metadata-search": "node tools/verify-metadata-search.mjs",
     "verify-chord-normalize": "node tools/verify-chord-normalize.mjs",
+    "verify-chord-transpose": "node tools/verify-chord-transpose.mjs",
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch",
     "dev-stack": "npm run dev-stack --prefix tools/chord-fetch",
     "chords:dev": "node tools/chord-fetch/chords-dev.mjs",

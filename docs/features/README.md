@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-29 | База: AmDm/UG поиск, zoom, transpose | [2026-05-29-library-search-zoom-transpose.md](./2026-05-29-library-search-zoom-transpose.md) |
 | 2026-05-29 | SeekBar scrub v2 + плавный график голоса | [2026-05-29-seek-scrub-pitch-tracker-fix.md](./2026-05-29-seek-scrub-pitch-tracker-fix.md) |
 | 2026-05-28 | Видео: scrub, fullscreen, один плеер | [2026-05-28-video-player-scrub-fullscreen.md](./2026-05-28-video-player-scrub-fullscreen.md) |
 | 2026-05-28 | Полностью авто табы + chords:dev | [2026-05-28-auto-chord-full-automatic.md](./2026-05-28-auto-chord-full-automatic.md) |

@@ -9,11 +9,14 @@
    npm install
    ```
 
-2. **На ПК** (корень RecoTune, окно не закрывать):
+2. **На ПК** (в `tools/chord-fetch`, окно не закрывать):
    ```bash
-   npm run dev-proxy
+   cd tools/chord-fetch
+   npm run dev-stack
    ```
-   Слушает `http://0.0.0.0:8787/fetch`.
+   Поднимает **ultimate-api** (Python Flask, `:5000`) и прокси `http://0.0.0.0:8787/fetch`.  
+   Первый раз для UG: `cd ../ultimate-api`, `py -3 -m venv venv`, `.\venv\Scripts\pip install -r requirements.txt`.  
+   Только AmDm без Python: `npm run dev-proxy`.
 
 3. **Телефон:** Expo Go, та же Wi‑Fi, что и ПК. Запустите приложение (`npx expo start`).
 

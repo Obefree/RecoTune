@@ -33,6 +33,18 @@ import {
   songContentBadgeLabel,
 } from '../utils/songContent';
 import { isTablatureLine } from '../utils/chordLyricsNormalize';
+import {
+  formatTransposeLabel,
+  transposeChordProText,
+  transposeChordProgression,
+  transposeChordSymbol,
+} from '../utils/chordTranspose';
+import {
+  getPracticeDisplaySettings,
+  getSongTranspose,
+  setPracticeLyricsZoom,
+  setSongTranspose,
+} from '../settings/practiceDisplaySettings';
 import { getMetadataTrackCount } from '../metadata/metadataDb';
 import {
   formatMetadataSyncError,
@@ -63,9 +75,12 @@ import {
 import type { SongSearchResult } from '../providers/types';
 import { combinedArtistTitle } from '../utils/searchNormalize';
 import {
+  Gesture,
+  GestureDetector,
   ScrollView as GestureScrollView,
   TouchableOpacity as GestureTouchableOpacity,
 } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { ensureAutoChordProxySettings } from '../providers/autoChordProxy';
 import {
   CHORD_FETCH_DEV_PROXY_CMD,
@@ -540,12 +555,18 @@ const chordInlineSlotStyle = {
   alignItems: 'center' as const,
 };
 
-function chordChipTextStyle(_chord: string, cs: { color: string; bg: string }, compact?: boolean) {
+function chordChipTextStyle(
+  _chord: string,
+  cs: { color: string; bg: string },
+  compact?: boolean,
+  scale = 1,
+) {
+  const chordFs = Math.round(14 * scale);
   return {
     color: cs.color,
-    fontSize: 14,
+    fontSize: chordFs,
     fontWeight: '900' as const,
-    lineHeight: 19,
+    lineHeight: Math.round(19 * scale),
     backgroundColor: cs.bg === 'transparent' ? '#7c4dff18' : cs.bg,
     paddingHorizontal: compact ? 3 : 7,
     paddingVertical: compact ? 0 : 2,
@@ -555,7 +576,7 @@ function chordChipTextStyle(_chord: string, cs: { color: string; bg: string }, c
 }
 
 function ChordLyricsLine({
-  line, currentChord, onChordTap, lineIdx, activeChordPos, chordPressDelay = 200,
+  line, currentChord, onChordTap, lineIdx, activeChordPos, chordPressDelay = 200, displayScale = 1,
 }: {
   line: string;
   currentChord: string;
@@ -564,7 +585,19 @@ function ChordLyricsLine({
   activeChordPos: { lineIdx: number; posInLine: number } | null;
   /** Higher delay when auto-scroll off — vertical swipe wins over chord tap. */
   chordPressDelay?: number;
+  /** Pinch / A± zoom for lyrics + chord row alignment */
+  displayScale?: number;
 }) {
+  const chordRowH = Math.round(CHORD_INLINE_ROW_H * displayScale);
+  const chordSlotMinW = Math.round(CHORD_INLINE_SLOT_MIN_W * displayScale);
+  const chordSlotStyle = {
+    minHeight: chordRowH,
+    minWidth: chordSlotMinW,
+    justifyContent: 'flex-end' as const,
+    alignItems: 'center' as const,
+  };
+  const lyricFs = Math.round(16 * displayScale);
+  const lyricLh = Math.round(24 * displayScale);
   if (isTablatureLine(line)) {
     return (
       <ScrollView
@@ -578,8 +611,8 @@ function ChordLyricsLine({
           selectable
           style={{
             fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-            fontSize: 13,
-            lineHeight: 18,
+            fontSize: Math.round(13 * displayScale),
+            lineHeight: Math.round(18 * displayScale),
             color: '#9c7cff',
           }}
         >
@@ -645,8 +678,8 @@ function ChordLyricsLine({
               onPress={() => onChordTap(seg.chord!)}
               hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
             >
-              <View style={chordInlineSlotStyle}>
-                <Text style={chordChipTextStyle(seg.chord!, cs)}>{seg.chord}</Text>
+              <View style={chordSlotStyle}>
+                <Text style={chordChipTextStyle(seg.chord!, cs, false, displayScale)}>{seg.chord}</Text>
               </View>
             </GestureTouchableOpacity>
           );
@@ -664,7 +697,7 @@ function ChordLyricsLine({
           <View key={i} pointerEvents="box-none" style={{ alignItems: 'flex-start', marginRight: 4, marginBottom: 4 }}>
             <View
               pointerEvents="box-none"
-              style={seg.chord ? chordInlineSlotStyle : { minHeight: CHORD_INLINE_ROW_H }}
+              style={seg.chord ? chordSlotStyle : { minHeight: chordRowH }}
             >
               {seg.chord && cs ? (
                 <GestureTouchableOpacity
@@ -673,11 +706,13 @@ function ChordLyricsLine({
                   onPress={() => onChordTap(seg.chord!)}
                   hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
                 >
-                  <Text style={chordChipTextStyle(seg.chord!, cs, true)}>{seg.chord}</Text>
+                  <Text style={chordChipTextStyle(seg.chord!, cs, true, displayScale)}>{seg.chord}</Text>
                 </GestureTouchableOpacity>
               ) : null}
             </View>
-            <Text pointerEvents="none" style={{ color: '#ddd', fontSize: 16, lineHeight: 24 }}>{seg.text || ' '}</Text>
+            <Text pointerEvents="none" style={{ color: '#ddd', fontSize: lyricFs, lineHeight: lyricLh }}>
+              {seg.text || ' '}
+            </Text>
           </View>
         );
       })}
@@ -773,19 +808,30 @@ export default function ChordsScreen() {
 
   /* ── Lyrics in practice ── */
   const [practiceLyrics, setPracticeLyrics] = useState('');
+  const [practiceLyricsZoom, setPracticeLyricsZoomState] = useState(1);
+  const [practiceTranspose, setPracticeTranspose] = useState(0);
   /** Always normalized for display/scroll (edit mode keeps raw practiceLyrics). */
   const practiceLyricsDisplay = useMemo(() => {
     const t = practiceLyrics.trim();
     if (!t) return '';
+    let base = '';
     if (practiceSong) {
       const entry = { ...practiceSong, lyrics: t };
       const verified = resolveLyricsText(entry);
-      if (verified) return verified;
-      if (hasVerifiedPracticeLyrics(entry)) return t;
-      return '';
+      if (verified) base = verified;
+      else if (hasVerifiedPracticeLyrics(entry)) base = t;
     }
-    return '';
-  }, [practiceLyrics, practiceSong]);
+    if (!base) return '';
+    return practiceTranspose ? transposeChordProText(base, practiceTranspose) : base;
+  }, [practiceLyrics, practiceSong, practiceTranspose]);
+
+  const displayPracticeChords = useMemo(
+    () =>
+      practiceTranspose
+        ? practiceChords.map(c => transposeChordSymbol(c, practiceTranspose))
+        : practiceChords,
+    [practiceChords, practiceTranspose],
+  );
   const [practiceContentHint, setPracticeContentHint] = useState<string | null>(null);
   const [practiceFetchHint, setPracticeFetchHint] = useState<string | null>(null);
   const [autoChordFetchDone, setAutoChordFetchDone] = useState(false);
@@ -797,6 +843,8 @@ export default function ChordsScreen() {
   /* ── Auto-scroll ── */
   const [autoScroll, setAutoScroll]       = useState(false);
   const [practiceBpm, setPracticeBpm]     = useState(80);
+  const practiceLyricsZoomRef             = useRef(1);
+  const lyricsPinchOriginRef              = useRef(1);
   const lyricsScrollRef                   = useRef<GestureScrollView>(null);
   const autoScrollActiveRef               = useRef(false);
   const autoScrollFrameRef                = useRef<number | null>(null);
@@ -1682,7 +1730,11 @@ export default function ChordsScreen() {
   }
 
   function librarySearchEmptyHint(): string {
-    return 'Ничего не найдено.';
+    const proxy = effectiveChordFetchUrl(providerSettings);
+    if (!proxy) {
+      return 'Ничего не найдено в офлайн-каталоге. Для поиска на AmDm/UG: npm run chords:dev (прокси на ПК).';
+    }
+    return 'Ничего не найдено. Проверьте прокси (npm run chords:dev) или написание.';
   }
 
   function libraryFavoritesEmptyHint(): string {
@@ -1954,6 +2006,8 @@ export default function ChordsScreen() {
     const persisted = await ensureSongInUserLibrary(song, provider);
     if (persisted.id !== song.id) await reloadLibrary();
     const resolved = await loadSongForPractice(persisted);
+    const savedTranspose = await getSongTranspose(resolved.id);
+    setPracticeTranspose(savedTranspose);
     setPracticeSong(resolved);
     setOnDemandAttribution(null);
     setPracticeContentHint(null);
@@ -2212,7 +2266,57 @@ export default function ChordsScreen() {
   }, [onHardwareBack]));
 
   /* ── Practice: voice vs manually-selected chord ── */
-  const practiceCurrentChord = practiceChords[practiceChordIdx] ?? '—';
+  const practiceCurrentChord = displayPracticeChords[practiceChordIdx] ?? '—';
+
+  const applyPracticeLyricsZoom = useCallback((zoom: number) => {
+    const z = Math.min(1.9, Math.max(0.75, zoom));
+    practiceLyricsZoomRef.current = z;
+    setPracticeLyricsZoomState(z);
+    void setPracticeLyricsZoom(z);
+  }, []);
+
+  const beginLyricsPinch = useCallback(() => {
+    lyricsPinchOriginRef.current = practiceLyricsZoomRef.current;
+  }, []);
+
+  const onLyricsPinchUpdate = useCallback((scale: number) => {
+    applyPracticeLyricsZoom(lyricsPinchOriginRef.current * scale);
+  }, [applyPracticeLyricsZoom]);
+
+  const lyricsPinchGesture = useMemo(
+    () =>
+      Gesture.Pinch()
+        .onBegin(() => {
+          runOnJS(beginLyricsPinch)();
+        })
+        .onUpdate(e => {
+          runOnJS(onLyricsPinchUpdate)(e.scale);
+        }),
+    [beginLyricsPinch, onLyricsPinchUpdate],
+  );
+
+  useEffect(() => {
+    void getPracticeDisplaySettings().then(s => {
+      practiceLyricsZoomRef.current = s.lyricsZoom;
+      setPracticeLyricsZoomState(s.lyricsZoom);
+    });
+  }, []);
+
+  const bumpPracticeTranspose = useCallback(
+    (delta: number) => {
+      if (!practiceSong) return;
+      const next = Math.max(-11, Math.min(11, practiceTranspose + delta));
+      setPracticeTranspose(next);
+      void setSongTranspose(practiceSong.id, next);
+    },
+    [practiceSong, practiceTranspose],
+  );
+
+  const resetPracticeTranspose = useCallback(() => {
+    if (!practiceSong) return;
+    setPracticeTranspose(0);
+    void setSongTranspose(practiceSong.id, 0);
+  }, [practiceSong]);
   const chordTones    = parseChordTones(practiceCurrentChord);
   const voiceNoteBase = voiceNote.replace(/\d/, '');
   const voiceInChord  = chordTones.includes(voiceNoteBase);
@@ -2414,7 +2518,7 @@ export default function ChordsScreen() {
         </TouchableOpacity>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.practiceChordPillsScroll}
           contentContainerStyle={styles.practiceChordPillsRow}>
-          {practiceChords.map((c, i) => (
+          {displayPracticeChords.map((c, i) => (
             <TouchableOpacity key={i}
               style={[styles.practiceChordPill, i === practiceChordIdx && styles.practiceChordPillActive]}
               onPress={() => setPracticeChordIdx(i)}>
@@ -2424,14 +2528,14 @@ export default function ChordsScreen() {
               ]}>{c}</Text>
             </TouchableOpacity>
           ))}
-          {practiceChords.length === 0 && (
+          {displayPracticeChords.length === 0 && (
             <Text style={{ color: '#2a2a3a', fontSize: 9, alignSelf: 'center', paddingHorizontal: 6 }}>нет аккордов — БАЗА</Text>
           )}
         </ScrollView>
         <TouchableOpacity onPress={practiceNext} style={styles.practiceChordNavArrow}
-          disabled={practiceChordIdx >= practiceChords.length - 1}>
+          disabled={practiceChordIdx >= displayPracticeChords.length - 1}>
           <Ionicons name="chevron-forward" size={18}
-            color={practiceChordIdx < practiceChords.length - 1 ? '#ccc' : '#222'} />
+            color={practiceChordIdx < displayPracticeChords.length - 1 ? '#ccc' : '#222'} />
         </TouchableOpacity>
       </View>
       {practiceFetchHint ? (
@@ -2695,6 +2799,49 @@ export default function ChordsScreen() {
               )}
             </View>
 
+            {practiceLyricsDisplay && !lyricsEditMode ? (
+              <View style={styles.practiceTransposeRow}>
+                <TouchableOpacity
+                  onPress={() => bumpPracticeTranspose(-1)}
+                  style={styles.practiceAutoScrollBpmBtn}
+                  accessibilityLabel="Тональность −½"
+                >
+                  <Text style={styles.practiceAutoScrollBpmBtnText}>−½</Text>
+                </TouchableOpacity>
+                <Text style={styles.practiceTransposeLabel}>
+                  {formatTransposeLabel(practiceTranspose)}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => bumpPracticeTranspose(1)}
+                  style={styles.practiceAutoScrollBpmBtn}
+                  accessibilityLabel="Тональность +½"
+                >
+                  <Text style={styles.practiceAutoScrollBpmBtnText}>+½</Text>
+                </TouchableOpacity>
+                {practiceTranspose !== 0 ? (
+                  <TouchableOpacity onPress={resetPracticeTranspose} style={styles.practiceTransposeReset}>
+                    <Text style={{ color: '#7c4dff', fontSize: 10, fontWeight: '700' }}>ориг.</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                  onPress={() => applyPracticeLyricsZoom(practiceLyricsZoom - 0.1)}
+                  style={styles.practiceAutoScrollBpmBtn}
+                  accessibilityLabel="Мельче текст"
+                >
+                  <Text style={styles.practiceAutoScrollBpmBtnText}>A−</Text>
+                </TouchableOpacity>
+                <Text style={styles.practiceZoomLabel}>{Math.round(practiceLyricsZoom * 100)}%</Text>
+                <TouchableOpacity
+                  onPress={() => applyPracticeLyricsZoom(practiceLyricsZoom + 0.1)}
+                  style={styles.practiceAutoScrollBpmBtn}
+                  accessibilityLabel="Крупнее текст"
+                >
+                  <Text style={styles.practiceAutoScrollBpmBtnText}>A+</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             {practiceLyrics && !lyricsEditMode && (
               <View style={styles.practiceAutoScrollRow}>
                 <TouchableOpacity
@@ -2733,6 +2880,7 @@ export default function ChordsScreen() {
               </View>
             )}
 
+            <GestureDetector gesture={lyricsPinchGesture}>
             <View
               style={{ flex: 1, minHeight: 0, flexBasis: 0, flexGrow: 1 }}
               onLayout={e => {
@@ -2792,10 +2940,15 @@ export default function ChordsScreen() {
                       currentChord={practiceCurrentChord}
                       lineIdx={li}
                       activeChordPos={activeChordPos}
+                      displayScale={practiceLyricsZoom}
                       chordPressDelay={autoScroll ? 140 : 420}
                       onChordTap={(c) => {
                         if (autoScrollFrameRef.current != null) stopAutoScroll();
-                        const idx = practiceChords.indexOf(c);
+                        const idx = practiceChords.findIndex(ch =>
+                          (practiceTranspose
+                            ? transposeChordSymbol(ch, practiceTranspose)
+                            : ch) === c,
+                        );
                         if (idx >= 0) setPracticeChordIdx(idx);
                       }}
                     />
@@ -2855,6 +3008,7 @@ export default function ChordsScreen() {
             </ScrollView>
           )}
             </View>
+            </GestureDetector>
           </View>
 
         </View>
@@ -4445,6 +4599,34 @@ const styles = StyleSheet.create({
 
   lyricsPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 0, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
   lyricsPanelHeader: { flexShrink: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 10, paddingTop: 6, paddingBottom: 4, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
+  practiceTransposeRow: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderColor: '#1a1a24',
+    backgroundColor: '#0a0a10',
+  },
+  practiceTransposeLabel: {
+    color: '#00e676',
+    fontSize: 12,
+    fontWeight: '800',
+    minWidth: 28,
+    textAlign: 'center',
+  },
+  practiceTransposeReset: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  practiceZoomLabel: {
+    color: '#888',
+    fontSize: 10,
+    minWidth: 36,
+    textAlign: 'center',
+  },
   practiceAutoScrollRow: {
     flexShrink: 0,
     flexDirection: 'row',

@@ -6,6 +6,7 @@
 
 ### 2026-05-29
 
+- **Chords / База + Практика:** живой поиск AmDm+UG через прокси (`POST /search`), pinch/A± масштаб текста, транспонирование ±½ с сохранением на песню. См. [docs/features/2026-05-29-library-search-zoom-transpose.md](./features/2026-05-29-library-search-zoom-transpose.md).
 - **Media / SeekBar + Melody:** стабильный scrub (refs + pageX, lock thumb), cooldown status в видео; плавный график голоса (`smoothCenterMidi`, `chartFrequency`). См. [docs/features/2026-05-29-seek-scrub-pitch-tracker-fix.md](./features/2026-05-29-seek-scrub-pitch-tracker-fix.md).
 
 ### 2026-05-28

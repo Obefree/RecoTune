@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev-proxy": "node dev-proxy-server.mjs"
+    "dev-proxy": "node dev-proxy-server.mjs",
+    "ultimate-api": "node scripts/run-ultimate-api.mjs",
+    "dev-stack": "node dev-stack.mjs"
   },
   "dependencies": {
     "cheerio": "^1.0.0"

@@ -20,6 +20,7 @@ import { lyricsProvider } from './lyricsProvider';
 import { pesniRuProvider } from './pesniRuProvider';
 
 import { isProviderEnabled } from './providerSettings';
+import { searchRemoteChordCatalog } from './remoteChordSearch';
 
 import type { ProviderId, SongProvider, SongSearchResult } from './types';
 
@@ -190,6 +191,17 @@ export async function searchProviders(
   }
 
   await mergeMetadataHits(map, q, pageSize, offset);
+
+  if (offset === 0 && q.length >= 2) {
+    try {
+      const remoteHits = await searchRemoteChordCatalog(q, { limit: 28 });
+      for (const hit of remoteHits) {
+        merge(map, hit, metadataDedupeKey(hit.title, hit.artist));
+      }
+    } catch {
+      /* offline / proxy down — metadata-only */
+    }
+  }
 
   const includePesni =
     options?.includePesni !== false &&

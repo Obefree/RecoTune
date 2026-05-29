@@ -26,7 +26,9 @@ export async function ensureSongInUserLibrary(
     song.id.startsWith('custom_amdm_') ||
     song.id.startsWith('pesni_ru_') ||
     song.id.startsWith('custom_pesni_') ||
-    song.id.startsWith('custom_ug_');
+    song.id.startsWith('custom_ug_') ||
+    song.id.startsWith('remote_amdm_') ||
+    song.id.startsWith('remote_ug_');
 
   if (!fromChordProUrl && !fromOnDemand) return song;
 

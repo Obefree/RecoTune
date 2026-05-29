@@ -79,9 +79,14 @@ export function isMetadataCatalogId(id: string): boolean {
   return id.startsWith('meta_');
 }
 
+/** Hit from live AmDm/UG search (no tab until on-demand fetch). */
+export function isRemoteTabSearchId(id: string): boolean {
+  return id.startsWith('remote_amdm_') || id.startsWith('remote_ug_');
+}
+
 export function songContentBadge(song: SongEntry): SongContentBadge {
   if (
-    isMetadataCatalogId(song.id) &&
+    (isMetadataCatalogId(song.id) || isRemoteTabSearchId(song.id)) &&
     !song.chords?.trim() &&
     !hasVerifiedPracticeLyrics(song)
   ) {
@@ -109,6 +114,7 @@ export function songContentBadgeLabel(badge: SongContentBadge): string {
 export function needsOnDemandChordFetch(song: SongEntry): boolean {
   const resolved = resolveSongEntry(song);
   if (hasVerifiedPracticeLyrics(resolved)) return false;
+  if (isRemoteTabSearchId(resolved.id)) return true;
   const badge = songContentBadge(resolved);
   return badge === 'metadata' || badge === 'progression' || isMetadataOnlySong(resolved);
 }

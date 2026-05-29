@@ -6,9 +6,10 @@
 
 import http from 'node:http';
 import { handleChordFetchRequest } from './amdmFetch.mjs';
+import { handleChordSearchRequest } from './chordSearch.mjs';
 
 /** Bump when parser/proxy behavior changes — compare with GET /health in app settings. */
-export const CHORD_FETCH_PROXY_VERSION = '2026-05-28-amdm-validate';
+export const CHORD_FETCH_PROXY_VERSION = '2026-05-28-ultimate-api';
 
 const PORT = Number(process.env.CHORD_FETCH_PORT || 8787);
 
@@ -47,14 +48,15 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, {
       ok: true,
       version: CHORD_FETCH_PROXY_VERSION,
-      hint: 'POST /fetch with { provider, artist, title }',
+      hint: 'POST /fetch { provider, artist, title } · POST /search { q }',
       port: PORT,
+      ultimateApi: process.env.ULTIMATE_API_URL ?? 'http://127.0.0.1:5000',
     });
     return;
   }
 
-  if (req.method !== 'POST' || req.url !== '/fetch') {
-    json(res, 404, { error: 'Используйте POST /fetch' });
+  if (req.method !== 'POST' || (req.url !== '/fetch' && req.url !== '/search')) {
+    json(res, 404, { error: 'Используйте POST /fetch или POST /search' });
     return;
   }
 
@@ -69,6 +71,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    if (req.url === '/search') {
+      const { status, payload } = await handleChordSearchRequest(body);
+      json(res, status, payload);
+      return;
+    }
     const { status, payload } = await handleChordFetchRequest(body);
     if (payload.chordPro && !payload.error) {
       const accept = req.headers.accept ?? '';

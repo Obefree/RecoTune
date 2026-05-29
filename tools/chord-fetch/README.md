@@ -50,19 +50,23 @@
 
 
 
-2. **Запуск прокси на ПК** (окно не закрывать):
+2. **Запуск на ПК** (окно не закрывать) — **прокси + Ultimate Guitar API**:
 
 
 
    ```bash
 
-   npm run dev-proxy
+   npm run dev-stack
 
    ```
 
 
 
-   Сервер слушает `http://0.0.0.0:8787/fetch`.
+   Поднимает Flask `ultimate-api` (`http://127.0.0.1:5000/tab`) и dev-proxy `http://0.0.0.0:8787/fetch`.
+
+
+
+   Только прокси (без UG): `npm run dev-proxy`. Только API: `npm run ultimate-api` (нужен Python 3 + `pip install -r ../ultimate-api/requirements.txt` в venv).
 
 
 
@@ -100,7 +104,7 @@ curl -s -X POST http://127.0.0.1:8787/fetch -H "Content-Type: application/json" 
 
 | `amdm` | Поиск на amdm.ru → первая подходящая ссылка → парс `<pre>` с `podbor__chord` → ChordPro |
 
-| `ultimate_guitar` | ChordPro через `ugFetch.mjs` (как AmDm) |
+| `ultimate_guitar` | Поиск в `ugFetch.mjs`, таб через [ultimate-api](../ultimate-api/README.md) (`ULTIMATE_API_URL`, по умолчанию `:5000`) |
 
 
 

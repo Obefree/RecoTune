@@ -35,6 +35,26 @@ export function buildChordFetchProxyUrl(host: string): string {
 
 /** Vercel serverless path (optional deploy — not the default path). */
 export const CHORD_FETCH_API_PATH = '/api/fetch-chords';
+export const CHORD_SEARCH_API_PATH = '/api/search-chords';
+
+/** POST endpoint for live AmDm/UG catalog search (paired with /fetch). */
+export function buildChordSearchProxyUrl(proxyFetchUrl: string): string {
+  const trimmed = proxyFetchUrl.trim().replace(/\/+$/, '');
+  if (/\/fetch$/i.test(trimmed)) {
+    return trimmed.replace(/\/fetch$/i, '/search');
+  }
+  try {
+    const u = new URL(trimmed);
+    if (u.pathname.includes('fetch-chords')) {
+      u.pathname = CHORD_SEARCH_API_PATH;
+      return u.href;
+    }
+    u.pathname = u.pathname.replace(/\/?$/, '') + '/search';
+    return u.href;
+  } catch {
+    return `${trimmed}/search`;
+  }
+}
 
 export function isLocalChordFetchProxyUrl(url: string): boolean {
   const t = url.trim();

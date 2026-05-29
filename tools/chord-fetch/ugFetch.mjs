@@ -1,9 +1,10 @@
 /**
- * Ultimate Guitar search + ChordPro parse (dev-proxy only; not in APK).
+ * Ultimate Guitar: search in Node, tab body via vendored ultimate-api (Flask GET /tab).
  */
 import * as cheerio from 'cheerio';
 import { buildChordPro } from './amdmFetch.mjs';
 import { validateAmdmChordLines } from './amdmChordValidate.mjs';
+import { fetchUltimateApiTab, getUltimateApiBase, tabPayloadToLines } from './ultimateApiClient.mjs';
 
 export const UG_FETCH_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -167,41 +168,72 @@ async function searchUgCandidates(artist, title) {
   return { blocked: false, rows: uniq, searchUrl: null };
 }
 
-function parseTabPage(html, expectedArtist, expectedTitle) {
-  if (isCloudflareHtml(html)) {
-    return { ok: false, code: 'blocked', error: 'Ultimate Guitar заблокировал запрос (Cloudflare).' };
-  }
-  const store = parseJsStore(html);
-  const tabView = store?.store?.page?.data?.tab_view;
-  const wiki = tabView?.wiki_tab?.content ?? tabView?.wikiTab?.content;
-  const rawContent = wiki ?? tabView?.tab?.content;
-  if (!rawContent?.trim()) {
-    return { ok: false, code: 'no_tab', error: 'На странице UG нет текста таба.' };
+function scoreUgAgainstQuery(query, artist, title) {
+  const q = normalizeMatch(query);
+  const a = normalizeMatch(artist);
+  const t = normalizeMatch(title);
+  let score = 0;
+  if (!q) return 0;
+  if (t === q) score += 90;
+  else if (t.includes(q) || q.includes(t)) score += 50;
+  if (a === q) score += 70;
+  else if (a.includes(q) || q.includes(a)) score += 40;
+  if (a && t && `${a}${t}`.includes(q)) score += 25;
+  return score;
+}
+
+/** Free-text UG search for library autocomplete (no tab body). */
+export async function searchUgByQuery(query) {
+  const q = String(query ?? '').trim();
+  if (q.length < 2) return [];
+
+  const search = await searchUgCandidates('', q);
+  if (search.blocked || !search.rows.length) return [];
+
+  return search.rows
+    .map(({ row, url }) => {
+      const artist = String(row.artist_name ?? row.artist ?? '').trim();
+      const title = String(row.song_name ?? row.title ?? row.name ?? '').trim();
+      if (!title) return null;
+      return {
+        provider: 'ultimate_guitar',
+        artist: artist || 'Unknown',
+        title,
+        sourceUrl: url,
+        score: scoreUgAgainstQuery(q, artist, title) + scoreUgResult(row, '', q) * 0.35,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, MAX_SEARCH_RESULTS);
+}
+
+function parseUltimateApiTabPayload(tab, expectedArtist, expectedTitle, sourceUrl) {
+  const lines = tabPayloadToLines(tab);
+  if (!lines.length) {
+    return { ok: false, code: 'no_tab', error: 'ultimate-api: нет строк таба.' };
   }
 
-  const lines = ugWikiContentToLines(rawContent);
   const validation = validateAmdmChordLines(lines);
   if (!validation.ok) {
     return { ok: false, code: validation.code, error: validation.message };
   }
 
-  const songName =
-    tabView?.song_name ?? tabView?.song?.name ?? store?.store?.page?.data?.tab?.song_name ?? expectedTitle;
-  const artistName =
-    tabView?.artist_name ?? tabView?.artist?.name ?? store?.store?.page?.data?.tab?.artist_name ?? expectedArtist;
+  const songName = String(tab.title ?? expectedTitle).trim();
+  const artistName = String(tab.artist_name ?? tab.artist ?? expectedArtist).trim();
 
   const chordPro = buildChordPro({
-    title: String(songName ?? expectedTitle).trim(),
-    artist: String(artistName ?? expectedArtist).trim(),
+    title: songName || expectedTitle,
+    artist: artistName || expectedArtist,
     lines,
-    note: 'Ultimate Guitar',
+    note: 'Ultimate Guitar (ultimate-api)',
   });
 
   return {
     ok: true,
     chordPro,
-    title: String(songName ?? expectedTitle).trim(),
-    artist: String(artistName ?? expectedArtist).trim(),
+    title: songName || expectedTitle,
+    artist: artistName || expectedArtist,
+    sourceUrl,
   };
 }
 
@@ -229,35 +261,38 @@ export async function fetchUgChordPro(artist, title) {
 
   let lastFail = { error: 'Таб не найден на Ultimate Guitar.', code: 'not_found', sourceUrl: undefined };
 
+  const apiBase = getUltimateApiBase();
+
   for (const { url, score } of search.rows.slice(0, MAX_TAB_ATTEMPTS)) {
     if (score < 20) continue;
-    let html;
-    try {
-      const { res, text } = await fetchHtml(url);
-      if (!res.ok) {
-        lastFail = { error: `Страница таба: HTTP ${res.status}`, code: 'http', sourceUrl: url };
-        continue;
-      }
-      html = text;
-    } catch (e) {
-      lastFail = {
-        error: `Не удалось открыть таб (${e?.message ?? 'network'})`,
-        code: 'network',
-        sourceUrl: url,
-      };
+
+    const api = await fetchUltimateApiTab(url);
+    if (!api.ok) {
+      lastFail = { error: api.error, code: api.code, sourceUrl: url };
+      if (api.code === 'ultimate_api_down') break;
       continue;
     }
 
-    const parsed = parseTabPage(html, artist, title);
+    const parsed = parseUltimateApiTabPayload(api.tab, artist, title, url);
     if (parsed.ok) {
       return {
         chordPro: parsed.chordPro,
-        sourceUrl: url,
+        sourceUrl: parsed.sourceUrl ?? url,
         title: parsed.title,
         artist: parsed.artist,
       };
     }
     lastFail = { error: parsed.error, code: parsed.code, sourceUrl: url };
+  }
+
+  if (lastFail.code === 'ultimate_api_down') {
+    return {
+      stub: true,
+      chordPro: null,
+      error: `${lastFail.error} (${apiBase})`,
+      code: lastFail.code,
+      sourceUrl: lastFail.sourceUrl,
+    };
   }
 
   return {
