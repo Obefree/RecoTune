@@ -8,9 +8,9 @@ const NOTE_CONFIRM_FRAMES = 2;
 /** Raw must sit clearly toward the next semitone (¢ from locked center). */
 const NOTE_SWITCH_OFFSET_CENTS = 38;
 /** Max display ¢ change per second (smooth needle, no overshoot past target). */
-const MAX_CENTS_PER_SEC = 280;
+const MAX_CENTS_PER_SEC = 400;
 /** Light EMA for Hz readout only — not used for note / needle. */
-const HZ_DISPLAY_EMA = 0.32;
+const HZ_DISPLAY_EMA = 0.42;
 
 export interface TunerDisplayFrame {
   name: string;

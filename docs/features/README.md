@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-30 | Tuner: окно графика 12 с, без лишнего EMA | [2026-05-30-tuner-chart-rolling-window.md](./2026-05-30-tuner-chart-rolling-window.md) |
 | 2026-05-30 | Tuner: стрелка без убегания ноты | [2026-05-30-tuner-needle-note-hysteresis.md](./2026-05-30-tuner-needle-note-hysteresis.md) |
 | 2026-05-30 | Tuner: latency + quiet input vs Melody | [2026-05-30-tuner-latency-sensitivity-fix.md](./2026-05-30-tuner-latency-sensitivity-fix.md) |
 | 2026-05-29 | Справочник аккордов + схемы ukulele/guitar | [2026-05-29-chord-reference-dictionary.md](./2026-05-29-chord-reference-dictionary.md) |

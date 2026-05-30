@@ -83,8 +83,10 @@ interface Props {
   defaultHZoom?: number;
   /** Wall-clock X axis (px/ms) — Melody live chart; avoids index-based speed-up. */
   timeAxis?: boolean;
-  /** Session start ts — X stays fixed when oldest points drop (tuner live chart). */
+  /** Session start ts — Melody live chart; X from session start. */
   layoutOriginTs?: number | null;
+  /** Fixed wall-clock width (ms); origin = newest − window. Tuner only — no unbounded X drift. */
+  rollingTimeWindowMs?: number;
   /** Auto-scroll so the latest point stays near the playhead (default on). */
   scrollFollow?: boolean;
   /** EMA on pitch-mode Y center when no tuning target (tuner). */
@@ -139,6 +141,7 @@ function buildTimeLayout(
   timeAxis: boolean,
   scrollRightPad: number,
   layoutOriginTs: number | null | undefined,
+  rollingTimeWindowMs: number | null | undefined,
 ): ChartTimeLayout {
   const effectiveCell = Math.max(cellW, MIN_CELL_W);
   const n = pts.length;
@@ -159,9 +162,23 @@ function buildTimeLayout(
 
   if (timeAxis) {
     const pxPerMs = effectiveCell / CHART_SAMPLE_INTERVAL_MS;
-    const t0 = layoutOriginTs ?? pts[0].ts;
-    const xOfIndex = (i: number) => Math.max(0, (pts[i].ts - t0) * pxPerMs);
-    const xOfTime = (ts: number) => Math.max(0, (ts - t0) * pxPerMs);
+    const lastTs = pts[n - 1].ts;
+    const rolling =
+      rollingTimeWindowMs != null && rollingTimeWindowMs > 0
+        ? rollingTimeWindowMs
+        : null;
+    const t0 = rolling != null ? lastTs - rolling : (layoutOriginTs ?? pts[0].ts);
+    const windowW = rolling != null ? rolling * pxPerMs : null;
+    const xOfIndex = (i: number) => {
+      const x = (pts[i].ts - t0) * pxPerMs;
+      if (windowW == null) return Math.max(0, x);
+      return Math.max(0, Math.min(windowW, x));
+    };
+    const xOfTime = (ts: number) => {
+      const x = (ts - t0) * pxPerMs;
+      if (windowW == null) return Math.max(0, x);
+      return Math.max(0, Math.min(windowW, x));
+    };
 
     const idxGroups = new Map<number, number[]>();
     markers.forEach((mk, mi) => {
@@ -175,7 +192,10 @@ function buildTimeLayout(
     );
 
     const lastX = n > 0 ? xOfIndex(n - 1) : 0;
-    const totalW = Math.max(chartW, lastX + scrollRightPad + maxStagger + 8);
+    const totalW =
+      windowW != null
+        ? Math.max(chartW, windowW + scrollRightPad + maxStagger + 8)
+        : Math.max(chartW, lastX + scrollRightPad + maxStagger + 8);
 
     const markerX = (mi: number, ts: number) => {
       const idx = nearestHistoryIndex(pts, ts) ?? 0;
@@ -341,6 +361,7 @@ export default function FrequencyChart({
   defaultHZoom = 1,
   timeAxis = false,
   layoutOriginTs = null,
+  rollingTimeWindowMs = null,
   scrollFollow = true,
   smoothCenterMidi = false,
 }: Props) {
@@ -381,8 +402,18 @@ export default function FrequencyChart({
   const cellW = BASE_CELL * hZoom;
 
   const timeLayout = useMemo(
-    () => buildTimeLayout(pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs),
-    [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs],
+    () =>
+      buildTimeLayout(
+        pts,
+        registeredMarkers,
+        CHART_W,
+        cellW,
+        timeAxis,
+        scrollRightPad,
+        layoutOriginTs,
+        rollingTimeWindowMs,
+      ),
+    [pts, registeredMarkers, CHART_W, cellW, timeAxis, scrollRightPad, layoutOriginTs, rollingTimeWindowMs],
   );
   const { totalW, maxScroll, effectiveCell, xOfIndex, xOfTime, markerX } = timeLayout;
   const xOf = xOfIndex;
@@ -411,7 +442,7 @@ export default function FrequencyChart({
     setHScroll(prev => {
       const clamped = clamp3(prev, 0, maxScroll);
       if (!followEndRef.current) return clamped;
-      if (!timeAxis) return target;
+      if (!timeAxis || rollingTimeWindowMs != null) return target;
 
       const pxPerMs = effectiveCell / CHART_SAMPLE_INTERVAL_MS;
       const maxForward = pxPerMs * dt * 1.12;
@@ -421,7 +452,17 @@ export default function FrequencyChart({
       }
       return target;
     });
-  }, [scrollFollow, timeAxis, effectiveCell, lastTs, pts.length, lastEndX, maxScroll, ANCHOR_X]);
+  }, [
+    scrollFollow,
+    timeAxis,
+    rollingTimeWindowMs,
+    effectiveCell,
+    lastTs,
+    pts.length,
+    lastEndX,
+    maxScroll,
+    ANCHOR_X,
+  ]);
 
   const beginPan = useCallback(() => {
     panOriginScroll.current = hsRef.current;
@@ -442,10 +483,19 @@ export default function FrequencyChart({
     hzRef.current = z;
     setHZoom(z);
     setHScroll(s => clamp3(s, 0, maxHScrollFromTotal(
-      buildTimeLayout(pts, registeredMarkers, CHART_W, BASE_CELL * z, timeAxis, scrollRightPad, layoutOriginTs).totalW,
+      buildTimeLayout(
+        pts,
+        registeredMarkers,
+        CHART_W,
+        BASE_CELL * z,
+        timeAxis,
+        scrollRightPad,
+        layoutOriginTs,
+        rollingTimeWindowMs,
+      ).totalW,
       CHART_W,
     )));
-  }, [pts, registeredMarkers, BASE_CELL, CHART_W, timeAxis, scrollRightPad, layoutOriginTs]);
+  }, [pts, registeredMarkers, BASE_CELL, CHART_W, timeAxis, scrollRightPad, layoutOriginTs, rollingTimeWindowMs]);
 
   const scrollToStart = useCallback(() => {
     followEndRef.current = false;

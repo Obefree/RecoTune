@@ -6,6 +6,8 @@ import { isChartVoicedFrame } from './melodyTranscription';
 /** Matches `CHART_SAMPLE_INTERVAL_MS` in FrequencyChart and Melody hook. */
 export const PITCH_CHART_MIN_INTERVAL_MS = 100;
 export const PITCH_CHART_MAX_POINTS = 120;
+/** Tuner live chart: fixed viewport width on wall-clock axis (matches ~max points). */
+export const TUNER_CHART_WINDOW_MS = PITCH_CHART_MAX_POINTS * PITCH_CHART_MIN_INTERVAL_MS;
 
 export type ChartVoicedGate = 'melody' | 'tuner';
 
@@ -152,6 +154,8 @@ export function appendVoicedChartPoint(
     frame: PitchFrame;
     lastPtMs: number;
     cents?: number;
+    /** When set, pitch trace Y uses this instead of midi(chartFreq). */
+    chartMidi?: number;
     maxPoints?: number;
     voicedGate?: ChartVoicedGate;
   },
@@ -161,6 +165,7 @@ export function appendVoicedChartPoint(
     frame,
     lastPtMs,
     cents,
+    chartMidi,
     maxPoints = PITCH_CHART_MAX_POINTS,
     voicedGate = 'melody',
   } = opts;
@@ -170,8 +175,10 @@ export function appendVoicedChartPoint(
   if (chartFreq < 55 || !voiced) return null;
   if (ts - lastPtMs < PITCH_CHART_MIN_INTERVAL_MS) return null;
 
-  const midi = freqToMidi(chartFreq);
-  const info = frequencyToNote(chartFreq);
+  const midi = chartMidi ?? freqToMidi(chartFreq);
+  const info = frequencyToNote(
+    chartMidi != null ? A4_FREQ * 2 ** ((midi - A4_MIDI) / 12) : chartFreq,
+  );
   const pt: HistoryPoint = {
     cents: cents ?? info.cents,
     freq: chartFreq,

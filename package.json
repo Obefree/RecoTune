@@ -15,6 +15,7 @@
     "verify-chord-transpose": "node tools/verify-chord-transpose.mjs",
     "verify-pitch-chart": "node tools/verify-pitch-chart-history.mjs",
     "verify-tuner-display": "node tools/verify-tuner-display.mjs",
+    "verify-tuner-chart": "node tools/verify-tuner-chart-window.mjs",
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch",
     "dev-stack": "npm run dev-stack --prefix tools/chord-fetch",
     "chords:dev": "node tools/chord-fetch/chords-dev.mjs",

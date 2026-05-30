@@ -17,8 +17,8 @@ const A4 = 440;
 const A4_MIDI = 69;
 const NOTE_CONFIRM_FRAMES = 2;
 const NOTE_SWITCH_OFFSET_CENTS = 38;
-const MAX_CENTS_PER_SEC = 280;
-const HZ_DISPLAY_EMA = 0.32;
+const MAX_CENTS_PER_SEC = 400;
+const HZ_DISPLAY_EMA = 0.42;
 
 function freqToMidi(freq) {
   return 12 * Math.log2(freq / A4) + A4_MIDI;

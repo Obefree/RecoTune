@@ -12,7 +12,7 @@ import WebView from 'react-native-webview';
 
 import TunerEngine, { PitchMessage } from '../components/TunerEngine';
 import {
-  centsToColor, frequencyToNote, findNearestString, INSTRUMENTS, TUNINGS,
+  centsToColor, findNearestString, INSTRUMENTS, TUNINGS,
   getTuningsForInstrument, type Tuning,
 } from '../utils/noteUtils';
 import TunerNeedle from '../components/TunerNeedle';
@@ -24,8 +24,8 @@ import { SungNoteDetector } from '../utils/sungNoteDetector';
 import { createPitchFrame } from '../utils/pitchFrame';
 import {
   appendVoicedChartPoint,
-  ChartFreqStabilizer,
   PITCH_CHART_MAX_POINTS,
+  TUNER_CHART_WINDOW_MS,
 } from '../utils/pitchChartHistory';
 import { TunerPitchDisplay } from '../utils/tunerDisplay';
 
@@ -69,9 +69,7 @@ export default function TunerScreen() {
   const signalAnim      = useRef(new Animated.Value(0)).current;
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const tunerDisplayRef = useRef(new TunerPitchDisplay());
-  const chartStabilizerRef = useRef(new ChartFreqStabilizer('tuner'));
   const lastChartPtMsRef = useRef(0);
-  const [chartSessionT0, setChartSessionT0] = useState<number | null>(null);
   useEffect(() => {
     if (isActive) {
       pulseLoop.current = Animated.loop(Animated.sequence([
@@ -110,21 +108,21 @@ export default function TunerScreen() {
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
 
-      const chartFreq = chartStabilizerRef.current.process(raw) ?? raw;
-      const rawInfo = frequencyToNote(raw);
+      const chartMidi = disp.lockedMidi + disp.displayCents / 100;
       const chartFrame = createPitchFrame({
         t: ts,
         frequency: raw,
         signal: msg.signal ?? 0,
-        cents: rawInfo.cents,
+        cents: disp.cents,
         yinConfidence: msg.yinConfidence,
       });
       setHistory(prev => {
         const result = appendVoicedChartPoint(prev, {
-          chartFreq,
+          chartFreq: raw,
+          chartMidi,
           frame: chartFrame,
           lastPtMs: lastChartPtMsRef.current,
-          cents: disp.cents,
+          cents: Math.round(disp.displayCents),
           maxPoints: PITCH_CHART_MAX_POINTS,
           voicedGate: 'tuner',
         });
@@ -157,12 +155,10 @@ export default function TunerScreen() {
     } else if (msg.type === 'signal') {
       sungDetectorRef.current.process({ frequency: null, signal: msg.signal ?? 0 });
       tunerDisplayRef.current.reset();
-      chartStabilizerRef.current.reset();
       setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
       sungDetectorRef.current.process({ frequency: null, signal: 0 });
       tunerDisplayRef.current.reset();
-      chartStabilizerRef.current.reset();
       setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
       setError(msg.message ?? t('micError')); setIsActive(false);
@@ -175,9 +171,7 @@ export default function TunerScreen() {
     setError(null); setHistory([]); setRegisteredEvents([]);
     sungDetectorRef.current.reset();
     tunerDisplayRef.current.reset();
-    chartStabilizerRef.current.reset();
     lastChartPtMsRef.current = 0;
-    setChartSessionT0(Date.now());
     setIsActive(true);
   }, [t]);
 
@@ -185,15 +179,13 @@ export default function TunerScreen() {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
     sungDetectorRef.current.reset();
     tunerDisplayRef.current.reset();
-    chartStabilizerRef.current.reset();
-    setChartSessionT0(null);
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
 
   useFocusEffect(useCallback(() => () => stop(), [stop]));
 
   const signalWidth = signalAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
-  const displayCents = note?.cents ?? 0;
+  const displayCents = note?.displayCents ?? note?.cents ?? 0;
   const tuneColor   = note && isActive ? centsToColor(displayCents) : '#3a3a4a';
   const inTune      = note && isActive && Math.abs(displayCents) <= 5;
 
@@ -262,7 +254,7 @@ export default function TunerScreen() {
               history={history}
               active={isActive}
               timeAxis
-              layoutOriginTs={chartSessionT0}
+              rollingTimeWindowMs={TUNER_CHART_WINDOW_MS}
               defaultHZoom={1}
               maxHistoryPoints={PITCH_CHART_MAX_POINTS}
               registeredMarkers={registeredEvents.map(e => ({
@@ -292,7 +284,7 @@ export default function TunerScreen() {
           <View style={styles.centsBlock}>
             <Text style={[styles.centsVal, { color: note && isActive ? tuneColor : '#2a2a3a' }]}>
               {note && isActive
-                ? `${displayCents > 0 ? '+' : ''}${displayCents}`
+                ? `${displayCents > 0 ? '+' : ''}${Math.round(displayCents)}`
                 : '0'}
               <Text style={styles.centsSuffix}> ¢</Text>
             </Text>

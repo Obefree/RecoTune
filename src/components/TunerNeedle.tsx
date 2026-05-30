@@ -72,9 +72,9 @@ export default function TunerNeedle({ cents, color }: Props) {
     const angle = cents !== null ? centsToAngle(cents) : 0;
     Animated.spring(rotation, {
       toValue: angle,
-      damping: 22,
-      stiffness: 68,
-      mass: 0.85,
+      damping: 20,
+      stiffness: 92,
+      mass: 0.75,
       overshootClamping: true,
       useNativeDriver: true,
     }).start();
