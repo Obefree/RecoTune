@@ -9,21 +9,45 @@ export const PITCH_CHART_MAX_POINTS = 120;
 
 export type ChartVoicedGate = 'melody' | 'tuner';
 
-/** Tuner: keep trace while needle uses the same mic path (less strict than Melody transcription). */
+/** Tuner chart gate — softer than Melody transcription, aligned with tuner WebView rms. */
 export function isTunerVoicedFrame(frame: PitchFrame): boolean {
-  return frame.freq != null && frame.freq >= 55 && frame.rms >= 0.004;
+  return frame.freq != null && frame.freq >= 55 && frame.rms >= 0.0025;
 }
 
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 
-/** ~4 semitones — reject harmonic jumps (aligned with TunerEngine melody profile). */
-const CHART_JUMP_RATIO = 1.26;
-const CHART_JUMP_BLEND = 0.42;
-const CHART_EMA_ALPHA = 0.22;
-/** Max vertical step per chart sample (~100 ms). */
-const CHART_MAX_CENTS_STEP = 32;
-const CHART_FREQ_RING = 7;
+export type ChartStabilizerMode = 'melody' | 'tuner';
+
+export interface ChartStabilizerConfig {
+  jumpRatio: number;
+  jumpBlend: number;
+  emaAlpha: number;
+  maxCentsStep: number;
+  ringSize: number;
+}
+
+/** Melody: heavier trace smoothing for glides and playback scrub. */
+export const MELODY_CHART_STABILIZER: ChartStabilizerConfig = {
+  jumpRatio: 1.26,
+  jumpBlend: 0.42,
+  emaAlpha: 0.22,
+  maxCentsStep: 32,
+  ringSize: 7,
+};
+
+/** Tuner chart only — lighter than melody; needle uses separate EMA in TunerScreen. */
+export const TUNER_CHART_STABILIZER: ChartStabilizerConfig = {
+  jumpRatio: 1.32,
+  jumpBlend: 0.55,
+  emaAlpha: 0.38,
+  maxCentsStep: 48,
+  ringSize: 3,
+};
+
+export function chartStabilizerConfig(mode: ChartStabilizerMode): ChartStabilizerConfig {
+  return mode === 'tuner' ? TUNER_CHART_STABILIZER : MELODY_CHART_STABILIZER;
+}
 
 function freqToMidi(freq: number): number {
   return 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
@@ -36,9 +60,9 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-function clampCentsStep(prevHz: number, nextHz: number): number {
+function clampCentsStep(prevHz: number, nextHz: number, maxCentsStep: number): number {
   const prevMidi = freqToMidi(prevHz);
-  const maxSemi = CHART_MAX_CENTS_STEP / 100;
+  const maxSemi = maxCentsStep / 100;
   const lo = prevMidi - maxSemi;
   const hi = prevMidi + maxSemi;
   const clampedMidi = Math.min(Math.max(freqToMidi(nextHz), lo), hi);
@@ -46,13 +70,19 @@ function clampCentsStep(prevHz: number, nextHz: number): number {
 }
 
 /**
- * Display-path stabilizer for Melody chart (median + outlier blend + EMA + per-point cap).
+ * Display-path stabilizer for pitch charts (median + outlier blend + EMA + per-point cap).
+ * Melody uses {@link MELODY_CHART_STABILIZER}; tuner chart may use {@link TUNER_CHART_STABILIZER}.
  * Raw pitch still goes to detector / pitchFrames.
  */
 export class ChartFreqStabilizer {
+  private readonly cfg: ChartStabilizerConfig;
   private ring: number[] = [];
   private lastStable: number | null = null;
   private display: number | null = null;
+
+  constructor(mode: ChartStabilizerMode = 'melody') {
+    this.cfg = chartStabilizerConfig(mode);
+  }
 
   reset(): void {
     this.ring = [];
@@ -61,19 +91,21 @@ export class ChartFreqStabilizer {
   }
 
   process(rawHz: number): number | null {
+    const { jumpRatio, jumpBlend, emaAlpha, maxCentsStep, ringSize } = this.cfg;
+
     if (!Number.isFinite(rawHz) || rawHz < 55) {
       return this.display;
     }
 
     this.ring.push(rawHz);
-    if (this.ring.length > CHART_FREQ_RING) this.ring.shift();
+    if (this.ring.length > ringSize) this.ring.shift();
 
     let m = this.ring.length >= 3 ? median(this.ring) : rawHz;
     if (this.lastStable != null) {
-      const lo = this.lastStable / CHART_JUMP_RATIO;
-      const hi = this.lastStable * CHART_JUMP_RATIO;
+      const lo = this.lastStable / jumpRatio;
+      const hi = this.lastStable * jumpRatio;
       if (m < lo || m > hi) {
-        m = CHART_JUMP_BLEND * m + (1 - CHART_JUMP_BLEND) * this.lastStable;
+        m = jumpBlend * m + (1 - jumpBlend) * this.lastStable;
       }
     }
     this.lastStable = m;
@@ -82,10 +114,10 @@ export class ChartFreqStabilizer {
     let next =
       prevDisplay == null
         ? m
-        : CHART_EMA_ALPHA * m + (1 - CHART_EMA_ALPHA) * prevDisplay;
+        : emaAlpha * m + (1 - emaAlpha) * prevDisplay;
 
     if (prevDisplay != null) {
-      next = clampCentsStep(prevDisplay, next);
+      next = clampCentsStep(prevDisplay, next, maxCentsStep);
     }
     this.display = next;
     return next;

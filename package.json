@@ -13,6 +13,7 @@
     "verify-metadata-search": "node tools/verify-metadata-search.mjs",
     "verify-chord-normalize": "node tools/verify-chord-normalize.mjs",
     "verify-chord-transpose": "node tools/verify-chord-transpose.mjs",
+    "verify-pitch-chart": "node tools/verify-pitch-chart-history.mjs",
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch",
     "dev-stack": "npm run dev-stack --prefix tools/chord-fetch",
     "chords:dev": "node tools/chord-fetch/chords-dev.mjs",

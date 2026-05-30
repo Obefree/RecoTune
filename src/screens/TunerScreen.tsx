@@ -24,13 +24,13 @@ import { SungNoteDetector } from '../utils/sungNoteDetector';
 import { createPitchFrame } from '../utils/pitchFrame';
 import { appendVoicedChartPoint, PITCH_CHART_MAX_POINTS } from '../utils/pitchChartHistory';
 
-const EMA_ALPHA_FREQ_LOW = 0.14;
-const EMA_ALPHA_CENTS_LOW = 0.16;
-const EMA_ALPHA_FREQ_HIGH = 0.11;
-const EMA_ALPHA_CENTS_HIGH = 0.14;
+const EMA_ALPHA_FREQ_LOW = 0.22;
+const EMA_ALPHA_CENTS_LOW = 0.24;
+const EMA_ALPHA_FREQ_HIGH = 0.18;
+const EMA_ALPHA_CENTS_HIGH = 0.22;
 const HIGH_NOTE_HZ = 280;
-/** Slower EMA for graph trace only — needle keeps `emaAlphaFreq` / `emaAlphaCents`. */
-const CHART_EMA_ALPHA = 0.1;
+/** Graph-only EMA — needle uses `emaAlphaFreq` / `emaAlphaCents` on raw WebView pitch. */
+const CHART_EMA_ALPHA = 0.16;
 
 function emaAlphaFreq(hz: number) {
   return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_FREQ_HIGH : EMA_ALPHA_FREQ_LOW;
@@ -98,7 +98,7 @@ export default function TunerScreen() {
     if (msg.type === 'ready') {
       setError(null);
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
-      const raw  = msg.frequency;
+      const raw = msg.rawFrequency ?? msg.frequency;
       const prevF = smoothedFreqRef.current;
       const alphaF = emaAlphaFreq(prevF ?? raw);
       const freq = prevF == null ? raw : alphaF * raw + (1 - alphaF) * prevF;
@@ -288,7 +288,6 @@ export default function TunerScreen() {
               timeAxis
               layoutOriginTs={chartSessionT0}
               defaultHZoom={1}
-              smoothCenterMidi
               maxHistoryPoints={PITCH_CHART_MAX_POINTS}
               registeredMarkers={registeredEvents.map(e => ({
                 ts: e.ts,
