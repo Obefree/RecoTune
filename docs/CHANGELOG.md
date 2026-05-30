@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Tuner:** dedupe — удалён мёртвый `useTuner`/WAV YIN, tuner WebView отдаёт raw Hz в `TunerPitchDisplay`, `ChartFreqStabilizer` только для Melody; план Choona в KB. См. [docs/features/2026-05-30-tuner-dedupe-choona-pipeline.md](./features/2026-05-30-tuner-dedupe-choona-pipeline.md).
 - **Tuner:** фиксированное окно графика (12 с), убран лишний `ChartFreqStabilizer` на табе тюнера; стрелка на одном `TunerPitchDisplay`. См. [docs/features/2026-05-30-tuner-chart-rolling-window.md](./features/2026-05-30-tuner-chart-rolling-window.md).
 - **Tuner:** гистерезис ноты и плавная стрелка без «убегания» вперёд; отдельный `TunerPitchDisplay`. См. [docs/features/2026-05-30-tuner-needle-note-hysteresis.md](./features/2026-05-30-tuner-needle-note-hysteresis.md).
 - **Tuner:** быстрее стрелка и чувствительнее к тихому сигналу; профили стабилизатора отделены от Melody. См. [docs/features/2026-05-30-tuner-latency-sensitivity-fix.md](./features/2026-05-30-tuner-latency-sensitivity-fix.md).

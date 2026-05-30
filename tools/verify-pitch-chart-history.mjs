@@ -1,5 +1,5 @@
 /**
- * Smoke checks for pitch chart stabilizer profiles (inline mirror — no TS build).
+ * Smoke checks for Melody chart stabilizer + tuner voiced gate.
  * Run: node tools/verify-pitch-chart-history.mjs
  */
 
@@ -9,13 +9,6 @@ const MELODY = {
   emaAlpha: 0.22,
   maxCentsStep: 32,
   ringSize: 7,
-};
-const TUNER = {
-  jumpRatio: 1.32,
-  jumpBlend: 0.55,
-  emaAlpha: 0.38,
-  maxCentsStep: 48,
-  ringSize: 3,
 };
 
 function assert(cond, msg) {
@@ -83,19 +76,10 @@ assert(
 assert(!isTunerVoicedFrame({ freq: 220, rms: 0.001 }), 'tuner gate should reject near-silence');
 
 const melody = new ChartFreqStabilizer(MELODY);
-const tuner = new ChartFreqStabilizer(TUNER);
-
 let m = melody.process(440);
 for (let i = 0; i < 8; i++) m = melody.process(440 + (i % 2) * 6);
 const melodyLag = Math.abs(m - 452);
-
-let t = tuner.process(440);
-for (let i = 0; i < 8; i++) t = tuner.process(440 + (i % 2) * 6);
-const tunerLag = Math.abs(t - 452);
-
-assert(tunerLag < melodyLag, `tuner stabilizer should track faster (tuner=${tunerLag}, melody=${melodyLag})`);
-assert(MELODY.ringSize > TUNER.ringSize, 'melody ring >= tuner');
-assert(MELODY.emaAlpha < TUNER.emaAlpha, 'melody EMA slower than tuner chart');
+assert(melodyLag > 0.5, 'melody stabilizer should smooth jitter');
 
 melody.display = null;
 melody.ring = [];

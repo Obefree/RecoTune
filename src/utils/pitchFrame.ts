@@ -1,7 +1,4 @@
-import { frequencyToNote } from './noteUtils';
-
-const A4_FREQ = 440;
-const A4_MIDI = 69;
+import { freqToMidi, frequencyToNote } from './noteUtils';
 
 /** Single pitch sample for melody contour transcription. */
 export type PitchFrame = {
@@ -21,9 +18,7 @@ export const PITCH_FRAME_RING = {
   freqMax: 1000,
 } as const;
 
-export function freqToMidiFloat(freq: number): number {
-  return A4_MIDI + 12 * Math.log2(freq / A4_FREQ);
-}
+export const freqToMidiFloat = freqToMidi;
 
 export function createPitchFrame(input: {
   t: number;

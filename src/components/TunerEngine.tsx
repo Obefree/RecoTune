@@ -157,13 +157,14 @@ const buildHTML = (mode: TunerEngineMode) => `<!DOCTYPE html>
     if (rms > ENGINE.rmsGate) {
       var det = detectPitch(buf, ctx.sampleRate);
       if (det) {
-        var fUse = stabilizeFreq(det.freq);
-        var rawN = freqToNote(det.freq);
+        var fRaw = det.freq;
+        var fUse = ENGINE.name === 'melody' ? stabilizeFreq(fRaw) : fRaw;
+        var rawN = freqToNote(fRaw);
         var n = freqToNote(fUse);
         post({
           type: 'pitch',
           frequency: fUse,
-          rawFrequency: det.freq,
+          rawFrequency: fRaw,
           stableFrequency: fUse,
           note: n.name,
           octave: n.octave,

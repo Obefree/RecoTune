@@ -208,6 +208,11 @@ export function getTuningsForInstrument(instrument: string): Tuning[] {
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 
+/** Fractional MIDI (A4 = 69). Shared by tuner display, charts, pitch frames. */
+export function freqToMidi(freq: number): number {
+  return 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
+}
+
 export function frequencyToNote(frequency: number): NoteInfo {
   const midi        = 12 * Math.log2(frequency / A4_FREQ) + A4_MIDI;
   const roundedMidi = Math.round(midi);

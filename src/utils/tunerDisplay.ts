@@ -1,4 +1,4 @@
-import { frequencyToNote } from './noteUtils';
+import { freqToMidi, frequencyToNote } from './noteUtils';
 
 const A4 = 440;
 const A4_MIDI = 69;
@@ -21,10 +21,6 @@ export interface TunerDisplayFrame {
   displayCents: number;
   frequency: number;
   lockedMidi: number;
-}
-
-function freqToMidi(freq: number): number {
-  return 12 * Math.log2(freq / A4) + A4_MIDI;
 }
 
 function midiToNameOctave(midi: number): { name: string; octave: number } {

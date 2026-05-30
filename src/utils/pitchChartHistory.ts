@@ -1,5 +1,5 @@
 import type { HistoryPoint } from '../components/FrequencyChart';
-import { frequencyToNote } from './noteUtils';
+import { freqToMidi, frequencyToNote } from './noteUtils';
 import type { PitchFrame } from './pitchFrame';
 import { isChartVoicedFrame } from './melodyTranscription';
 
@@ -19,8 +19,6 @@ export function isTunerVoicedFrame(frame: PitchFrame): boolean {
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 
-export type ChartStabilizerMode = 'melody' | 'tuner';
-
 export interface ChartStabilizerConfig {
   jumpRatio: number;
   jumpBlend: number;
@@ -29,7 +27,7 @@ export interface ChartStabilizerConfig {
   ringSize: number;
 }
 
-/** Melody: heavier trace smoothing for glides and playback scrub. */
+/** Melody chart trace only — tuner chart uses raw Hz + TunerPitchDisplay. */
 export const MELODY_CHART_STABILIZER: ChartStabilizerConfig = {
   jumpRatio: 1.26,
   jumpBlend: 0.42,
@@ -37,23 +35,6 @@ export const MELODY_CHART_STABILIZER: ChartStabilizerConfig = {
   maxCentsStep: 32,
   ringSize: 7,
 };
-
-/** Tuner chart only — lighter than melody; needle uses separate EMA in TunerScreen. */
-export const TUNER_CHART_STABILIZER: ChartStabilizerConfig = {
-  jumpRatio: 1.32,
-  jumpBlend: 0.55,
-  emaAlpha: 0.38,
-  maxCentsStep: 48,
-  ringSize: 3,
-};
-
-export function chartStabilizerConfig(mode: ChartStabilizerMode): ChartStabilizerConfig {
-  return mode === 'tuner' ? TUNER_CHART_STABILIZER : MELODY_CHART_STABILIZER;
-}
-
-function freqToMidi(freq: number): number {
-  return 12 * Math.log2(freq / A4_FREQ) + A4_MIDI;
-}
 
 function median(nums: number[]): number {
   if (nums.length === 0) return 0;
@@ -72,19 +53,14 @@ function clampCentsStep(prevHz: number, nextHz: number, maxCentsStep: number): n
 }
 
 /**
- * Display-path stabilizer for pitch charts (median + outlier blend + EMA + per-point cap).
- * Melody uses {@link MELODY_CHART_STABILIZER}; tuner chart may use {@link TUNER_CHART_STABILIZER}.
- * Raw pitch still goes to detector / pitchFrames.
+ * Display-path stabilizer for Melody pitch charts (median + outlier blend + EMA + per-point cap).
+ * Tuner tab does not use this — see {@link TunerPitchDisplay} + rolling window chart.
  */
 export class ChartFreqStabilizer {
-  private readonly cfg: ChartStabilizerConfig;
+  private readonly cfg = MELODY_CHART_STABILIZER;
   private ring: number[] = [];
   private lastStable: number | null = null;
   private display: number | null = null;
-
-  constructor(mode: ChartStabilizerMode = 'melody') {
-    this.cfg = chartStabilizerConfig(mode);
-  }
 
   reset(): void {
     this.ring = [];
