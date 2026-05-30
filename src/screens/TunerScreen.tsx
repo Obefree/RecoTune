@@ -27,7 +27,7 @@ import {
   PITCH_CHART_MAX_POINTS,
   TUNER_CHART_WINDOW_MS,
 } from '../utils/pitchChartHistory';
-import { TunerPitchDisplay } from '../utils/tunerDisplay';
+import { TunerPitchDisplay, TUNER_DISPLAY_UI_MS } from '../utils/tunerDisplay';
 
 const MAX_REGISTERED = 64;
 const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', 'Guitar 7': '🎸', Ukulele: '🪗', Bass: '🎸', Mandolin: '🪕' };
@@ -70,6 +70,7 @@ export default function TunerScreen() {
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const tunerDisplayRef = useRef(new TunerPitchDisplay());
   const lastChartPtMsRef = useRef(0);
+  const lastUiFlushMsRef = useRef(0);
   useEffect(() => {
     if (isActive) {
       pulseLoop.current = Animated.loop(Animated.sequence([
@@ -96,19 +97,23 @@ export default function TunerScreen() {
       const disp = tunerDisplayRef.current.process(raw, ts);
       if (!disp) return;
 
-      const n: NoteState = {
-        name: disp.name,
-        octave: disp.octave,
-        cents: disp.cents,
-        displayCents: disp.displayCents,
-        frequency: disp.frequency,
-      };
-
-      setFrequency(disp.frequency);
-      setNote(n);
       setSignalLevel(msg.signal ?? 0);
 
-      const chartMidi = disp.lockedMidi + disp.displayCents / 100;
+      const flushUi = ts - lastUiFlushMsRef.current >= TUNER_DISPLAY_UI_MS;
+      if (flushUi) {
+        lastUiFlushMsRef.current = ts;
+        const n: NoteState = {
+          name: disp.name,
+          octave: disp.octave,
+          cents: disp.cents,
+          displayCents: disp.displayCents,
+          frequency: disp.frequency,
+        };
+        setFrequency(disp.frequency);
+        setNote(n);
+      }
+
+      const chartMidi = disp.chartDisplayMidi;
       const chartFrame = createPitchFrame({
         t: ts,
         frequency: raw,
@@ -155,10 +160,12 @@ export default function TunerScreen() {
     } else if (msg.type === 'signal') {
       sungDetectorRef.current.process({ frequency: null, signal: msg.signal ?? 0 });
       tunerDisplayRef.current.reset();
+      lastUiFlushMsRef.current = 0;
       setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
       sungDetectorRef.current.process({ frequency: null, signal: 0 });
       tunerDisplayRef.current.reset();
+      lastUiFlushMsRef.current = 0;
       setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
       setError(msg.message ?? t('micError')); setIsActive(false);
@@ -172,6 +179,7 @@ export default function TunerScreen() {
     sungDetectorRef.current.reset();
     tunerDisplayRef.current.reset();
     lastChartPtMsRef.current = 0;
+    lastUiFlushMsRef.current = 0;
     setIsActive(true);
   }, [t]);
 
@@ -179,6 +187,7 @@ export default function TunerScreen() {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
     sungDetectorRef.current.reset();
     tunerDisplayRef.current.reset();
+    lastUiFlushMsRef.current = 0;
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
 

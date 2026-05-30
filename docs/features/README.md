@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-30 | Tuner: плавная стрелка v2 (outlier, UI throttle) | [2026-05-30-tuner-display-smoothing-v2.md](./2026-05-30-tuner-display-smoothing-v2.md) |
 | 2026-05-30 | Tuner: dedupe + Choona-style pipeline | [2026-05-30-tuner-dedupe-choona-pipeline.md](./2026-05-30-tuner-dedupe-choona-pipeline.md) |
 | 2026-05-30 | Tuner: окно графика 12 с, без лишнего EMA | [2026-05-30-tuner-chart-rolling-window.md](./2026-05-30-tuner-chart-rolling-window.md) |
 | 2026-05-30 | Tuner: стрелка без убегания ноты | [2026-05-30-tuner-needle-note-hysteresis.md](./2026-05-30-tuner-needle-note-hysteresis.md) |
