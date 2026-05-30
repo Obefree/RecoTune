@@ -22,27 +22,23 @@ import { useLocale } from '../context/LocaleContext';
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
 import { SungNoteDetector } from '../utils/sungNoteDetector';
 import { createPitchFrame } from '../utils/pitchFrame';
-import { appendVoicedChartPoint, PITCH_CHART_MAX_POINTS } from '../utils/pitchChartHistory';
-
-const EMA_ALPHA_FREQ_LOW = 0.22;
-const EMA_ALPHA_CENTS_LOW = 0.24;
-const EMA_ALPHA_FREQ_HIGH = 0.18;
-const EMA_ALPHA_CENTS_HIGH = 0.22;
-const HIGH_NOTE_HZ = 280;
-/** Graph-only EMA — needle uses `emaAlphaFreq` / `emaAlphaCents` on raw WebView pitch. */
-const CHART_EMA_ALPHA = 0.16;
-
-function emaAlphaFreq(hz: number) {
-  return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_FREQ_HIGH : EMA_ALPHA_FREQ_LOW;
-}
-function emaAlphaCents(hz: number) {
-  return hz >= HIGH_NOTE_HZ ? EMA_ALPHA_CENTS_HIGH : EMA_ALPHA_CENTS_LOW;
-}
+import {
+  appendVoicedChartPoint,
+  ChartFreqStabilizer,
+  PITCH_CHART_MAX_POINTS,
+} from '../utils/pitchChartHistory';
+import { TunerPitchDisplay } from '../utils/tunerDisplay';
 
 const MAX_REGISTERED = 64;
 const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', 'Guitar 7': '🎸', Ukulele: '🪗', Bass: '🎸', Mandolin: '🪕' };
 
-interface NoteState { name: string; octave: number; cents: number; frequency: number }
+interface NoteState {
+  name: string;
+  octave: number;
+  cents: number;
+  displayCents: number;
+  frequency: number;
+}
 
 const MINI_STRIP_H = 68 + 6;
 const NEEDLE_PAD = 24;
@@ -72,9 +68,8 @@ export default function TunerScreen() {
   const pulseAnim       = useRef(new Animated.Value(1)).current;
   const signalAnim      = useRef(new Animated.Value(0)).current;
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
-  const smoothedFreqRef = useRef<number | null>(null);
-  const smoothedCentsRef = useRef<number | null>(null);
-  const chartSmoothedFreqRef = useRef<number | null>(null);
+  const tunerDisplayRef = useRef(new TunerPitchDisplay());
+  const chartStabilizerRef = useRef(new ChartFreqStabilizer('tuner'));
   const lastChartPtMsRef = useRef(0);
   const [chartSessionT0, setChartSessionT0] = useState<number | null>(null);
   useEffect(() => {
@@ -99,44 +94,29 @@ export default function TunerScreen() {
       setError(null);
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
       const raw = msg.rawFrequency ?? msg.frequency;
-      const prevF = smoothedFreqRef.current;
-      const alphaF = emaAlphaFreq(prevF ?? raw);
-      const freq = prevF == null ? raw : alphaF * raw + (1 - alphaF) * prevF;
-      smoothedFreqRef.current = freq;
-
-      const info = frequencyToNote(freq);
-      const rawCents = info.cents;
-      const prevC = smoothedCentsRef.current;
-      let dispCents = rawCents;
-      if (prevC != null) {
-        const next = prevC + emaAlphaCents(freq) * (rawCents - prevC);
-        smoothedCentsRef.current = next;
-        dispCents = Math.round(next);
-      } else {
-        smoothedCentsRef.current = rawCents;
-      }
+      const ts = Date.now();
+      const disp = tunerDisplayRef.current.process(raw, ts);
+      if (!disp) return;
 
       const n: NoteState = {
-        name: info.name,
-        octave: info.octave,
-        cents: dispCents,
-        frequency: freq,
+        name: disp.name,
+        octave: disp.octave,
+        cents: disp.cents,
+        displayCents: disp.displayCents,
+        frequency: disp.frequency,
       };
 
-      setFrequency(freq);
+      setFrequency(disp.frequency);
       setNote(n);
       setSignalLevel(msg.signal ?? 0);
-      const ts = Date.now();
-      const prevChartF = chartSmoothedFreqRef.current;
-      const chartFreq = prevChartF == null
-        ? freq
-        : CHART_EMA_ALPHA * freq + (1 - CHART_EMA_ALPHA) * prevChartF;
-      chartSmoothedFreqRef.current = chartFreq;
+
+      const chartFreq = chartStabilizerRef.current.process(raw) ?? raw;
+      const rawInfo = frequencyToNote(raw);
       const chartFrame = createPitchFrame({
         t: ts,
         frequency: raw,
         signal: msg.signal ?? 0,
-        cents: rawCents,
+        cents: rawInfo.cents,
         yinConfidence: msg.yinConfidence,
       });
       setHistory(prev => {
@@ -144,7 +124,7 @@ export default function TunerScreen() {
           chartFreq,
           frame: chartFrame,
           lastPtMs: lastChartPtMsRef.current,
-          cents: dispCents,
+          cents: disp.cents,
           maxPoints: PITCH_CHART_MAX_POINTS,
           voicedGate: 'tuner',
         });
@@ -155,9 +135,9 @@ export default function TunerScreen() {
         return prev;
       });
       const detected = sungDetectorRef.current.process({
-        frequency: freq,
+        frequency: raw,
         signal: msg.signal ?? 0,
-        cents: dispCents,
+        cents: disp.cents,
         ts,
         yinConfidence: msg.yinConfidence,
       });
@@ -176,15 +156,13 @@ export default function TunerScreen() {
       }
     } else if (msg.type === 'signal') {
       sungDetectorRef.current.process({ frequency: null, signal: msg.signal ?? 0 });
-      smoothedFreqRef.current = null;
-      smoothedCentsRef.current = null;
-      chartSmoothedFreqRef.current = null;
+      tunerDisplayRef.current.reset();
+      chartStabilizerRef.current.reset();
       setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
       sungDetectorRef.current.process({ frequency: null, signal: 0 });
-      smoothedFreqRef.current = null;
-      smoothedCentsRef.current = null;
-      chartSmoothedFreqRef.current = null;
+      tunerDisplayRef.current.reset();
+      chartStabilizerRef.current.reset();
       setNote(null); setFrequency(null); setSignalLevel(0);
     } else if (msg.type === 'error') {
       setError(msg.message ?? t('micError')); setIsActive(false);
@@ -196,9 +174,8 @@ export default function TunerScreen() {
     if (status !== 'granted') { setError(t('micDenied')); return; }
     setError(null); setHistory([]); setRegisteredEvents([]);
     sungDetectorRef.current.reset();
-    smoothedFreqRef.current = null;
-    smoothedCentsRef.current = null;
-    chartSmoothedFreqRef.current = null;
+    tunerDisplayRef.current.reset();
+    chartStabilizerRef.current.reset();
     lastChartPtMsRef.current = 0;
     setChartSessionT0(Date.now());
     setIsActive(true);
@@ -207,9 +184,8 @@ export default function TunerScreen() {
   const stop = useCallback(() => {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
     sungDetectorRef.current.reset();
-    smoothedFreqRef.current = null;
-    smoothedCentsRef.current = null;
-    chartSmoothedFreqRef.current = null;
+    tunerDisplayRef.current.reset();
+    chartStabilizerRef.current.reset();
     setChartSessionT0(null);
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
   }, []);
@@ -298,7 +274,7 @@ export default function TunerScreen() {
             />
           ) : (
             <>
-              <TunerNeedle cents={isActive && note ? note.cents : null} color={tuneColor} />
+              <TunerNeedle cents={isActive && note ? note.displayCents : null} color={tuneColor} />
               <MiniCentsStrip history={history} />
             </>
           )}

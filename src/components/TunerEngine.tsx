@@ -41,9 +41,9 @@ const ENGINE_PROFILES = {
     maxHz: 1400,
     rmsGate: 0.0035,
     maxYin: 0.2,
-    ring: 5,
-    jumpRatio: 1.32,
-    jumpBlendNew: 0.55,
+    ring: 3,
+    jumpRatio: 1.28,
+    jumpBlendNew: 0.72,
     frameMs: 55,
   },
   melody: {

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Tuner:** гистерезис ноты и плавная стрелка без «убегания» вперёд; отдельный `TunerPitchDisplay`, график на `TUNER_CHART_STABILIZER`. См. [docs/features/2026-05-30-tuner-needle-note-hysteresis.md](./features/2026-05-30-tuner-needle-note-hysteresis.md).
 - **Tuner:** быстрее стрелка и чувствительнее к тихому сигналу; профили стабилизатора отделены от Melody. См. [docs/features/2026-05-30-tuner-latency-sensitivity-fix.md](./features/2026-05-30-tuner-latency-sensitivity-fix.md).
 
 - **Android release build:** `app.config.js` + `expo-build-properties` (minify/shrink/ProGuard survives prebuild), `metro.config.js` blocks `tools/`, `build-apk-release.bat` clears stale `app\build`, `docs/BUILD-ANDROID.md`, npm scripts `build:android:release` / `prebuild:android`.

@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-30 | Tuner: стрелка без убегания ноты | [2026-05-30-tuner-needle-note-hysteresis.md](./2026-05-30-tuner-needle-note-hysteresis.md) |
 | 2026-05-30 | Tuner: latency + quiet input vs Melody | [2026-05-30-tuner-latency-sensitivity-fix.md](./2026-05-30-tuner-latency-sensitivity-fix.md) |
 | 2026-05-29 | Справочник аккордов + схемы ukulele/guitar | [2026-05-29-chord-reference-dictionary.md](./2026-05-29-chord-reference-dictionary.md) |
 | 2026-05-29 | Zoom 30%, прокси-поиск, layout Creep | [2026-05-29-zoom-proxy-creep-layout.md](./2026-05-29-zoom-proxy-creep-layout.md) |
