@@ -1,5 +1,12 @@
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
-import { frequencyToNote } from './noteUtils';
+import { frequencyToNote, NOTE_NAMES } from './noteUtils';
+
+export type BasicPitchServerNote = {
+  startMs: number;
+  endMs: number;
+  midi: number;
+  amplitude?: number;
+};
 import {
   type PitchFrame,
   PITCH_FRAME_RING,
@@ -364,6 +371,42 @@ export function isTranscriptionConfidenceOk(result: TranscriptionResult): boolea
     return result.confidence >= 0.2 && result.segments[0].frameCount >= 3;
   }
   return result.confidence >= 0.25;
+}
+
+/** Map basic-pitch server notes → MelodyScreen segments (no fake fill). */
+export function segmentsFromBasicPitchNotes(notes: BasicPitchServerNote[]): TranscriptionResult {
+  if (notes.length === 0) {
+    return { segments: [], voicedFrameCount: 0, confidence: 0 };
+  }
+  const sorted = [...notes].sort((a, b) => a.startMs - b.startMs || a.midi - b.midi);
+  const segments: TranscribedNoteSegment[] = sorted.map(n => {
+    const midi = Math.round(n.midi);
+    const noteIdx = ((midi % 12) + 12) % 12;
+    const octave = Math.floor(midi / 12) - 1;
+    const freqMedian = 440 * 2 ** ((midi - 69) / 12);
+    const durationMs = Math.max(50, n.endMs - n.startMs);
+    const confidenceMean = Math.min(1, Math.max(0.35, n.amplitude ?? 0.7));
+    return {
+      startMs: n.startMs,
+      endMs: n.endMs,
+      durationMs,
+      midi,
+      midiFloatMedian: n.midi,
+      freqMedian,
+      noteName: NOTE_NAMES[noteIdx],
+      octave,
+      centsMean: 0,
+      confidenceMean,
+      frameCount: Math.max(1, Math.round(durationMs / 20)),
+    };
+  });
+  const confidences = segments.map(s => s.confidenceMean);
+  const avgConf = confidences.length ? mean(confidences) : 0;
+  return {
+    segments,
+    voicedFrameCount: segments.length,
+    confidence: Math.round(avgConf * 100) / 100,
+  };
 }
 
 export function segmentsToRegisteredEvents(

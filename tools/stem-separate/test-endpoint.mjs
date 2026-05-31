@@ -3,6 +3,7 @@
  * Smoke-test stem-separate dev proxy.
  *   node tools/stem-separate/test-endpoint.mjs
  *   node tools/stem-separate/test-endpoint.mjs --separate
+ *   node tools/stem-separate/test-endpoint.mjs --transcribe
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const base = (process.argv.find(a => a.startsWith('http')) || process.env.STEM_SEPARATE_URL || 'http://127.0.0.1:8788').replace(/\/+$/, '');
 const withSeparate = process.argv.includes('--separate');
+const withTranscribe = process.argv.includes('--transcribe');
 
 function writeMinimalWav(filePath, durationSec = 0.25, sampleRate = 44100) {
   const numSamples = Math.floor(sampleRate * durationSec);
@@ -45,34 +47,61 @@ async function main() {
     process.exit(1);
   }
 
-  if (!withSeparate) {
-    if (!health.demucs) {
-      console.warn('WARN: demucs=false — health OK, separation skipped (pass --separate after pip install)');
-    }
-    process.exit(0);
-  }
-
-  if (!health.demucs) {
-    console.error('FAIL: demucs not installed — install per README, then re-run with --separate');
-    process.exit(1);
-  }
-
   const here = path.dirname(fileURLToPath(import.meta.url));
   const wavPath = path.join(here, '.test-tone.wav');
   writeMinimalWav(wavPath);
   const audioBase64 = fs.readFileSync(wavPath).toString('base64');
   fs.unlinkSync(wavPath);
 
-  console.log('POST /separate (minimal WAV, mode=minus) — may take 1–3 min on first Demucs run…');
-  const sepRes = await fetch(`${base}/separate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64, mode: 'minus', filename: 'test.wav' }),
-    signal: AbortSignal.timeout(900_000),
-  });
-  const sep = await sepRes.json();
-  console.log('POST /separate', sepRes.status, sep.error || `stems: ${(sep.stems ?? []).map(s => s.id).join(', ')}`);
-  process.exit(sepRes.ok && (sep.stems?.length ?? 0) > 0 ? 0 : 1);
+  if (!withSeparate && !withTranscribe) {
+    if (!health.demucs) {
+      console.warn('WARN: demucs=false — pass --separate after pip install demucs');
+    }
+    if (!health.basic_pitch) {
+      console.warn('WARN: basic_pitch=false — pass --transcribe after pip install basic-pitch');
+    }
+    process.exit(0);
+  }
+
+  if (withSeparate) {
+    if (!health.demucs) {
+      console.error('FAIL: demucs not installed — install per README, then re-run with --separate');
+      process.exit(1);
+    }
+    console.log('POST /separate (minimal WAV, mode=minus) — may take 1–3 min on first Demucs run…');
+    const sepRes = await fetch(`${base}/separate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, mode: 'minus', filename: 'test.wav' }),
+      signal: AbortSignal.timeout(900_000),
+    });
+    const sep = await sepRes.json();
+    console.log('POST /separate', sepRes.status, sep.error || `stems: ${(sep.stems ?? []).map(s => s.id).join(', ')}`);
+    if (!sepRes.ok || (sep.stems?.length ?? 0) === 0) process.exit(1);
+  }
+
+  if (withTranscribe) {
+    if (!health.basic_pitch) {
+      console.error('FAIL: basic_pitch not installed — pip install basic-pitch, then re-run with --transcribe');
+      process.exit(1);
+    }
+    console.log('POST /transcribe (minimal WAV) — first run may download model…');
+    const trRes = await fetch(`${base}/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, filename: 'test.wav' }),
+      signal: AbortSignal.timeout(600_000),
+    });
+    const tr = await trRes.json();
+    console.log(
+      'POST /transcribe',
+      trRes.status,
+      tr.error || `notes: ${tr.noteCount ?? tr.notes?.length ?? 0}`,
+    );
+    if (!trRes.ok) process.exit(1);
+  }
+
+  process.exit(0);
 }
 
 main().catch(e => {

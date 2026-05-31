@@ -12,9 +12,18 @@ export type StemServerStem = {
 export type StemServerHealth = {
   ok: boolean;
   demucs: boolean;
+  basic_pitch?: boolean;
   version?: string;
   demucsError?: string;
+  basicPitchError?: string;
   error?: string;
+};
+
+export type StemTranscribeNote = {
+  startMs: number;
+  endMs: number;
+  midi: number;
+  amplitude?: number;
 };
 
 export class StemSeparateError extends Error {
@@ -50,8 +59,10 @@ export async function probeStemServer(separateUrl: string, timeoutMs = 5000): Pr
     return {
       ok: true,
       demucs: body.demucs === true,
+      basic_pitch: body.basic_pitch === true,
       version: typeof body.version === 'string' ? body.version : undefined,
       demucsError: typeof body.demucsError === 'string' ? body.demucsError : undefined,
+      basicPitchError: typeof body.basicPitchError === 'string' ? body.basicPitchError : undefined,
     };
   } catch (e) {
     return { ok: false, demucs: false, error: String(e) };
@@ -64,7 +75,55 @@ function stemErrorMessage(payload: Record<string, unknown>, status: number): str
   if (code === 'DEMUCS_NOT_INSTALLED') {
     return `${err}\n\nУстановите Demucs на ПК (tools/stem-separate/README.md) и перезапустите npm run stems:dev`;
   }
+  if (code === 'BASIC_PITCH_NOT_INSTALLED') {
+    return `${err}\n\nУстановите basic-pitch на ПК (pip install basic-pitch) и перезапустите npm run stems:dev`;
+  }
   return err;
+}
+
+export async function transcribeMelodyOnServer(
+  transcribeUrl: string,
+  audioUri: string,
+  onProgress?: (msg: string) => void,
+): Promise<StemTranscribeNote[]> {
+  if (!transcribeUrl.trim()) {
+    throw new StemSeparateError('Сервер транскрипции не настроен', { code: 'NO_URL' });
+  }
+
+  onProgress?.('Чтение файла...');
+  const audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const name = audioUri.split('/').pop() ?? 'audio.wav';
+
+  onProgress?.('Транскрипция на ПК (basic-pitch)...');
+  const res = await fetch(transcribeUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ audioBase64, filename: name }),
+    signal: AbortSignal.timeout(600_000),
+  });
+
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = (await res.json()) as Record<string, unknown>;
+  } catch {
+    payload = {};
+  }
+
+  if (!res.ok) {
+    throw new StemSeparateError(stemErrorMessage(payload, res.status), {
+      code: typeof payload.code === 'string' ? payload.code : undefined,
+      status: res.status,
+    });
+  }
+
+  const notes = payload.notes;
+  if (!Array.isArray(notes) || notes.length === 0) {
+    throw new StemSeparateError('Сервер не вернул ноты', { code: 'EMPTY_NOTES' });
+  }
+
+  return notes as StemTranscribeNote[];
 }
 
 export async function separateStemsOnServer(

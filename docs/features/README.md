@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-31 | Melody: basic-pitch из файла (ПК) | [2026-05-31-basic-pitch-transcribe.md](./2026-05-31-basic-pitch-transcribe.md) |
 | 2026-05-31 | AI Lab: Demucs на ПК, DSP (демо) | [2026-05-31-stem-demucs-server.md](./2026-05-31-stem-demucs-server.md) |
 | 2026-05-30 | Tuner: плавная стрелка v2 (outlier, UI throttle) | [2026-05-30-tuner-display-smoothing-v2.md](./2026-05-30-tuner-display-smoothing-v2.md) |
 | 2026-05-30 | Tuner: dedupe + Choona-style pipeline | [2026-05-30-tuner-dedupe-choona-pipeline.md](./2026-05-30-tuner-dedupe-choona-pipeline.md) |

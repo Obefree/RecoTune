@@ -41,4 +41,4 @@ npm run test-stem-separate
 
 ## P2 дальше
 
-`GET /transcribe` → 501; мелодия — basic-pitch batch (отдельная задача).
+Мелодия из файла — см. [2026-05-31-basic-pitch-transcribe.md](./2026-05-31-basic-pitch-transcribe.md).

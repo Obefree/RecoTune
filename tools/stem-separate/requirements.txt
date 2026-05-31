@@ -2,3 +2,6 @@
 demucs>=4.0.0
 torch>=2.0.0
 torchaudio>=2.0.0
+
+# Melody transcription (P2) — optional, heavy (TensorFlow); can use separate venv
+basic-pitch>=0.3.0

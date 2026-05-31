@@ -8,6 +8,7 @@
 npm run stems:dev              # HTTP :8788
 npm run test-stem-separate     # GET /health
 npm run test-stem-separate -- --separate   # POST /separate (нужен Demucs)
+npm run test-stem-transcribe   # POST /transcribe (нужен basic-pitch)
 ```
 
 ## Переменные
@@ -18,4 +19,5 @@ npm run test-stem-separate -- --separate   # POST /separate (нужен Demucs)
 
 ## В приложении
 
-AI Lab → вкладка **ДОРОЖКИ** → **Нейросеть (ПК)**. Без сервера доступен только **DSP (демо)**.
+- AI Lab → **ДОРОЖКИ** → **Нейросеть (ПК)** (Demucs). Без сервера — **DSP (демо)**.
+- Melody → **Из файла** (basic-pitch). Без сервера — только микрофон (START).

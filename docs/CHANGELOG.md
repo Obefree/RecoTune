@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Melody / из файла:** basic-pitch на ПК (`POST /transcribe`, :8788), кнопка «Из файла», PLAY по сегментам; без сервера — только микрофон. См. [docs/features/2026-05-31-basic-pitch-transcribe.md](./features/2026-05-31-basic-pitch-transcribe.md).
 - **AI Lab / ДОРОЖКИ:** Demucs на ПК (`npm run stems:dev`, :8788), переключатель DSP (демо) vs Нейросеть (ПК), честные ошибки без фейковых stem. См. [docs/features/2026-05-31-stem-demucs-server.md](./features/2026-05-31-stem-demucs-server.md), [docs/stem-separate-local.md](./stem-separate-local.md).
 - **Tuner:** усиленное сглаживание стрелки/ноты/Hz, outlier hold, UI ~10 Hz, EMA только для линии графика. См. [docs/features/2026-05-30-tuner-display-smoothing-v2.md](./features/2026-05-30-tuner-display-smoothing-v2.md).
 - **Tuner:** dedupe — удалён мёртвый `useTuner`/WAV YIN, tuner WebView отдаёт raw Hz в `TunerPitchDisplay`, `ChartFreqStabilizer` только для Melody; план Choona в KB. См. [docs/features/2026-05-30-tuner-dedupe-choona-pipeline.md](./features/2026-05-30-tuner-dedupe-choona-pipeline.md).

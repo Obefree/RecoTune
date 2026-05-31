@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated,
-  FlatList, useWindowDimensions, Switch,
+  FlatList, useWindowDimensions, Switch, ActivityIndicator,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import { ScrollView } from 'react-native-gesture-handler';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,9 +28,17 @@ import {
 } from '../utils/melodyPlayback';
 import {
   isTranscriptionConfidenceOk,
+  segmentsFromBasicPitchNotes,
   segmentsToRegisteredEvents,
   transcribeFromPitchFrames,
+  type TranscriptionResult,
 } from '../utils/melodyTranscription';
+import {
+  probeStemServer,
+  transcribeMelodyOnServer,
+  StemSeparateError,
+} from '../providers/stemSeparateClient';
+import { resolveStemSeparateUrlDetailed, stemSeparateSetupHint } from '../providers/stemSeparateUrl';
 import type { MelodyPlayerMessage } from '../components/MelodyPlayerEngine';
 import { centsToColor, frequencyToNote } from '../utils/noteUtils';
 import SungNoteStrip from '../components/SungNoteStrip';
@@ -93,6 +102,9 @@ export default function MelodyScreen() {
   const [instrument, setInstrument] = useState<MelodyInstrument>('piano');
   /** contour = transcription from pitch frames; classic = SungNoteDetector */
   const [recognitionMode, setRecognitionMode] = useState<'contour' | 'classic'>('contour');
+  const [fileImport, setFileImport] = useState<TranscriptionResult | null>(null);
+  const [fileImportBusy, setFileImportBusy] = useState(false);
+  const [fileImportHint, setFileImportHint] = useState<string | null>(null);
 
   const webViewRef = useRef<WebView>(null);
   const playerRef = useRef<MelodyPlayerHandle>(null);
@@ -115,11 +127,11 @@ export default function MelodyScreen() {
   } = useSungNoteHistory();
 
   const transcription = useMemo(
-    () => transcribeFromPitchFrames(pitchFrames),
-    [pitchFrames],
+    () => fileImport ?? transcribeFromPitchFrames(pitchFrames),
+    [fileImport, pitchFrames],
   );
 
-  const useContourRecognition = recognitionMode === 'contour'
+  const useContourRecognition = (recognitionMode === 'contour' || fileImport != null)
     && isTranscriptionConfidenceOk(transcription);
 
   const activeEvents = useMemo(() => {
@@ -265,6 +277,12 @@ export default function MelodyScreen() {
     }
   }, [t, feedSungNote]);
 
+  const handleClearNotes = useCallback(() => {
+    setFileImport(null);
+    setFileImportHint(null);
+    resetSungNotes();
+  }, [resetSungNotes]);
+
   const start = useCallback(async () => {
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') {
@@ -272,6 +290,8 @@ export default function MelodyScreen() {
       return;
     }
     setError(null);
+    setFileImport(null);
+    setFileImportHint(null);
     smoothedFreqRef.current = null;
     beginChartRecording();
     setIsActive(true);
@@ -298,6 +318,77 @@ export default function MelodyScreen() {
     setFrequency(null);
     setSignalLevel(0);
   }, [stopMelodyPlayback, endChartRecording]);
+
+  const handleImportFromFile = useCallback(async () => {
+    if (fileImportBusy) return;
+    const pick = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+    if (pick.canceled || !pick.assets?.[0]?.uri) return;
+
+    const resolved = resolveStemSeparateUrlDetailed();
+    if (!resolved.transcribeUrl) {
+      setError(`Сервер не найден.\n\n${stemSeparateSetupHint()}\n\nПока доступен только микрофон (START).`);
+      return;
+    }
+
+    setFileImportBusy(true);
+    setError(null);
+    setFileImportHint('Проверка сервера…');
+    try {
+      const health = await probeStemServer(resolved.separateUrl);
+      if (!health.ok) {
+        throw new StemSeparateError(
+          `Сервер на ПК недоступен (${resolved.sourceLabel}).\n\n${stemSeparateSetupHint()}\n\nИспользуйте микрофон (START).`,
+          { code: 'SERVER_DOWN' },
+        );
+      }
+      if (!health.basic_pitch) {
+        throw new StemSeparateError(
+          (health.basicPitchError || 'basic-pitch не установлен на ПК')
+          + '\n\npip install basic-pitch\n\nИспользуйте микрофон (START).',
+          { code: 'BASIC_PITCH_NOT_INSTALLED' },
+        );
+      }
+
+      stop();
+      const notes = await transcribeMelodyOnServer(
+        resolved.transcribeUrl,
+        pick.assets[0].uri,
+        msg => setFileImportHint(msg),
+      );
+      const result = segmentsFromBasicPitchNotes(notes);
+      if (result.segments.length === 0) {
+        throw new StemSeparateError('Ноты не распознаны', { code: 'EMPTY_NOTES' });
+      }
+
+      const events = segmentsToRegisteredEvents(result.segments);
+      setFileImport(result);
+      setRecognitionMode('contour');
+      loadSnapshot({
+        notes: events.map(e => ({
+          name: e.name,
+          octave: e.octave,
+          midi: e.midi,
+          freq: e.freq,
+          ts: e.ts,
+          confidence: e.confidence,
+        })),
+        pitchHistory: [],
+        registeredEvents: events,
+      });
+      setFileImportHint(`Из файла: ${result.segments.length} нот (basic-pitch)`);
+    } catch (e) {
+      setFileImport(null);
+      setFileImportHint(null);
+      const msg = e instanceof StemSeparateError
+        ? e.message
+        : e instanceof Error
+          ? e.message
+          : String(e);
+      setError(msg);
+    } finally {
+      setFileImportBusy(false);
+    }
+  }, [fileImportBusy, loadSnapshot, stop]);
 
   const rhythmEst = useMemo(() => estimateRhythm(activeEvents), [activeEvents]);
 
@@ -621,14 +712,40 @@ export default function MelodyScreen() {
 
         <View style={styles.recognitionRow}>
           <Text style={styles.recognitionLabel}>
-            Распознавание: {recognitionMode === 'contour' ? 'контур' : 'классика'}
+            Распознавание: {fileImport ? 'файл' : recognitionMode === 'contour' ? 'контур' : 'классика'}
           </Text>
           <Switch
             value={recognitionMode === 'contour'}
-            onValueChange={v => setRecognitionMode(v ? 'contour' : 'classic')}
+            onValueChange={v => {
+              setRecognitionMode(v ? 'contour' : 'classic');
+              if (!v) setFileImport(null);
+            }}
+            disabled={fileImport != null}
             trackColor={{ false: '#252532', true: '#7c4dff88' }}
             thumbColor={recognitionMode === 'contour' ? '#7c4dff' : '#555'}
           />
+        </View>
+        <View style={styles.fileImportRow}>
+          <TouchableOpacity
+            style={[styles.fileImportBtn, fileImportBusy && styles.btnDisabled]}
+            onPress={handleImportFromFile}
+            disabled={fileImportBusy}
+            activeOpacity={0.85}
+          >
+            {fileImportBusy ? (
+              <ActivityIndicator size="small" color="#e0e0e0" />
+            ) : (
+              <Ionicons name="document-outline" size={16} color="#e0e0e0" />
+            )}
+            <Text style={styles.fileImportBtnText}>Из файла</Text>
+          </TouchableOpacity>
+          {fileImportHint ? (
+            <Text style={styles.fileImportHint} numberOfLines={2}>{fileImportHint}</Text>
+          ) : (
+            <Text style={styles.fileImportHintMuted} numberOfLines={2}>
+              basic-pitch на ПК · без сервера — только микрофон
+            </Text>
+          )}
         </View>
         {(isActive || pitchFrames.length > 0) ? (
           <Text style={styles.recognitionStats}>
@@ -644,7 +761,7 @@ export default function MelodyScreen() {
           history={pitchHistory}
           layoutOriginTs={chartLayoutOriginTs}
           registeredEvents={activeEvents}
-          segmentOverlays={recognitionMode === 'contour' ? segmentOverlays : []}
+          segmentOverlays={recognitionMode === 'contour' || fileImport ? segmentOverlays : []}
           active={isActive}
           chartPlotWidth={chartPlotWidth}
         />
@@ -654,7 +771,7 @@ export default function MelodyScreen() {
           label={t('melodySequenceLabel')}
           active={isActive}
           numbered
-          onClear={resetSungNotes}
+          onClear={handleClearNotes}
           clearLabel={t('sungNotesClear')}
         />
 
@@ -1079,6 +1196,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   recognitionLabel: { color: '#888', fontSize: 11, fontWeight: '600' },
+  fileImportRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  fileImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#1e1e2a',
+    borderWidth: 1,
+    borderColor: '#3a3a4a',
+  },
+  fileImportBtnText: { color: '#e0e0e0', fontSize: 12, fontWeight: '700' },
+  fileImportHint: { flex: 1, color: '#9a9ab0', fontSize: 10, fontWeight: '600' },
+  fileImportHintMuted: { flex: 1, color: '#555', fontSize: 10, fontWeight: '500' },
   recognitionStats: { color: '#555', fontSize: 10, fontWeight: '600', marginBottom: 8, paddingHorizontal: 4 },
   errorText: { color: '#ff5252', fontSize: 12, textAlign: 'center' },
 });

@@ -6,6 +6,7 @@ export type StemSeparateUrlSource = 'env' | 'metro' | 'none';
 
 export type ResolvedStemSeparateUrl = {
   separateUrl: string;
+  transcribeUrl: string;
   healthUrl: string;
   source: StemSeparateUrlSource;
   sourceLabel: string;
@@ -19,6 +20,25 @@ export function buildStemSeparateUrl(host: string): string {
 
 export function buildStemHealthUrl(host: string): string {
   return `http://${host}:${STEM_SEPARATE_PORT}/health`;
+}
+
+export function buildStemTranscribeUrl(host: string): string {
+  return `http://${host}:${STEM_SEPARATE_PORT}/transcribe`;
+}
+
+export function stemTranscribeUrlFromSeparate(separateUrl: string): string {
+  const t = separateUrl.trim().replace(/\/+$/, '');
+  if (/\/separate$/i.test(t)) return t.replace(/\/separate$/i, '/transcribe');
+  try {
+    const u = new URL(t);
+    if (u.port === String(STEM_SEPARATE_PORT)) {
+      u.pathname = '/transcribe';
+      return u.href.replace(/\/+$/, '');
+    }
+  } catch {
+    /* ignore */
+  }
+  return `${t}/transcribe`;
 }
 
 export function stemHealthUrlFromSeparate(separateUrl: string): string {
@@ -39,10 +59,12 @@ export function stemHealthUrlFromSeparate(separateUrl: string): string {
 export function resolveStemSeparateUrlDetailed(): ResolvedStemSeparateUrl {
   const fromEnv = process.env.EXPO_PUBLIC_STEM_URL?.trim();
   if (fromEnv) {
-    const separateUrl = fromEnv.replace(/\/health\/?$/i, '/separate').replace(/\/+$/, '');
+    const separateUrl = fromEnv.replace(/\/health\/?$/i, '/separate').replace(/\/transcribe\/?$/i, '/separate').replace(/\/+$/, '');
+    const resolved = /\/separate$/i.test(separateUrl) ? separateUrl : `${separateUrl}/separate`;
     return {
-      separateUrl: /\/separate$/i.test(separateUrl) ? separateUrl : `${separateUrl}/separate`,
-      healthUrl: stemHealthUrlFromSeparate(separateUrl),
+      separateUrl: resolved,
+      transcribeUrl: stemTranscribeUrlFromSeparate(resolved),
+      healthUrl: stemHealthUrlFromSeparate(resolved),
       source: 'env',
       sourceLabel: 'EXPO_PUBLIC_STEM_URL',
     };
@@ -52,6 +74,7 @@ export function resolveStemSeparateUrlDetailed(): ResolvedStemSeparateUrl {
   if (host) {
     return {
       separateUrl: buildStemSeparateUrl(host),
+      transcribeUrl: buildStemTranscribeUrl(host),
       healthUrl: buildStemHealthUrl(host),
       source: 'metro',
       sourceLabel: `ПК (${host}:${STEM_SEPARATE_PORT})`,
@@ -60,6 +83,7 @@ export function resolveStemSeparateUrlDetailed(): ResolvedStemSeparateUrl {
 
   return {
     separateUrl: '',
+    transcribeUrl: '',
     healthUrl: '',
     source: 'none',
     sourceLabel: 'не найден',
@@ -72,8 +96,8 @@ export function resolveStemSeparateUrl(): string {
 
 export function stemSeparateSetupHint(): string {
   return (
-    'Нейросетевое разделение (Demucs) работает через ПК в той же Wi‑Fi сети.\n' +
+    'Нейросетевые функции (Demucs, basic-pitch) работают через ПК в той же Wi‑Fi сети.\n' +
     `На ПК: ${STEM_SEPARATE_DEV_CMD}\n` +
-    'Установка Python/Demucs: tools/stem-separate/README.md'
+    'Установка Python: tools/stem-separate/README.md'
   );
 }
