@@ -12,7 +12,7 @@ export type ResolvedStemSeparateUrl = {
   sourceLabel: string;
 };
 
-export const STEM_SEPARATE_DEV_CMD = 'npm run stems:dev';
+export const STEM_SEPARATE_DEV_CMD = 'npm start (или npm run stems:dev)';
 
 export function buildStemSeparateUrl(host: string): string {
   return `http://${host}:${STEM_SEPARATE_PORT}/separate`;
