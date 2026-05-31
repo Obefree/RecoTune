@@ -2,11 +2,7 @@
  * AILabScreen — Two tools:
  *  1. АККОРДЫ: Analyse an audio file → chord progression timeline + key + BPM
  *     · Play/preview the loaded file before/after analysis
- *  2. ДОРОЖКИ: Improved stem separation:
- *     Bass / Mid / Hi (frequency bands)
- *     + Голос (vocal isolation via center-channel extraction)
- *     + Минус  (karaoke: vocal-suppressed stereo)
- *     Each stem is playable directly, then exportable as WAV.
+ *  2. ДОРОЖКИ: DSP (демо, WebView) или Demucs на ПК (нейросеть).
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
@@ -23,10 +19,13 @@ import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import { assertPlaybackFileExists } from '../utils/playbackUri';
+import { StemSeparateError, probeStemServer, separateStemsOnServer } from '../providers/stemSeparateClient';
+import { resolveStemSeparateUrl, resolveStemSeparateUrlDetailed, stemSeparateSetupHint } from '../providers/stemSeparateUrl';
 
 /* ─── Types ─── */
 interface ChordEvent { time: number; chord: string; confidence: number }
 type StemOutputMode = 'all' | 'vocals' | 'minus';
+type StemEngine = 'dsp' | 'neural';
 
 interface StemItem {
   id: string;
@@ -208,11 +207,19 @@ interface AppAudioRow { uri: string; name: string; badge: string }
 function fmt(s: number) { return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`; }
 function fmtMs(ms: number) { return fmt(ms / 1000); }
 
-const STEM_MODE_OPTIONS: { id: StemOutputMode; label: string; sub: string; color: string }[] = [
-  { id: 'vocals', label: 'ВОКАЛ', sub: 'только голос', color: '#ff9800' },
-  { id: 'minus', label: 'МИНУС', sub: 'без вокала', color: '#ff5252' },
-  { id: 'all', label: 'ВСЕ 5', sub: 'бас · сер · верх', color: '#40c4ff' },
+const STEM_ENGINE_OPTIONS: { id: StemEngine; label: string; sub: string; color: string }[] = [
+  { id: 'dsp', label: 'DSP (демо)', sub: 'быстро на устройстве', color: '#40c4ff' },
+  { id: 'neural', label: 'Нейросеть (ПК)', sub: 'Demucs, нужен ПК', color: '#00e676' },
 ];
+
+function stemModeOptions(engine: StemEngine): { id: StemOutputMode; label: string; sub: string; color: string }[] {
+  const allSub = engine === 'neural' ? 'вокал + минус' : 'бас · сер · верх';
+  return [
+    { id: 'vocals', label: 'ВОКАЛ', sub: 'только голос', color: '#ff9800' },
+    { id: 'minus', label: 'МИНУС', sub: 'без вокала', color: '#ff5252' },
+    { id: 'all', label: engine === 'neural' ? 'ОБА' : 'ВСЕ 5', sub: allSub, color: '#40c4ff' },
+  ];
+}
 
 export default function AILabScreen() {
   const insets = useSafeAreaInsets();
@@ -235,6 +242,9 @@ export default function AILabScreen() {
   const [previewName, setPreviewName]     = useState('');
 
   /* ── Stem separation state ── */
+  const [stemEngine, setStemEngine]       = useState<StemEngine>('dsp');
+  const [stemServerReady, setStemServerReady] = useState(false);
+  const [stemServerHint, setStemServerHint]   = useState('');
   const [stemOutputMode, setStemOutputMode] = useState<StemOutputMode>('minus');
   const [stemStatus, setStemStatus]       = useState<'idle'|'loading'|'done'|'error'>('idle');
   const [stemMsg, setStemMsg]             = useState('');
@@ -251,6 +261,34 @@ export default function AILabScreen() {
   useEffect(() => {
     stemItemsRef.current = stemItems;
   }, [stemItems]);
+
+  useEffect(() => {
+    if (tab !== 'stems') return;
+    let cancelled = false;
+    (async () => {
+      const resolved = resolveStemSeparateUrlDetailed();
+      const url = resolved.separateUrl;
+      if (!url) {
+        if (!cancelled) {
+          setStemServerReady(false);
+          setStemServerHint('Сервер не найден (запустите npm run stems:dev на ПК в той же Wi‑Fi)');
+        }
+        return;
+      }
+      const health = await probeStemServer(url);
+      if (cancelled) return;
+      if (health.ok && health.demucs) {
+        setStemServerReady(true);
+        setStemServerHint(resolved.sourceLabel);
+      } else {
+        setStemServerReady(false);
+        setStemServerHint(
+          health.demucsError || health.error || 'Demucs не установлен на ПК',
+        );
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab]);
 
   /* ── Cleanup sounds on unmount ── */
   useEffect(() => {
@@ -380,7 +418,74 @@ export default function AILabScreen() {
     } catch (e) { Alert.alert('Ошибка', String(e)); }
   }, [chordEvents, songKey, songBpm, songDur]);
 
-  const separateWithUri = useCallback(async (uri: string, mode: StemOutputMode = stemOutputMode) => {
+  const persistStemItems = useCallback(async (
+    rawStems: { id?: string; label: string; color: string; b64: string; sizeKb: number }[],
+  ) => {
+    setStemMsg('Сохранение дорожек...');
+    await applyPlaybackAudioMode();
+    const items: StemItem[] = [];
+    const batchTs = Date.now();
+    for (let i = 0; i < rawStems.length; i++) {
+      const s = rawStems[i];
+      const stemId = s.id ?? `stem_${i}`;
+      const path = `${FileSystem.cacheDirectory}stem_${stemId}_${batchTs}_${i}.wav`;
+      await FileSystem.writeAsStringAsync(path, s.b64, { encoding: FileSystem.EncodingType.Base64 });
+      const item: StemItem = {
+        id: stemId,
+        label: s.label,
+        color: s.color,
+        b64: s.b64,
+        sizeKb: s.sizeKb,
+        uri: path,
+        playing: false,
+        position: 0,
+        duration: 0,
+      };
+      try {
+        const playbackUri = await assertPlaybackFileExists(path);
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: playbackUri },
+          { progressUpdateIntervalMillis: 200 },
+          (status) => {
+            if (!status.isLoaded) return;
+            setStemItems(prev => prev.map(si =>
+              si.id === stemId
+                ? {
+                    ...si,
+                    playing: status.isPlaying ?? false,
+                    position: status.positionMillis ?? 0,
+                    duration: status.durationMillis ?? si.duration,
+                  }
+                : si
+            ));
+          },
+        );
+        item.sound = sound;
+        const st = await sound.getStatusAsync();
+        if (st.isLoaded) item.duration = st.durationMillis ?? 0;
+      } catch (err) {
+        item.loadError = String(err);
+      }
+      items.push(item);
+    }
+    setStemItems(items);
+    stemItemsRef.current = items;
+    setStemStatus('done');
+    setStemHtml(null);
+    const failed = items.filter(it => it.loadError);
+    if (failed.length) {
+      Alert.alert(
+        'Воспроизведение',
+        `Не удалось подготовить: ${failed.map(f => f.label).join(', ')}. Экспорт WAV всё ещё доступен.`,
+      );
+    }
+  }, []);
+
+  const separateWithUri = useCallback(async (
+    uri: string,
+    mode: StemOutputMode = stemOutputMode,
+    engine: StemEngine = stemEngine,
+  ) => {
     try {
       setStemStatus('loading');
       setStemMsg('Чтение файла...');
@@ -391,6 +496,25 @@ export default function AILabScreen() {
       if (info.exists && (info as any).size > 20 * 1024 * 1024) {
         Alert.alert('Большой файл', 'Файл > 20 МБ — обработка займёт несколько минут.');
       }
+
+      if (engine === 'neural') {
+        const separateUrl = resolveStemSeparateUrl();
+        if (!separateUrl) {
+          setStemStatus('error');
+          setStemMsg(stemSeparateSetupHint());
+          return;
+        }
+        const health = await probeStemServer(separateUrl);
+        if (!health.ok || !health.demucs) {
+          setStemStatus('error');
+          setStemMsg(health.demucsError || health.error || 'Demucs на ПК недоступен');
+          return;
+        }
+        const stems = await separateStemsOnServer(separateUrl, uri, mode, setStemMsg);
+        await persistStemItems(stems);
+        return;
+      }
+
       const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
       setStemHtml(STEM_HTML);
       setTimeout(() => {
@@ -399,10 +523,12 @@ export default function AILabScreen() {
         `);
       }, 600);
     } catch (e) {
-      Alert.alert('Ошибка', String(e));
+      const msg = e instanceof StemSeparateError ? e.message : String(e);
       setStemStatus('error');
+      setStemMsg(msg);
+      setStemHtml(null);
     }
-  }, [stemOutputMode]);
+  }, [stemOutputMode, stemEngine, persistStemItems]);
 
   /* ── Pick file and run stem separation ── */
   const pickAndSeparate = useCallback(async () => {
@@ -425,72 +551,14 @@ export default function AILabScreen() {
       if (msg.type === 'progress') {
         setStemMsg(msg.msg);
       } else if (msg.type === 'done') {
-        setStemMsg('Сохранение дорожек...');
-        await applyPlaybackAudioMode();
-        const items: StemItem[] = [];
-        const batchTs = Date.now();
-        const rawStems = msg.stems as { id?: string; label: string; color: string; b64: string; sizeKb: number }[];
-        for (let i = 0; i < rawStems.length; i++) {
-          const s = rawStems[i];
-          const stemId = s.id ?? `stem_${i}`;
-          const path = `${FileSystem.cacheDirectory}stem_${stemId}_${batchTs}_${i}.wav`;
-          await FileSystem.writeAsStringAsync(path, s.b64, { encoding: FileSystem.EncodingType.Base64 });
-          const item: StemItem = {
-            id: stemId,
-            label: s.label,
-            color: s.color,
-            b64: s.b64,
-            sizeKb: s.sizeKb,
-            uri: path,
-            playing: false,
-            position: 0,
-            duration: 0,
-          };
-          try {
-            const playbackUri = await assertPlaybackFileExists(path);
-            const { sound } = await Audio.Sound.createAsync(
-              { uri: playbackUri },
-              { progressUpdateIntervalMillis: 200 },
-              (status) => {
-                if (!status.isLoaded) return;
-                setStemItems(prev => prev.map(si =>
-                  si.id === stemId
-                    ? {
-                        ...si,
-                        playing: status.isPlaying ?? false,
-                        position: status.positionMillis ?? 0,
-                        duration: status.durationMillis ?? si.duration,
-                      }
-                    : si
-                ));
-              },
-            );
-            item.sound = sound;
-            const st = await sound.getStatusAsync();
-            if (st.isLoaded) item.duration = st.durationMillis ?? 0;
-          } catch (err) {
-            item.loadError = String(err);
-          }
-          items.push(item);
-        }
-        setStemItems(items);
-        stemItemsRef.current = items;
-        setStemStatus('done');
-        setStemHtml(null);
-        const failed = items.filter(it => it.loadError);
-        if (failed.length) {
-          Alert.alert(
-            'Воспроизведение',
-            `Не удалось подготовить: ${failed.map(f => f.label).join(', ')}. Экспорт WAV всё ещё доступен.`,
-          );
-        }
+        await persistStemItems(msg.stems as { id?: string; label: string; color: string; b64: string; sizeKb: number }[]);
       } else if (msg.type === 'error') {
         setStemStatus('error');
         setStemMsg(msg.msg);
         setStemHtml(null);
       }
     } catch {}
-  }, []);
+  }, [persistStemItems]);
 
   /* ── Play / pause a stem ── */
   const toggleStem = useCallback(async (stemId: string) => {
@@ -679,9 +747,47 @@ export default function AILabScreen() {
       {tab === 'stems' && (
         <View style={styles.stemsRoot}>
           <View style={styles.stemsToolbar}>
-            <Text style={styles.stemModeTitle}>ЧТО ИЗВЛЕЧЬ</Text>
+            <Text style={styles.stemModeTitle}>ДВИЖОК</Text>
             <View style={styles.stemModeRow}>
-              {STEM_MODE_OPTIONS.map(opt => (
+              {STEM_ENGINE_OPTIONS.map(opt => {
+                const disabled = opt.id === 'neural' && !stemServerReady;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.stemModeChip,
+                      stemEngine === opt.id && { borderColor: opt.color, backgroundColor: opt.color + '18' },
+                      disabled && styles.stemModeChipDisabled,
+                    ]}
+                    onPress={() => {
+                      if (disabled) {
+                        Alert.alert('Нейросеть недоступна', stemServerHint || stemSeparateSetupHint());
+                        return;
+                      }
+                      setStemEngine(opt.id);
+                      if (opt.id === 'neural' && stemOutputMode === 'all') {
+                        /* neural "all" = vocals + minus only — keep mode */
+                      }
+                    }}
+                    disabled={stemStatus === 'loading' || disabled}
+                  >
+                    <Text style={[styles.stemModeChipLabel, stemEngine === opt.id && { color: opt.color }]}>
+                      {opt.label}
+                    </Text>
+                    <Text style={styles.stemModeChipSub}>{opt.sub}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {stemServerHint ? (
+              <Text style={[styles.stemServerHint, stemServerReady ? styles.stemServerHintOk : undefined]} numberOfLines={2}>
+                {stemServerReady ? `Сервер: ${stemServerHint}` : stemServerHint}
+              </Text>
+            ) : null}
+
+            <Text style={[styles.stemModeTitle, { marginTop: 4 }]}>ЧТО ИЗВЛЕЧЬ</Text>
+            <View style={styles.stemModeRow}>
+              {stemModeOptions(stemEngine).map(opt => (
                 <TouchableOpacity
                   key={opt.id}
                   style={[
@@ -747,7 +853,9 @@ export default function AILabScreen() {
               }
               ListFooterComponent={
                 <Text style={styles.footerNoteCompact}>
-                  Офлайн-сепарация (не Demucs). Стерео — лучше для вокала и минуса.
+                  {stemEngine === 'neural'
+                    ? 'Demucs на ПК — качественное разделение вокал/минус.'
+                    : 'DSP (демо): фильтры и центр-канал, не нейросеть. Для качества — «Нейросеть (ПК)».'}
                 </Text>
               }
               renderItem={({ item }) => (
@@ -792,7 +900,7 @@ export default function AILabScreen() {
             <View style={[styles.stemsIdlePane, { minHeight: Math.max(180, windowHeight * 0.38) }]}>
               <Ionicons name="git-branch-outline" size={40} color="#2a2a36" />
               <Text style={styles.stemsIdleText}>
-                Выберите режим: вокал, минус (караоке) или все 5 дорожек, затем файл.
+                Выберите движок (DSP или Demucs на ПК), режим вокал/минус, затем файл.
               </Text>
             </View>
           ) : null}
@@ -925,6 +1033,9 @@ const styles = StyleSheet.create({
   },
   stemModeChipLabel: { color: '#888', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   stemModeChipSub: { color: '#444', fontSize: 9, marginTop: 2, textAlign: 'center' },
+  stemModeChipDisabled: { opacity: 0.45 },
+  stemServerHint: { color: '#ff9800', fontSize: 10, lineHeight: 14 },
+  stemServerHintOk: { color: '#00e676' },
   stemPickBtn: { backgroundColor: '#40c4ff88', paddingVertical: 12 },
   stemPickBtnSecondary: { borderColor: '#40c4ff44', paddingVertical: 10 },
   progressCardCompact: {

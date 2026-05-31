@@ -1,0 +1,8 @@
+{
+  "name": "recotune-stem-separate",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev-proxy": "node dev-proxy-server.mjs"
+  }
+}

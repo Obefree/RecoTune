@@ -1,0 +1,4 @@
+# Stem separation (Demucs) — install in venv, see README.md
+demucs>=4.0.0
+torch>=2.0.0
+torchaudio>=2.0.0

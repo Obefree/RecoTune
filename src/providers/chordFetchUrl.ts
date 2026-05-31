@@ -193,7 +193,7 @@ export function resolveChordFetchUrlDetailed(): ResolvedChordFetchUrl {
   return { url: '', source: 'none', sourceLabel: 'не задан' };
 }
 
-function readExpoDebuggerHost(): string | null {
+export function readExpoDebuggerHost(): string | null {
   const hostUri = Constants.expoConfig?.hostUri;
   if (hostUri) {
     const h = parseHostFromDebuggerHost(hostUri);
