@@ -21,6 +21,7 @@ import {
   DEFAULT_AUDIO_ROUTING,
   probeRecordingInputs,
   applyStudioAudioMode,
+  revalidateStudioRoutingOnFocus,
   applyRecordingInput,
   loadStudioAudioRouting,
   saveStudioAudioRouting,
@@ -188,6 +189,14 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
 
   useFocusEffect(useCallback(() => {
     load();
+    if (!isRecordingRef.current) {
+      void revalidateStudioRoutingOnFocus(audioRoutingRef.current).then(({ routing }) => {
+        if (routing !== audioRoutingRef.current) {
+          setAudioRouting(routing);
+          audioRoutingRef.current = routing;
+        }
+      });
+    }
     return () => {
       killSound();
       setTabBarHidden(false);

@@ -258,3 +258,21 @@ export async function applyRecordingInput(rec: Audio.Recording, routing: StudioA
     if (found) await rec.setInput(found.uid);
   } catch {}
 }
+
+/**
+ * Re-apply audio mode when tab gains focus; drop BT/AUX output if device disconnected.
+ * Returns updated routing (may equal input when unchanged).
+ */
+export async function revalidateStudioRoutingOnFocus(
+  routing: StudioAudioRouting,
+): Promise<{ routing: StudioAudioRouting; snap: AudioRouteSnapshot }> {
+  await applyStudioAudioMode(routing).catch(() => {});
+  const snap = await probeRecordingInputs();
+  if (routing.mode === 'manual' && outputDeviceMissing(routing.output, snap)) {
+    const next: StudioAudioRouting = { ...routing, output: 'system' };
+    await saveStudioAudioRouting(next);
+    await applyStudioAudioMode(next).catch(() => {});
+    return { routing: next, snap };
+  }
+  return { routing, snap };
+}

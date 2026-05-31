@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-31 | P6: НАЙТИ подсказки, Studio routing, env APK | [2026-05-31-p6-find-hints-studio-routing.md](./2026-05-31-p6-find-hints-studio-routing.md) |
 | 2026-05-31 | P5: каталог 5200, chroma НАЙТИ, Melody→Studio | [2026-05-31-p5-metadata-recognition-studio.md](./2026-05-31-p5-metadata-recognition-studio.md) |
 | 2026-05-31 | Dev :8787+:8788, P4 НАЙТИ, Studio import | [2026-05-31-dev-all-p4-studio.md](./2026-05-31-dev-all-p4-studio.md) |
 | 2026-05-31 | Melody: basic-pitch из файла (ПК) | [2026-05-31-basic-pitch-transcribe.md](./2026-05-31-basic-pitch-transcribe.md) |

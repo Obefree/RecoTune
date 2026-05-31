@@ -19,6 +19,29 @@ function estimateKey(c){
   }
   return bk;
 }
+function pitchMidiFromWindow(samples,sr){
+  const n=samples.length;if(n<512)return 0;
+  let rms=0;for(let i=0;i<n;i++)rms+=samples[i]*samples[i];rms=Math.sqrt(rms/n);
+  if(rms<0.008)return 0;
+  const minLag=Math.round(sr/900),maxLag=Math.round(sr/70);
+  let bestLag=0,best=0;
+  for(let lag=minLag;lag<=maxLag&&lag<n/2;lag++){
+    let sum=0;for(let i=0;i<n-lag;i++)sum+=samples[i]*samples[i+lag];
+    if(sum>best){best=sum;bestLag=lag;}
+  }
+  if(bestLag<=0)return 0;
+  const hz=sr/bestLag;if(hz<70||hz>900)return 0;
+  return Math.round(12*Math.log2(hz/440)+69);
+}
+function extractMelodyMidi(clip,sr){
+  const hop=Math.round(sr*0.28),out=[];let last=0;
+  for(let o=0;o+hop<clip.length;o+=hop){
+    const m=pitchMidiFromWindow(clip.subarray(o,o+hop),sr);
+    if(m>0&&m!==last){out.push(m);last=m;}
+    if(out.length>=24)break;
+  }
+  return out;
+}
 function detectBpm(buf){
   const sr=buf.sampleRate;const ch=buf.getChannelData(0);const hop=Math.round(sr*0.01);
   const frames=Math.floor(ch.length/hop);const energy=new Float32Array(frames);
@@ -51,9 +74,10 @@ async function analyze(b64,maxSec){
     }
     const mx=Math.max(...globalChroma);if(mx>0)for(let i=0;i<12;i++)globalChroma[i]/=mx;
     const sum=globalChroma.reduce((s,v)=>s+v,0);
-    if(sum<0.25){post({type:'done',bpm:0,chroma:[],estimatedKey:''});return;}
+    const melodyMidi=extractMelodyMidi(clip,sr);
+    if(sum<0.25){post({type:'done',bpm:0,chroma:[],estimatedKey:'',melodyMidi});return;}
     const estimatedKey=estimateKey(globalChroma);
-    post({type:'done',bpm,chroma:Array.from(globalChroma),estimatedKey});
+    post({type:'done',bpm,chroma:Array.from(globalChroma),estimatedKey,melodyMidi});
   }catch(e){post({type:'error',msg:String(e)});}
 }
 window.addEventListener('message',e=>{try{const m=JSON.parse(e.data);if(m.cmd==='analyze')analyze(m.b64,m.maxSec||12);}catch{}});

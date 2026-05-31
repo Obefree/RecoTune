@@ -5,6 +5,7 @@ export type SnippetAudioAnalysis = {
   bpm: number;
   chroma: number[];
   estimatedKey: string;
+  melodyMidi: number[];
 };
 
 const ANALYZE_TIMEOUT_MS = 45_000;
@@ -26,7 +27,14 @@ export function setSnippetAnalyzerReady(ready: boolean): void {
 }
 
 export function handleSnippetAnalyzerMessage(raw: string): void {
-  let msg: { type: string; bpm?: number; chroma?: number[]; estimatedKey?: string; msg?: string };
+  let msg: {
+    type: string;
+    bpm?: number;
+    chroma?: number[];
+    estimatedKey?: string;
+    melodyMidi?: number[];
+    msg?: string;
+  };
   try {
     msg = JSON.parse(raw);
   } catch {
@@ -48,10 +56,14 @@ export function handleSnippetAnalyzerMessage(raw: string): void {
     const p = pending;
     clearTimeout(p.timer);
     pending = null;
+    const melodyMidi = Array.isArray(msg.melodyMidi)
+      ? msg.melodyMidi.filter((n): n is number => typeof n === 'number' && n >= 36 && n <= 96)
+      : [];
     p.resolve({
       bpm: typeof msg.bpm === 'number' ? msg.bpm : 0,
       chroma: sum >= 0.25 ? chroma : [],
       estimatedKey: typeof msg.estimatedKey === 'string' ? msg.estimatedKey : '',
+      melodyMidi,
     });
   }
 }
@@ -70,11 +82,11 @@ export async function analyzeRecordingUri(
   maxSec = 12,
 ): Promise<SnippetAudioAnalysis> {
   if (!webRef || !engineReady) {
-    return { bpm: 0, chroma: [], estimatedKey: '' };
+    return { bpm: 0, chroma: [], estimatedKey: '', melodyMidi: [] };
   }
 
   const info = await FileSystem.getInfoAsync(uri);
-  if (!info.exists) return { bpm: 0, chroma: [], estimatedKey: '' };
+  if (!info.exists) return { bpm: 0, chroma: [], estimatedKey: '', melodyMidi: [] };
 
   const b64 = await FileSystem.readAsStringAsync(uri, {
     encoding: FileSystem.EncodingType.Base64,

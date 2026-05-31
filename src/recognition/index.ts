@@ -3,10 +3,11 @@ export type {
   RecognitionSignalKind,
   RecognizeCandidate,
   RecognizeOutcome,
+  RecognitionAudioHints,
   SongRecognizer,
   IdentifyTrackResult,
   AudioSnippetMeta,
 } from './types';
-export { localSongRecognizer } from './localSongRecognizer';
+export { localSongRecognizer, formatHintCandidateLabel } from './localSongRecognizer';
 export { saveRecognitionSnippet, RECOGNITION_SNIPPETS_DIR } from './snippets';
 export { chordTokens, scoreChordProgression } from './chordFingerprint';

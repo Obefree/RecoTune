@@ -10,6 +10,12 @@ const RELEASE_PROGUARD = `
 module.exports = {
   expo: {
     ...base,
+    extra: {
+      ...(base.extra ?? {}),
+      /** VPS stem server base URL (Demucs/basic-pitch); set EXPO_PUBLIC_STEM_SERVER_URL at build time. */
+      stemServerUrl: process.env.EXPO_PUBLIC_STEM_SERVER_URL?.trim() || '',
+      chordFetchUrl: process.env.EXPO_PUBLIC_CHORD_FETCH_URL?.trim() || '',
+    },
     plugins: [
       ...(base.plugins ?? []),
       [

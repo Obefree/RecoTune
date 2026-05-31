@@ -38,6 +38,7 @@ export async function extractSignalsFromRecording(
     if (analysis.bpm > 0) signals.bpm = analysis.bpm;
     if (analysis.estimatedKey) signals.estimatedKey = analysis.estimatedKey;
     if (analysis.chroma.length === 12) signals.chromaVector = analysis.chroma;
+    if (analysis.melodyMidi.length >= 3) signals.melodyMidi = analysis.melodyMidi;
   } catch {
     /* no fake BPM/key */
   }

@@ -48,6 +48,7 @@ import {
   type RecordingInputInfo,
   probeRecordingInputs,
   applyStudioAudioMode,
+  revalidateStudioRoutingOnFocus,
   applyRecordingInput,
   prerollForInput,
   prerollForOutput,
@@ -496,6 +497,14 @@ export default function StudioScreen() {
 
   useFocusEffect(useCallback(() => {
     loadSessions();
+    void (async () => {
+      const { routing, snap } = await revalidateStudioRoutingOnFocus(audioRoutingRef.current);
+      if (routing !== audioRoutingRef.current) {
+        setAudioRouting(routing);
+        audioRoutingRef.current = routing;
+      }
+      setAudioRouteSnap(snap);
+    })();
     return () => {
       if (!isRecordingRef.current) {
         killAllSounds();

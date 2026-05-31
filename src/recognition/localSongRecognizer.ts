@@ -1,5 +1,7 @@
 import { listSongs } from '../db/songLibrary';
 import { searchSongsSmart } from '../db/searchSongsSmart';
+import { metadataTrackToSongEntry } from '../metadata/metadataDb';
+import { searchMetadataCatalog } from '../metadata/metadataSearch';
 import { findBestSongMatch } from '../utils/songMatch';
 import type { MatchKind } from '../utils/searchScore';
 import { scoreChordProgression } from './chordFingerprint';
@@ -10,6 +12,7 @@ import {
 import { extractSignalsFromRecording } from './recordingSignals';
 import { saveRecognitionSnippet } from './snippets';
 import type {
+  RecognitionAudioHints,
   RecognitionSignals,
   RecognizeCandidate,
   RecognizeOutcome,
@@ -19,7 +22,9 @@ const MIN_AUTO_MATCH_SCORE = 72;
 const MIN_LEAD_OVER_SECOND = 12;
 
 const SNIPPET_SAVED_BASE =
-  'Распознавание по звуку (без облака) — в разработке. Запись сохранена на устройстве.';
+  'Запись сохранена на устройстве. Авто-распознавание без облака — только при уверенном совпадении.';
+const HINT_FOOTER =
+  'Подсказки ниже — направление поиска, не готовый ответ. Выберите песню вручную или откройте «База песен».';
 
 function candidateFromSong(
   song: Awaited<ReturnType<typeof searchSongsSmart>>[0],
@@ -69,17 +74,40 @@ function isConfidentTopMatch(candidates: RecognizeCandidate[]): boolean {
   return candidates[0].score - second >= MIN_LEAD_OVER_SECOND;
 }
 
+function buildAudioHints(signals: RecognitionSignals): RecognitionAudioHints | undefined {
+  const hints: RecognitionAudioHints = {};
+  if (signals.bpm != null && signals.bpm > 0) hints.bpm = signals.bpm;
+  if (signals.estimatedKey) hints.estimatedKey = signals.estimatedKey;
+  if (signals.melodyMidi?.length) hints.melodyNoteCount = signals.melodyMidi.length;
+  return Object.keys(hints).length ? hints : undefined;
+}
+
 function snippetSavedMessage(
   signals: RecognitionSignals,
   hadWeakCandidates: boolean,
 ): string {
-  if (signals.textQuery?.trim()) {
-    return `${SNIPPET_SAVED_BASE}\n\nПодсказка из имени файла: «${signals.textQuery.trim()}» — откройте «База песен» или введите вручную.`;
-  }
   if (hadWeakCandidates) {
-    return `${SNIPPET_SAVED_BASE}\n\nВ каталоге есть похожие записи, но уверенного совпадения по звуку нет — уточните поиск вручную.`;
+    return `${SNIPPET_SAVED_BASE}\n\n${HINT_FOOTER}`;
   }
-  return `${SNIPPET_SAVED_BASE}\n\nИщите в каталоге или введите название вручную.`;
+  if (signals.textQuery?.trim()) {
+    return `${SNIPPET_SAVED_BASE}\n\nПодсказка из имени файла: «${signals.textQuery.trim()}». ${HINT_FOOTER}`;
+  }
+  return `${SNIPPET_SAVED_BASE}\n\n${HINT_FOOTER}`;
+}
+
+function reasonLabel(reason: RecognizeCandidate['reasons'][number]): string {
+  switch (reason) {
+    case 'text': return 'текст';
+    case 'melody': return 'тональность';
+    case 'tempo': return 'темп';
+    case 'chords': return 'аккорды';
+    default: return reason;
+  }
+}
+
+export function formatHintCandidateLabel(c: RecognizeCandidate): string {
+  const tags = c.reasons.map(reasonLabel).join(', ');
+  return tags ? `${c.song.artist} — ${c.song.title} (${tags})` : `${c.song.artist} — ${c.song.title}`;
 }
 
 async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCandidate[]> {
@@ -102,6 +130,16 @@ async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCand
     const hits = await searchSongsSmart(query, { limit: 25 });
     for (const h of hits) {
       merge(candidateFromSong(h, h.score, ['text']));
+    }
+    const metaHits = await searchMetadataCatalog(query, { limit: 10 });
+    for (const h of metaHits) {
+      if (h.score < 18) continue;
+      const song = await metadataTrackToSongEntry(h);
+      merge(candidateFromSong(
+        { ...song, score: h.score, matchKind: h.matchKind },
+        h.score,
+        ['text'],
+      ));
     }
     if (signals.artist && signals.title) {
       const all = await listSongs();
@@ -158,10 +196,6 @@ async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCand
     }
   }
 
-  if (signals.melodyMidi?.length) {
-    // Hook: сравнение с сохранёнными мелодиями — позже (Melody tab export).
-  }
-
   return [...map.values()]
     .sort((a, b) => b.score - a.score)
     .slice(0, 12);
@@ -188,10 +222,13 @@ export const localSongRecognizer: SongRecognizer = {
       return { status: 'match', candidates, snippet };
     }
 
+    const hintCandidates = candidates.slice(0, 6);
     return {
       status: 'snippet_saved',
       snippet,
-      message: snippetSavedMessage(signals, candidates.length > 0),
+      message: snippetSavedMessage(signals, hintCandidates.length > 0),
+      hintCandidates: hintCandidates.length ? hintCandidates : undefined,
+      audioHints: buildAudioHints(signals),
     };
   },
 };

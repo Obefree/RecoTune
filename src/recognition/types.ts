@@ -43,9 +43,23 @@ export interface RecognizeCandidate {
   reasons: RecognitionSignalKind[];
 }
 
+/** Краткая сводка анализа записи (без облака) — для UI подсказок. */
+export interface RecognitionAudioHints {
+  bpm?: number;
+  estimatedKey?: string;
+  melodyNoteCount?: number;
+}
+
 export type RecognizeOutcome =
   | { status: 'match'; candidates: RecognizeCandidate[]; snippet?: AudioSnippetMeta }
-  | { status: 'snippet_saved'; snippet: AudioSnippetMeta; message: string }
+  | {
+      status: 'snippet_saved';
+      snippet: AudioSnippetMeta;
+      message: string;
+      /** Слабые совпадения — не авто-выбор, только подсказки (этап B). */
+      hintCandidates?: RecognizeCandidate[];
+      audioHints?: RecognitionAudioHints;
+    }
   | { status: 'no_match'; message: string; snippet?: AudioSnippetMeta };
 
 export interface SongRecognizer {

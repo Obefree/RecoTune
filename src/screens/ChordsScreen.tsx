@@ -133,8 +133,11 @@ import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch } from '../utils/songMatch';
 import { fetchLyricsForTrack } from '../utils/lyricsApi';
 import {
+  formatHintCandidateLabel,
   localSongRecognizer,
   type IdentifyTrackResult,
+  type RecognitionAudioHints,
+  type RecognizeCandidate,
   type RecognizeOutcome,
 } from '../recognition';
 
@@ -1067,6 +1070,8 @@ export default function ChordsScreen() {
   const [ytLoading, setYtLoading]     = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
   const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt' | 'manual'>('mic');
+  const [identifyHintCandidates, setIdentifyHintCandidates] = useState<RecognizeCandidate[] | null>(null);
+  const [identifyAudioHints, setIdentifyAudioHints] = useState<RecognitionAudioHints | null>(null);
   const [lyrics, setLyrics]           = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsSource, setLyricsSource] = useState<'ovh' | 'library' | null>(null);
@@ -1279,9 +1284,50 @@ export default function ChordsScreen() {
   }
 
   /* ── Identify ── */
+  function clearIdentifyHints() {
+    setIdentifyHintCandidates(null);
+    setIdentifyAudioHints(null);
+  }
+
+  function formatIdentifyAudioHintsLine(hints: RecognitionAudioHints | null): string | null {
+    if (!hints) return null;
+    const parts: string[] = [];
+    if (hints.bpm && hints.bpm > 0) parts.push(`${hints.bpm} BPM`);
+    if (hints.estimatedKey) parts.push(hints.estimatedKey);
+    if (hints.melodyNoteCount && hints.melodyNoteCount >= 3) {
+      parts.push(`напев ~${hints.melodyNoteCount} нот`);
+    }
+    return parts.length ? parts.join(' · ') : null;
+  }
+
+  async function handleIdentifyOutcome(
+    outcome: RecognizeOutcome,
+    opts?: { savedTitle?: string },
+  ) {
+    clearIdentifyHints();
+    if (outcome.status === 'match' && outcome.candidates[0]) {
+      await applyFromLibrarySong(outcome.candidates[0].song);
+      return;
+    }
+    if (outcome.status === 'snippet_saved') {
+      setIdentifyHintCandidates(outcome.hintCandidates ?? null);
+      setIdentifyAudioHints(outcome.audioHints ?? null);
+    }
+    Alert.alert(
+      outcome.status === 'snippet_saved' ? (opts?.savedTitle ?? 'Запись сохранена') : 'Не найдено',
+      recognizeOutcomeMessage(outcome),
+      [
+        { text: 'База песен', onPress: () => { clearIdentifyResult(); openPracticeLibrary(); } },
+        { text: 'Вручную', onPress: () => { clearIdentifyResult(); setIdentSource('manual'); } },
+        { text: 'OK', style: 'cancel' },
+      ],
+    );
+  }
+
   async function startIdentify() {
     if (isRecognizing) return;
     setSongResult(null);
+    clearIdentifyHints();
     try {
       const perm = await Audio.requestPermissionsAsync();
       if (perm.status !== 'granted') { Alert.alert('Нет доступа к микрофону'); return; }
@@ -1320,19 +1366,7 @@ export default function ChordsScreen() {
         durationSec: secs || 10,
         source: 'mic',
       });
-      if (outcome.status === 'match' && outcome.candidates[0]) {
-        await applyFromLibrarySong(outcome.candidates[0].song);
-      } else {
-        Alert.alert(
-          outcome.status === 'snippet_saved' ? 'Запись сохранена' : 'Не найдено',
-          recognizeOutcomeMessage(outcome),
-          [
-            { text: 'База песен', onPress: () => { clearIdentifyResult(); openPracticeLibrary(); } },
-            { text: 'Вручную', onPress: () => { clearIdentifyResult(); setIdentSource('manual'); } },
-            { text: 'OK', style: 'cancel' },
-          ],
-        );
-      }
+      await handleIdentifyOutcome(outcome);
     } catch (e) { Alert.alert('Ошибка записи', String(e)); }
     setIsRecognizing(false); setRecSecs(0);
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
@@ -1438,6 +1472,7 @@ export default function ChordsScreen() {
     setLyrics(null);
     setLibraryMatch(null);
     setLyricsSource(null);
+    clearIdentifyHints();
   }
 
   async function pickFileAndIdentify() {
@@ -1450,19 +1485,7 @@ export default function ChordsScreen() {
         durationSec: 0,
         source: 'file',
       });
-      if (outcome.status === 'match' && outcome.candidates[0]) {
-        await applyFromLibrarySong(outcome.candidates[0].song);
-      } else {
-        Alert.alert(
-          outcome.status === 'snippet_saved' ? 'Файл сохранён' : 'Не найдено',
-          recognizeOutcomeMessage(outcome),
-          [
-            { text: 'База песен', onPress: () => { clearIdentifyResult(); openPracticeLibrary(); } },
-            { text: 'Вручную', onPress: () => { clearIdentifyResult(); setIdentSource('manual'); } },
-            { text: 'OK', style: 'cancel' },
-          ],
-        );
-      }
+      await handleIdentifyOutcome(outcome, { savedTitle: 'Файл сохранён' });
     } catch (e) { Alert.alert('Ошибка', String(e)); }
     setFileLoading(false);
   }
@@ -3205,7 +3228,7 @@ export default function ChordsScreen() {
                 ] as const).map(([src, icon, label, accent]) => (
                   <TouchableOpacity key={src}
                     style={[styles.identTab, identSource === src && { backgroundColor: accent + '22', borderColor: accent + '88' }]}
-                    onPress={() => setIdentSource(src)}>
+                    onPress={() => { clearIdentifyHints(); setIdentSource(src); }}>
                     <Ionicons name={icon as any} size={22} color={identSource === src ? accent : '#444'} />
                     <Text style={[styles.identTabText, identSource === src && { color: accent }]}>{label}</Text>
                   </TouchableOpacity>
@@ -3220,8 +3243,8 @@ export default function ChordsScreen() {
                     <Ionicons name="ear-outline" size={64} color="#7c4dff33" />
                     <Text style={styles.identActionTitle}>Запись для распознавания</Text>
                     <Text style={styles.identActionSub}>
-                      10 с → сохранение на устройстве.{'\n'}
-                      Распознавание по звуку (без облака) — в разработке; без уверенного совпадения песня не подставляется.
+                      10 с → анализ темпа/тональности и напева (локально).{'\n'}
+                      Песня подставится только при уверенном совпадении; иначе — подсказки ниже.
                     </Text>
                     {isRecognizing ? (
                       <View style={styles.recProgressBig}>
@@ -3308,6 +3331,35 @@ export default function ChordsScreen() {
                       <Text style={styles.identBtnBigText}>НАЙТИ ТЕКСТ</Text>
                     </TouchableOpacity>
                   </>
+                )}
+
+                {(identifyHintCandidates?.length || identifyAudioHints) && (
+                  <View style={styles.identHintsPanel}>
+                    <Text style={styles.identHintsTitle}>Подсказки по записи</Text>
+                    {formatIdentifyAudioHintsLine(identifyAudioHints) ? (
+                      <Text style={styles.identHintsAudio}>
+                        {formatIdentifyAudioHintsLine(identifyAudioHints)}
+                      </Text>
+                    ) : null}
+                    {identifyHintCandidates?.map(c => (
+                      <TouchableOpacity
+                        key={c.song.id}
+                        style={styles.identHintRow}
+                        onPress={() => {
+                          clearIdentifyHints();
+                          void applyFromLibrarySong(c.song);
+                        }}
+                      >
+                        <Ionicons name="musical-notes-outline" size={16} color="#7c4dff" />
+                        <Text style={styles.identHintText} numberOfLines={2}>
+                          {formatHintCandidateLabel(c)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                    <Text style={styles.identHintsDisclaimer}>
+                      Не авто-распознавание — проверьте название перед практикой.
+                    </Text>
+                  </View>
                 )}
 
                 <TouchableOpacity
@@ -4929,6 +4981,27 @@ const styles = StyleSheet.create({
   lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   identifyLyricsEmpty: { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
   identifyPlainLyrics: { color: '#bbb', fontSize: 14, lineHeight: 22, marginTop: 8 },
+  identHintsPanel: {
+    width: '100%',
+    marginTop: 16,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#12121a',
+    borderWidth: 1,
+    borderColor: '#7c4dff44',
+  },
+  identHintsTitle: { color: '#7c4dff', fontSize: 11, fontWeight: '800', letterSpacing: 1, marginBottom: 8 },
+  identHintsAudio: { color: '#888', fontSize: 12, marginBottom: 10 },
+  identHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderColor: '#1e1e28',
+  },
+  identHintText: { color: '#ccc', fontSize: 13, flex: 1 },
+  identHintsDisclaimer: { color: '#555', fontSize: 10, marginTop: 8, fontStyle: 'italic' },
 
   cancelBtn:  { paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1a1a24', borderRadius: 10 },
   cancelText: { color: '#888', fontSize: 13 },

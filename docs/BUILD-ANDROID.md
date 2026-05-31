@@ -70,6 +70,17 @@ Release Gradle flags (minify, shrink, ProGuard keeps) are set via `expo-build-pr
 | CMake path length warning | Prefer shorter clone path (e.g. `C:\dev\RecoTune`) or `subst R: C:\Users\...\RecoTune` |
 | Chord proxy in APK | `tools/chord-fetch` is blocked in `metro.config.js`; release app uses HTTP(S) proxy URL from settings only |
 
+## Optional env (release / EAS)
+
+Set before `expo prebuild` or in EAS secrets. Values are copied into `app.config.js` → `expo.extra`.
+
+| Variable | Purpose |
+|----------|---------|
+| `EXPO_PUBLIC_CHORD_FETCH_URL` | Fixed chord-fetch proxy on phone-only builds (e.g. `https://your-pc:8787`). Without it: Metro LAN auto in dev; **pesni.ru** on device if enabled in Chords ⚙. |
+| `EXPO_PUBLIC_STEM_SERVER_URL` | Future hosted Demucs/basic-pitch (e.g. `https://stems.example.com`). AI Lab still uses `STEM_SERVER_URL` / dev :8788 today. |
+
+**Phone-only tabs without PC:** Chords → ⚙ → enable **pesni.ru** (on-demand HTTPS, 60 req/min). AmDm/UG need `npm start` / proxy or `EXPO_PUBLIC_CHORD_FETCH_URL`.
+
 ## Play Store (AAB)
 
 ```bat
