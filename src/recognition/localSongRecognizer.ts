@@ -118,12 +118,17 @@ async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCand
 
   function merge(c: RecognizeCandidate) {
     const prev = map.get(c.song.id);
-    if (!prev || c.score > prev.score) {
-      map.set(c.song.id, {
-        ...c,
-        reasons: [...new Set([...(prev?.reasons ?? []), ...c.reasons])],
-      });
+    if (!prev) {
+      map.set(c.song.id, c);
+      return;
     }
+    const score = Math.max(prev.score, c.score);
+    const base = c.score >= prev.score ? c : prev;
+    map.set(c.song.id, {
+      ...base,
+      score,
+      reasons: [...new Set([...prev.reasons, ...c.reasons])],
+    });
   }
 
   if (query) {

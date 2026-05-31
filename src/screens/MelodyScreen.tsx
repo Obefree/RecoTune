@@ -496,13 +496,8 @@ export default function MelodyScreen() {
       setError('Мало устойчивого напева — запишите START → STOP ещё раз');
       return;
     }
-    setHumContour(null);
-    setFileImport(null);
-    setRecognitionMode('contour');
-    setShowStaff(true);
-    setFileImportHint(`Напев с микрофона: ${result.segments.length} нот`);
-    setError(null);
-  }, [isActive, pitchFrames]);
+    applyHumTranscription(result, `Напев с микрофона: ${result.segments.length} нот`);
+  }, [isActive, pitchFrames, applyHumTranscription]);
 
   const rhythmEst = useMemo(() => estimateRhythm(activeEvents), [activeEvents]);
 
