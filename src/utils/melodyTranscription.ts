@@ -373,6 +373,50 @@ export function isTranscriptionConfidenceOk(result: TranscriptionResult): boolea
   return result.confidence >= 0.25;
 }
 
+/** Hop between melodyMidi samples — keep in sync with `extractMelodyMidi` in snippetAnalyzerHtml. */
+export const SNIPPET_MELODY_HOP_MS = 280;
+
+/** Snippet / НАЙТИ hum contour (midi only) → timed segments for strip + staff. */
+export function segmentsFromMelodyMidi(
+  melodyMidi: number[],
+  opts?: { hopMs?: number },
+): TranscriptionResult {
+  const hopMs = opts?.hopMs ?? SNIPPET_MELODY_HOP_MS;
+  const midiNotes = melodyMidi
+    .map(m => Math.round(m))
+    .filter(m => m >= 36 && m <= 96);
+  if (midiNotes.length === 0) {
+    return { segments: [], voicedFrameCount: 0, confidence: 0 };
+  }
+  const noteDurMs = Math.max(120, Math.round(hopMs * 0.92));
+  const segments: TranscribedNoteSegment[] = midiNotes.map((midi, i) => {
+    const startMs = i * hopMs;
+    const endMs = startMs + noteDurMs;
+    const noteIdx = ((midi % 12) + 12) % 12;
+    const octave = Math.floor(midi / 12) - 1;
+    const freqMedian = 440 * 2 ** ((midi - 69) / 12);
+    return {
+      startMs,
+      endMs,
+      durationMs: noteDurMs,
+      midi,
+      midiFloatMedian: midi,
+      freqMedian,
+      noteName: NOTE_NAMES[noteIdx],
+      octave,
+      centsMean: 0,
+      confidenceMean: 0.55,
+      frameCount: Math.max(1, Math.round(noteDurMs / 20)),
+    };
+  });
+  const avgConf = mean(segments.map(s => s.confidenceMean));
+  return {
+    segments,
+    voicedFrameCount: segments.length,
+    confidence: Math.round(avgConf * 100) / 100,
+  };
+}
+
 /** Map basic-pitch server notes → MelodyScreen segments (no fake fill). */
 export function segmentsFromBasicPitchNotes(notes: BasicPitchServerNote[]): TranscriptionResult {
   if (notes.length === 0) {

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **P7 Melody / stem host:** лента напева (сниппет НАЙТИ + микрофон), `EXPO_PUBLIC_STEM_SERVER_URL` в AI Lab, версия **1.0.1**. См. [docs/features/2026-05-31-p7-melody-hum-stem-host.md](./features/2026-05-31-p7-melody-hum-stem-host.md).
 - **P6 НАЙТИ / Studio:** подсказки по записи (BPM, тональность, напев, слабые кандидаты + metadata), Studio routing re-apply on focus; env `EXPO_PUBLIC_CHORD_FETCH_URL` / `EXPO_PUBLIC_STEM_SERVER_URL`. См. [docs/features/2026-05-31-p6-find-hints-studio-routing.md](./features/2026-05-31-p6-find-hints-studio-routing.md).
 - **P5 каталог / НАЙТИ / Melody:** bundled metadata 5200 (+Мельница), `npm run append-metadata`; chroma+BPM из записи; «В STUDIO» после basic-pitch. См. [docs/features/2026-05-31-p5-metadata-recognition-studio.md](./features/2026-05-31-p5-metadata-recognition-studio.md).
 - **Dev / AI Lab / НАЙТИ:** `npm start` поднимает :8787+:8788; честное распознавание по записи; импорт Demucs в Studio. См. [docs/features/2026-05-31-dev-all-p4-studio.md](./features/2026-05-31-dev-all-p4-studio.md).

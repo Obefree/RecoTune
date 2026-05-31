@@ -249,6 +249,8 @@ export default function AILabScreen() {
   const [stemEngine, setStemEngine]       = useState<StemEngine>('dsp');
   const [stemServerReady, setStemServerReady] = useState(false);
   const [stemServerHint, setStemServerHint]   = useState('');
+  const [stemServerUrl, setStemServerUrl]     = useState('');
+  const [stemServerSource, setStemServerSource] = useState('');
   const [stemOutputMode, setStemOutputMode] = useState<StemOutputMode>('minus');
   const [stemStatus, setStemStatus]       = useState<'idle'|'loading'|'done'|'error'>('idle');
   const [stemMsg, setStemMsg]             = useState('');
@@ -272,6 +274,10 @@ export default function AILabScreen() {
     (async () => {
       const resolved = resolveStemSeparateUrlDetailed();
       const url = resolved.separateUrl;
+      if (!cancelled) {
+        setStemServerUrl(url);
+        setStemServerSource(resolved.sourceLabel);
+      }
       if (!url) {
         if (!cancelled) {
           setStemServerReady(false);
@@ -809,7 +815,17 @@ export default function AILabScreen() {
                 );
               })}
             </View>
-            {stemServerHint ? (
+            {stemEngine === 'neural' && stemServerUrl ? (
+              <Text
+                style={[styles.stemServerHint, stemServerReady ? styles.stemServerHintOk : undefined]}
+                numberOfLines={3}
+              >
+                {stemServerReady ? 'Сервер OK' : 'Сервер недоступен'}
+                {stemServerSource ? ` · ${stemServerSource}` : ''}
+                {'\n'}
+                {stemServerUrl}
+              </Text>
+            ) : stemServerHint ? (
               <Text style={[styles.stemServerHint, stemServerReady ? styles.stemServerHintOk : undefined]} numberOfLines={2}>
                 {stemServerReady ? `Сервер: ${stemServerHint}` : stemServerHint}
               </Text>

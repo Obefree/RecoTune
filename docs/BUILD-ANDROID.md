@@ -77,7 +77,7 @@ Set before `expo prebuild` or in EAS secrets. Values are copied into `app.config
 | Variable | Purpose |
 |----------|---------|
 | `EXPO_PUBLIC_CHORD_FETCH_URL` | Fixed chord-fetch proxy on phone-only builds (e.g. `https://your-pc:8787`). Without it: Metro LAN auto in dev; **pesni.ru** on device if enabled in Chords ⚙. |
-| `EXPO_PUBLIC_STEM_SERVER_URL` | Future hosted Demucs/basic-pitch (e.g. `https://stems.example.com`). AI Lab still uses `STEM_SERVER_URL` / dev :8788 today. |
+| `EXPO_PUBLIC_STEM_SERVER_URL` | Hosted Demucs/basic-pitch base URL (e.g. `https://stems.example.com` → `/separate`, `/transcribe`). Also in `expo.extra.stemServerUrl`. Dev fallback: Metro LAN `:8788`. Legacy full URL: `EXPO_PUBLIC_STEM_URL`. |
 
 **Phone-only tabs without PC:** Chords → ⚙ → enable **pesni.ru** (on-demand HTTPS, 60 req/min). AmDm/UG need `npm start` / proxy or `EXPO_PUBLIC_CHORD_FETCH_URL`.
 
@@ -89,3 +89,9 @@ gradlew.bat bundleRelease -PreactNativeArchitectures=arm64-v8a
 ```
 
 Output: `android\app\build\outputs\bundle\release\app-release.aab`. Signing with a release keystore is required for Play Console (currently release builds use the debug keystore for local installs).
+
+## Release checklist (light)
+
+- Bump `version` in `app.config.js` (overrides `app.json`; current **1.0.1** after P7).
+- Optional env: `EXPO_PUBLIC_CHORD_FETCH_URL`, `EXPO_PUBLIC_STEM_SERVER_URL`.
+- `npm run build:android:release` → smoke: Tuner, Chords НАЙТИ, Melody «Напев», AI Lab neural URL.

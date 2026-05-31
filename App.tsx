@@ -13,6 +13,7 @@ import TunerScreen from './src/screens/TunerScreen';
 import StudioScreen from './src/screens/StudioScreen';
 import ChordsScreen from './src/screens/ChordsScreen';
 import MelodyScreen from './src/screens/MelodyScreen';
+import SnippetAnalyzerEngine from './src/components/SnippetAnalyzerEngine';
 import MediaScreen from './src/screens/MediaScreen';
 import AILabScreen from './src/screens/AILabScreen';
 import { initMediaRemoteControls } from './src/utils/mediaRemoteControls';
@@ -141,6 +142,7 @@ function AppInner() {
           <Tab.Screen name="AILab"    component={AILabScreen}  options={{ title: 'AI Lab' }} />
         </Tab.Navigator>
       </NavigationContainer>
+      <SnippetAnalyzerEngine />
       <StatusBar style="light" />
     </View>
   );

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated,
-  FlatList, useWindowDimensions, Switch, ActivityIndicator,
+  FlatList, useWindowDimensions, Switch, ActivityIndicator, Alert,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { ScrollView } from 'react-native-gesture-handler';
@@ -31,10 +31,13 @@ import {
 import {
   isTranscriptionConfidenceOk,
   segmentsFromBasicPitchNotes,
+  segmentsFromMelodyMidi,
   segmentsToRegisteredEvents,
   transcribeFromPitchFrames,
   type TranscriptionResult,
 } from '../utils/melodyTranscription';
+import { analyzeRecordingUri } from '../recognition/snippetAnalyzerBridge';
+import { listRecognitionSnippetFiles } from '../recognition/snippets';
 import {
   probeStemServer,
   transcribeMelodyOnServer,
@@ -107,7 +110,9 @@ export default function MelodyScreen() {
   /** contour = transcription from pitch frames; classic = SungNoteDetector */
   const [recognitionMode, setRecognitionMode] = useState<'contour' | 'classic'>('contour');
   const [fileImport, setFileImport] = useState<TranscriptionResult | null>(null);
+  const [humContour, setHumContour] = useState<TranscriptionResult | null>(null);
   const [fileImportBusy, setFileImportBusy] = useState(false);
+  const [humImportBusy, setHumImportBusy] = useState(false);
   const [fileImportHint, setFileImportHint] = useState<string | null>(null);
   const [studioImportBusy, setStudioImportBusy] = useState(false);
 
@@ -132,11 +137,13 @@ export default function MelodyScreen() {
   } = useSungNoteHistory();
 
   const transcription = useMemo(
-    () => fileImport ?? transcribeFromPitchFrames(pitchFrames),
-    [fileImport, pitchFrames],
+    () => fileImport ?? humContour ?? transcribeFromPitchFrames(pitchFrames),
+    [fileImport, humContour, pitchFrames],
   );
 
-  const useContourRecognition = (recognitionMode === 'contour' || fileImport != null)
+  const contourSource = fileImport ? 'basic-pitch' : humContour ? 'напев' : 'микрофон';
+
+  const useContourRecognition = (recognitionMode === 'contour' || fileImport != null || humContour != null)
     && isTranscriptionConfidenceOk(transcription);
 
   const activeEvents = useMemo(() => {
@@ -284,9 +291,36 @@ export default function MelodyScreen() {
 
   const handleClearNotes = useCallback(() => {
     setFileImport(null);
+    setHumContour(null);
     setFileImportHint(null);
     resetSungNotes();
   }, [resetSungNotes]);
+
+  const applyHumTranscription = useCallback((result: TranscriptionResult, hint: string) => {
+    if (result.segments.length === 0) {
+      setError('Ноты не распознаны — напой громче или длиннее фразу');
+      return;
+    }
+    const events = segmentsToRegisteredEvents(result.segments);
+    setHumContour(result);
+    setFileImport(null);
+    setRecognitionMode('contour');
+    setShowStaff(true);
+    loadSnapshot({
+      notes: events.map(e => ({
+        name: e.name,
+        octave: e.octave,
+        midi: e.midi,
+        freq: e.freq,
+        ts: e.ts,
+        confidence: e.confidence,
+      })),
+      pitchHistory: [],
+      registeredEvents: events,
+    });
+    setFileImportHint(hint);
+    setError(null);
+  }, [loadSnapshot]);
 
   const start = useCallback(async () => {
     const { status } = await Audio.requestPermissionsAsync();
@@ -296,6 +330,7 @@ export default function MelodyScreen() {
     }
     setError(null);
     setFileImport(null);
+    setHumContour(null);
     setFileImportHint(null);
     smoothedFreqRef.current = null;
     beginChartRecording();
@@ -367,7 +402,9 @@ export default function MelodyScreen() {
 
       const events = segmentsToRegisteredEvents(result.segments);
       setFileImport(result);
+      setHumContour(null);
       setRecognitionMode('contour');
+      setShowStaff(true);
       loadSnapshot({
         notes: events.map(e => ({
           name: e.name,
@@ -383,6 +420,7 @@ export default function MelodyScreen() {
       setFileImportHint(`Из файла: ${result.segments.length} нот (basic-pitch)`);
     } catch (e) {
       setFileImport(null);
+      setHumContour(null);
       setFileImportHint(null);
       const msg = e instanceof StemSeparateError
         ? e.message
@@ -394,6 +432,77 @@ export default function MelodyScreen() {
       setFileImportBusy(false);
     }
   }, [fileImportBusy, loadSnapshot, stop]);
+
+  const analyzeHumUri = useCallback(async (uri: string, label: string) => {
+    setHumImportBusy(true);
+    setError(null);
+    setFileImportHint('Анализ напева…');
+    try {
+      stop();
+      const analysis = await analyzeRecordingUri(uri, 12);
+      const result = segmentsFromMelodyMidi(analysis.melodyMidi);
+      const keyPart = analysis.estimatedKey ? ` · ${analysis.estimatedKey}` : '';
+      const bpmPart = analysis.bpm > 0 ? ` · ~${analysis.bpm} BPM` : '';
+      applyHumTranscription(result, `${label}: ${result.segments.length} нот${keyPart}${bpmPart}`);
+    } catch (e) {
+      setHumContour(null);
+      setFileImportHint(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setHumImportBusy(false);
+    }
+  }, [applyHumTranscription, stop]);
+
+  const handleImportHumSnippet = useCallback(async () => {
+    if (humImportBusy || fileImportBusy) return;
+    const snippets = await listRecognitionSnippetFiles();
+    if (snippets.length === 0) {
+      const pick = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+      if (pick.canceled || !pick.assets?.[0]?.uri) return;
+      await analyzeHumUri(pick.assets[0].uri, 'Напев из файла');
+      return;
+    }
+    if (snippets.length === 1) {
+      await analyzeHumUri(snippets[0].uri, 'Напев (запись НАЙТИ)');
+      return;
+    }
+    Alert.alert(
+      'Напев из записи',
+      'Выберите сниппет с вкладки НАЙТИ',
+      [
+        ...snippets.slice(0, 5).map(s => ({
+          text: s.name.replace(/^rec_/, '').slice(0, 28),
+          onPress: () => { void analyzeHumUri(s.uri, 'Напев (запись НАЙТИ)'); },
+        })),
+        {
+          text: 'Другой файл…',
+          onPress: () => {
+            void (async () => {
+              const pick = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+              if (pick.canceled || !pick.assets?.[0]?.uri) return;
+              await analyzeHumUri(pick.assets[0].uri, 'Напев из файла');
+            })();
+          },
+        },
+        { text: 'Отмена', style: 'cancel' },
+      ],
+    );
+  }, [humImportBusy, fileImportBusy, analyzeHumUri]);
+
+  const handleMicHumContour = useCallback(() => {
+    if (isActive || pitchFrames.length < 3) return;
+    const result = transcribeFromPitchFrames(pitchFrames);
+    if (!isTranscriptionConfidenceOk(result)) {
+      setError('Мало устойчивого напева — запишите START → STOP ещё раз');
+      return;
+    }
+    setHumContour(null);
+    setFileImport(null);
+    setRecognitionMode('contour');
+    setShowStaff(true);
+    setFileImportHint(`Напев с микрофона: ${result.segments.length} нот`);
+    setError(null);
+  }, [isActive, pitchFrames]);
 
   const rhythmEst = useMemo(() => estimateRhythm(activeEvents), [activeEvents]);
 
@@ -534,6 +643,13 @@ export default function MelodyScreen() {
       resetPlaybackVisual();
     }
   }, [resetPlaybackVisual]);
+
+  useEffect(() => {
+    if (isActive || fileImport || humContour) return;
+    if (pitchFrames.length < 3) return;
+    const result = transcribeFromPitchFrames(pitchFrames);
+    if (isTranscriptionConfidenceOk(result)) setShowStaff(true);
+  }, [isActive, pitchFrames.length, fileImport, humContour]);
 
   useFocusEffect(
     useCallback(() => {
@@ -744,24 +860,40 @@ export default function MelodyScreen() {
 
         <View style={styles.recognitionRow}>
           <Text style={styles.recognitionLabel}>
-            Распознавание: {fileImport ? 'файл' : recognitionMode === 'contour' ? 'контур' : 'классика'}
+            Распознавание: {fileImport ? 'basic-pitch' : humContour ? 'напев' : recognitionMode === 'contour' ? 'контур' : 'классика'}
           </Text>
           <Switch
             value={recognitionMode === 'contour'}
             onValueChange={v => {
               setRecognitionMode(v ? 'contour' : 'classic');
-              if (!v) setFileImport(null);
+              if (!v) {
+                setFileImport(null);
+                setHumContour(null);
+              }
             }}
-            disabled={fileImport != null}
+            disabled={fileImport != null || humContour != null}
             trackColor={{ false: '#252532', true: '#7c4dff88' }}
             thumbColor={recognitionMode === 'contour' ? '#7c4dff' : '#555'}
           />
         </View>
         <View style={styles.fileImportRow}>
           <TouchableOpacity
+            style={[styles.fileImportBtn, humImportBusy && styles.btnDisabled]}
+            onPress={handleImportHumSnippet}
+            disabled={humImportBusy || fileImportBusy}
+            activeOpacity={0.85}
+          >
+            {humImportBusy ? (
+              <ActivityIndicator size="small" color="#b39ddb" />
+            ) : (
+              <Ionicons name="musical-notes-outline" size={16} color="#b39ddb" />
+            )}
+            <Text style={[styles.fileImportBtnText, styles.humImportBtnText]}>Напев</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             style={[styles.fileImportBtn, fileImportBusy && styles.btnDisabled]}
             onPress={handleImportFromFile}
-            disabled={fileImportBusy}
+            disabled={fileImportBusy || humImportBusy}
             activeOpacity={0.85}
           >
             {fileImportBusy ? (
@@ -771,6 +903,15 @@ export default function MelodyScreen() {
             )}
             <Text style={styles.fileImportBtnText}>Из файла</Text>
           </TouchableOpacity>
+          {!isActive && pitchFrames.length >= 3 && !fileImport && !humContour ? (
+            <TouchableOpacity
+              style={styles.humMicBtn}
+              onPress={handleMicHumContour}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.humMicBtnText}>Контур</Text>
+            </TouchableOpacity>
+          ) : null}
           {fileImport && fileImport.segments.length > 0 ? (
             <TouchableOpacity
               style={[styles.studioImportBtn, studioImportBusy && styles.btnDisabled]}
@@ -790,10 +931,15 @@ export default function MelodyScreen() {
             <Text style={styles.fileImportHint} numberOfLines={2}>{fileImportHint}</Text>
           ) : (
             <Text style={styles.fileImportHintMuted} numberOfLines={2}>
-              basic-pitch на ПК · без сервера — только микрофон
+              Напев — сниппет НАЙТИ или аудио · Из файла — basic-pitch на ПК
             </Text>
           )}
         </View>
+        {(activeEvents.length > 0 && (humContour || pitchFrames.length > 0 || fileImport)) ? (
+          <Text style={styles.humStripCaption}>
+            Лента напева ({contourSource}){useContourRecognition ? ' · нотный стан ниже' : ' · мало сигнала для PLAY'}
+          </Text>
+        ) : null}
         {(isActive || pitchFrames.length > 0) ? (
           <Text style={styles.recognitionStats}>
             кадры {pitchFrames.length}
@@ -808,7 +954,7 @@ export default function MelodyScreen() {
           history={pitchHistory}
           layoutOriginTs={chartLayoutOriginTs}
           registeredEvents={activeEvents}
-          segmentOverlays={recognitionMode === 'contour' || fileImport ? segmentOverlays : []}
+          segmentOverlays={recognitionMode === 'contour' || fileImport || humContour ? segmentOverlays : []}
           active={isActive}
           chartPlotWidth={chartPlotWidth}
         />
@@ -1262,6 +1408,23 @@ const styles = StyleSheet.create({
     borderColor: '#3a3a4a',
   },
   fileImportBtnText: { color: '#e0e0e0', fontSize: 12, fontWeight: '700' },
+  humImportBtnText: { color: '#b39ddb' },
+  humMicBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#15151e',
+    borderWidth: 1,
+    borderColor: '#7c4dff55',
+  },
+  humMicBtnText: { color: '#7c4dff', fontSize: 11, fontWeight: '700' },
+  humStripCaption: {
+    color: '#7c4dff',
+    fontSize: 10,
+    fontWeight: '600',
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
   studioImportBtn: {
     flexDirection: 'row',
     alignItems: 'center',
