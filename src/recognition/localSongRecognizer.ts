@@ -3,6 +3,10 @@ import { searchSongsSmart } from '../db/searchSongsSmart';
 import { findBestSongMatch } from '../utils/songMatch';
 import type { MatchKind } from '../utils/searchScore';
 import { scoreChordProgression } from './chordFingerprint';
+import {
+  scoreChromaAgainstKey,
+  scoreKeyMatch,
+} from './chromaMatch';
 import { extractSignalsFromRecording } from './recordingSignals';
 import { saveRecognitionSnippet } from './snippets';
 import type {
@@ -29,7 +33,33 @@ function hasStrongSignal(c: RecognizeCandidate): boolean {
   if (c.reasons.includes('text') && c.score >= 78) return true;
   if (c.reasons.includes('chords') && c.score >= 48) return true;
   if (c.reasons.includes('tempo') && c.score >= 54) return true;
+  if (
+    c.reasons.includes('melody')
+    && c.reasons.includes('tempo')
+    && c.score >= MIN_AUTO_MATCH_SCORE
+  ) {
+    return true;
+  }
   return false;
+}
+
+function scoreSongByAudioSignals(
+  signals: RecognitionSignals,
+  song: Awaited<ReturnType<typeof listSongs>>[0],
+): number {
+  let score = 0;
+  if (signals.bpm != null && signals.bpm > 0 && song.bpm) {
+    const diff = Math.abs(song.bpm - signals.bpm);
+    if (diff <= 4) score += 58 - diff * 4;
+    else if (diff <= 8) score += 28;
+  }
+  if (signals.estimatedKey && song.key) {
+    score += Math.round(scoreKeyMatch(signals.estimatedKey, song.key) * 0.5);
+  }
+  if (signals.chromaVector?.length === 12 && signals.estimatedKey) {
+    score += Math.round(scoreChromaAgainstKey(signals.chromaVector, signals.estimatedKey) * 0.35);
+  }
+  return score;
 }
 
 function isConfidentTopMatch(candidates: RecognizeCandidate[]): boolean {
@@ -100,18 +130,31 @@ async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCand
     }
   }
 
-  if (signals.bpm != null && signals.bpm > 0) {
+  const hasAudioHints =
+    (signals.bpm != null && signals.bpm > 0)
+    || (signals.chromaVector?.length === 12)
+    || Boolean(signals.estimatedKey);
+
+  if (hasAudioHints) {
     const all = await listSongs();
     for (const s of all) {
-      if (!s.bpm) continue;
-      const diff = Math.abs(s.bpm - signals.bpm);
-      if (diff <= 5) {
-        merge(candidateFromSong(
-          { ...s, score: 62 - diff * 2, matchKind: 'fuzzy' },
-          62 - diff * 2,
-          ['tempo'],
-        ));
+      const audioScore = scoreSongByAudioSignals(signals, s);
+      if (audioScore < 40) continue;
+      const reasons: RecognizeCandidate['reasons'] = [];
+      if (signals.bpm && s.bpm && Math.abs(s.bpm - signals.bpm) <= 8) reasons.push('tempo');
+      if (
+        signals.estimatedKey
+        && s.key
+        && scoreKeyMatch(signals.estimatedKey, s.key) >= 48
+      ) {
+        reasons.push('melody');
       }
+      if (!reasons.length) continue;
+      merge(candidateFromSong(
+        { ...s, score: audioScore, matchKind: 'fuzzy' },
+        audioScore,
+        reasons,
+      ));
     }
   }
 

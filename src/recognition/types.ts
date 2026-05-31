@@ -19,6 +19,10 @@ export interface RecognitionSignals {
   /** MIDI-номера напетой последовательности (вкладка Melody) */
   melodyMidi?: number[];
   bpm?: number;
+  /** 12-bin chroma 0…1 from snippet WebView analysis */
+  chromaVector?: number[];
+  /** e.g. "G major" from chroma profile */
+  estimatedKey?: string;
   /** Строка аккордов, например из LIVE или практики */
   chordProgression?: string;
   language?: string;

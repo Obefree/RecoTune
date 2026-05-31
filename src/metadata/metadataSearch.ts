@@ -37,12 +37,24 @@ export async function searchBundledMetadata(
   const candidateCap = (offset + limit) * 4;
 
   for (const chunk of BUNDLED_METADATA_CHUNKS) {
+    const artistBoostIds = new Set<string>();
+    for (const a of chunk.artists ?? []) {
+      const { score, kind } = scoreSongAgainstQuery(q, '', a.name);
+      const nameNorm = normalizeSearchText(a.name);
+      if (score > 0 || kind !== 'none' || (qNorm.length >= 2 && nameNorm.includes(qNorm))) {
+        artistBoostIds.add(a.id);
+      }
+    }
+
     for (const t of chunk.tracks) {
       const { score, kind } = scoreSongAgainstQuery(q, t.title, t.artistName);
       let finalScore = score;
       const albumNorm = normalizeSearchText(t.album ?? '');
       if (albumNorm.includes(qNorm) && qNorm.length >= METADATA_MIN_CHUNK_QUERY_LEN) {
         finalScore = Math.max(finalScore, 40);
+      }
+      if (artistBoostIds.has(t.artistId)) {
+        finalScore = Math.max(finalScore, 52);
       }
 
       if (finalScore > 0 || kind !== 'none') {

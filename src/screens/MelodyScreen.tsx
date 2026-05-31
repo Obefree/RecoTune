@@ -5,7 +5,9 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { ScrollView } from 'react-native-gesture-handler';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
@@ -70,6 +72,7 @@ import {
   updateMelodyFile,
   type SavedMelodyMeta,
 } from '../utils/melodyStorage';
+import { importStemsToStudio, STUDIO_AUDIO_DIR } from '../utils/studioImport';
 
 /** Display/chart smoothing — raw pitch still goes to detector + pitchFrames for contour. */
 const DISPLAY_EMA = 0.20;
@@ -78,6 +81,7 @@ const CHART_PAD = 32 + 16;
 interface NoteState { name: string; octave: number; cents: number; frequency: number }
 
 export default function MelodyScreen() {
+  const navigation = useNavigation<BottomTabNavigationProp<{ Studio: undefined }>>();
   const insets = useSafeAreaInsets();
   const { width: windowW } = useWindowDimensions();
   const { t } = useLocale();
@@ -105,6 +109,7 @@ export default function MelodyScreen() {
   const [fileImport, setFileImport] = useState<TranscriptionResult | null>(null);
   const [fileImportBusy, setFileImportBusy] = useState(false);
   const [fileImportHint, setFileImportHint] = useState<string | null>(null);
+  const [studioImportBusy, setStudioImportBusy] = useState(false);
 
   const webViewRef = useRef<WebView>(null);
   const playerRef = useRef<MelodyPlayerHandle>(null);
@@ -445,6 +450,33 @@ export default function MelodyScreen() {
     transcription.segments,
   ]);
 
+  const openMelodyInStudio = useCallback(async () => {
+    if (!fileImport?.segments.length || studioImportBusy) return;
+    if (!playerRef.current) {
+      setError('Движок воспроизведения не готов');
+      return;
+    }
+    setStudioImportBusy(true);
+    setError(null);
+    try {
+      await FileSystem.makeDirectoryAsync(STUDIO_AUDIO_DIR, { intermediates: true });
+      const { b64 } = await playerRef.current.renderMelodyWav(playbackPayload);
+      const uri = `${STUDIO_AUDIO_DIR}melody_bp_${Date.now()}.wav`;
+      await FileSystem.writeAsStringAsync(uri, b64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await importStemsToStudio(
+        [{ uri, label: 'Melody (basic-pitch)', color: '#7c4dff' }],
+        'Melody',
+      );
+      navigation.navigate('Studio');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStudioImportBusy(false);
+    }
+  }, [fileImport, studioImportBusy, playbackPayload, navigation]);
+
   const playbackTotalMs = useMemo(
     () => getMelodyPlaybackTotalMs(playbackPayload.notes, playbackPayload.chords),
     [playbackPayload],
@@ -739,6 +771,21 @@ export default function MelodyScreen() {
             )}
             <Text style={styles.fileImportBtnText}>Из файла</Text>
           </TouchableOpacity>
+          {fileImport && fileImport.segments.length > 0 ? (
+            <TouchableOpacity
+              style={[styles.studioImportBtn, studioImportBusy && styles.btnDisabled]}
+              onPress={openMelodyInStudio}
+              disabled={studioImportBusy}
+              activeOpacity={0.85}
+            >
+              {studioImportBusy ? (
+                <ActivityIndicator size="small" color="#b39ddb" />
+              ) : (
+                <Ionicons name="albums-outline" size={16} color="#b39ddb" />
+              )}
+              <Text style={styles.studioImportBtnText}>В STUDIO</Text>
+            </TouchableOpacity>
+          ) : null}
           {fileImportHint ? (
             <Text style={styles.fileImportHint} numberOfLines={2}>{fileImportHint}</Text>
           ) : (
@@ -1215,6 +1262,18 @@ const styles = StyleSheet.create({
     borderColor: '#3a3a4a',
   },
   fileImportBtnText: { color: '#e0e0e0', fontSize: 12, fontWeight: '700' },
+  studioImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#7c4dff55',
+    backgroundColor: '#1a1528',
+  },
+  studioImportBtnText: { color: '#b39ddb', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 },
   fileImportHint: { flex: 1, color: '#9a9ab0', fontSize: 10, fontWeight: '600' },
   fileImportHintMuted: { flex: 1, color: '#555', fontSize: 10, fontWeight: '500' },
   recognitionStats: { color: '#555', fontSize: 10, fontWeight: '600', marginBottom: 8, paddingHorizontal: 4 },

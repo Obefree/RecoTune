@@ -35,7 +35,7 @@ for (const f of chunks) {
   tracks.push(...(p.tracks ?? []));
 }
 
-const queries = ['beatles', 'кино', 'nirvana', 'земфира', 'radiohead', 'группа'];
+const queries = ['beatles', 'кино', 'nirvana', 'земфира', 'radiohead', 'Bob Dylan', 'мельница'];
 let ok = 0;
 for (const q of queries) {
   const hits = tracks

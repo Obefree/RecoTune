@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
+import SnippetAnalyzerEngine from '../components/SnippetAnalyzerEngine';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTabBarVisibility } from '../context/TabBarVisibility';
@@ -4246,6 +4247,7 @@ export default function ChordsScreen() {
         javaScriptEnabled
         originWhitelist={['*']}
       />
+      <SnippetAnalyzerEngine />
     </View>
     </View>
   );

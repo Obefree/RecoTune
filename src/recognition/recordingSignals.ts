@@ -1,4 +1,5 @@
 import type { RecognitionSignals } from './types';
+import { analyzeRecordingUri } from './snippetAnalyzerBridge';
 
 /** «Artist - Title.ext» or «Artist – Title» from last path segment. */
 export function parseArtistTitleFromFilename(name: string): { artist: string; title: string } | null {
@@ -29,6 +30,16 @@ export async function extractSignalsFromRecording(
       signals.title = parsed.title;
       signals.textQuery = `${parsed.artist} ${parsed.title}`.trim();
     }
+  }
+
+  const maxSec = Math.min(Math.max(options.durationSec || 10, 4), 15);
+  try {
+    const analysis = await analyzeRecordingUri(uri, maxSec);
+    if (analysis.bpm > 0) signals.bpm = analysis.bpm;
+    if (analysis.estimatedKey) signals.estimatedKey = analysis.estimatedKey;
+    if (analysis.chroma.length === 12) signals.chromaVector = analysis.chroma;
+  } catch {
+    /* no fake BPM/key */
   }
 
   return signals;

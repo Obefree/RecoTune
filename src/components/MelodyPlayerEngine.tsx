@@ -10,17 +10,20 @@ import type { MelodyPlaybackPayload } from '../utils/melodyPlayback';
 export type MelodyInstrument = 'piano' | 'sine';
 
 export interface MelodyPlayerMessage {
-  type: 'ready' | 'done' | 'error' | 'progress' | 'noteStart';
+  type: 'ready' | 'done' | 'error' | 'progress' | 'noteStart' | 'rendered';
   message?: string;
   elapsedMs?: number;
   noteIndex?: number;
   index?: number;
   startMs?: number;
+  b64?: string;
+  durationMs?: number;
 }
 
 export interface MelodyPlayerHandle {
   playMelody(payload: MelodyPlaybackPayload, instrument: MelodyInstrument): void;
   stopMelody(): void;
+  renderMelodyWav(payload: MelodyPlaybackPayload): Promise<{ b64: string; durationMs: number }>;
 }
 
 interface Props {
@@ -246,14 +249,88 @@ const HTML = `<!DOCTYPE html>
     }, anchorLeadMs + totalMs + 220);
   };
 
+  function encodeWAV(samples, sr, bits) {
+    var mono = true;
+    var nc = 1;
+    var bps = bits / 8;
+    var n = samples.length;
+    var dataLen = n * nc * bps;
+    var buf = new ArrayBuffer(44 + dataLen);
+    var v = new DataView(buf);
+    var wr = function(off, str) {
+      for (var i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i));
+    };
+    wr(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true); wr(8, 'WAVE');
+    wr(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, nc, true); v.setUint32(24, sr, true);
+    v.setUint32(28, sr * nc * bps, true);
+    v.setUint16(32, nc * bps, true); v.setUint16(34, bits, true);
+    wr(36, 'data'); v.setUint32(40, dataLen, true);
+    var off = 44;
+    var clamp = function(x) { return Math.max(-1, Math.min(1, x)); };
+    for (var i = 0; i < n; i++) {
+      v.setInt16(off, clamp(samples[i]) * 32767, true);
+      off += 2;
+    }
+    return buf;
+  }
+
+  function ab64(ab) {
+    var u8 = new Uint8Array(ab);
+    var s = '';
+    for (var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+    return btoa(s);
+  }
+
+  window.renderMelodyWav = function(payloadJson) {
+    window.stopMelody();
+    var payload;
+    try { payload = JSON.parse(payloadJson); } catch(e) {
+      post({ type: 'error', message: 'parse' });
+      return;
+    }
+    var notes = payload.notes || [];
+    if (!notes.length) {
+      post({ type: 'error', message: 'empty' });
+      return;
+    }
+    var totalMs = 400;
+    for (var j = 0; j < notes.length; j++) {
+      totalMs = Math.max(totalMs, (notes[j].startMs || 0) + (notes[j].durationMs || 400));
+    }
+    var sr = 44100;
+    var len = Math.ceil((totalMs + 300) / 1000 * sr);
+    var off = new OfflineAudioContext(1, len, sr);
+    var anchor = 0.05;
+    for (var k = 0; k < notes.length; k++) {
+      var n = notes[k];
+      var startSec = anchor + (n.startMs || 0) / 1000;
+      var durSec = clampDurSec(n.durationMs || 400);
+      scheduleTone(startSec, midiToFreq(n.midi), durSec, 'piano', 0.85);
+    }
+    off.startRendering().then(function(buf) {
+      var wav = encodeWAV(buf.getChannelData(0), sr, 16);
+      post({ type: 'rendered', b64: ab64(wav), durationMs: totalMs });
+    }).catch(function(e) {
+      post({ type: 'error', message: String(e) });
+    });
+  };
+
   post({ type: 'ready' });
 })();
 </script>
 </body>
 </html>`;
 
+const RENDER_TIMEOUT_MS = 60_000;
+
 const MelodyPlayerEngine = forwardRef<MelodyPlayerHandle, Props>(({ onMessage }, ref) => {
   const webRef = useRef<WebView>(null);
+  const renderPendingRef = useRef<{
+    resolve: (v: { b64: string; durationMs: number }) => void;
+    reject: (e: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
 
   const stopMelody = useCallback(() => {
     webRef.current?.injectJavaScript('window.stopMelody && window.stopMelody(); true;');
@@ -267,11 +344,61 @@ const MelodyPlayerEngine = forwardRef<MelodyPlayerHandle, Props>(({ onMessage },
     );
   }, []);
 
-  useImperativeHandle(ref, () => ({ playMelody, stopMelody }), [playMelody, stopMelody]);
+  const renderMelodyWav = useCallback((payload: MelodyPlaybackPayload) => {
+    if (!payload.notes.length) {
+      return Promise.reject(new Error('Нет нот для экспорта в Studio'));
+    }
+    return new Promise<{ b64: string; durationMs: number }>((resolve, reject) => {
+      if (renderPendingRef.current) {
+        reject(new Error('Рендер уже выполняется'));
+        return;
+      }
+      const timer = setTimeout(() => {
+        renderPendingRef.current = null;
+        reject(new Error('Таймаут рендера мелодии'));
+      }, RENDER_TIMEOUT_MS);
+      renderPendingRef.current = {
+        resolve: v => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+        reject: e => {
+          clearTimeout(timer);
+          reject(e);
+        },
+        timer,
+      };
+      const json = JSON.stringify(payload);
+      webRef.current?.injectJavaScript(
+        `window.renderMelodyWav && window.renderMelodyWav(${JSON.stringify(json)}); true;`,
+      );
+    });
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({ playMelody, stopMelody, renderMelodyWav }),
+    [playMelody, stopMelody, renderMelodyWav],
+  );
 
   const handleMessage = (e: WebViewMessageEvent) => {
     try {
       const msg: MelodyPlayerMessage = JSON.parse(e.nativeEvent.data);
+      if (msg.type === 'rendered' && msg.b64 && renderPendingRef.current) {
+        const p = renderPendingRef.current;
+        renderPendingRef.current = null;
+        p.resolve({
+          b64: msg.b64,
+          durationMs: msg.durationMs ?? 0,
+        });
+        return;
+      }
+      if (msg.type === 'error' && renderPendingRef.current) {
+        const p = renderPendingRef.current;
+        renderPendingRef.current = null;
+        p.reject(new Error(msg.message || 'Ошибка рендера'));
+        return;
+      }
       onMessage?.(msg);
     } catch {
       /* ignore */
