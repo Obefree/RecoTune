@@ -4,7 +4,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Platform, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { TabBarVisibilityProvider, useTabBarVisibility } from './src/context/TabBarVisibility';
@@ -55,7 +55,8 @@ function AppInner() {
   );
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.root}>
+      <View style={styles.navFill}>
       <NavigationContainer
         theme={{
           dark: true,
@@ -142,11 +143,28 @@ function AppInner() {
           <Tab.Screen name="AILab"    component={AILabScreen}  options={{ title: 'AI Lab' }} />
         </Tab.Navigator>
       </NavigationContainer>
-      <SnippetAnalyzerEngine />
+      </View>
+      {/* WebView вне flex-колонки с навигатором — иначе на Android ~50% экрана «белая зона» и таб-бар посередине */}
+      <View style={styles.analyzerOverlay} pointerEvents="box-none">
+        <SnippetAnalyzerEngine />
+      </View>
       <StatusBar style="light" />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  navFill: { flex: 1 },
+  analyzerOverlay: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 1,
+    height: 1,
+    overflow: 'hidden',
+  },
+});
 
 export default function App() {
   return (

@@ -27,6 +27,8 @@ const SnippetAnalyzerEngine = forwardRef<WebView>(function SnippetAnalyzerEngine
       onMessage={onMessage}
       javaScriptEnabled
       originWhitelist={['*']}
+      pointerEvents="none"
+      collapsable={false}
       onLoadEnd={() => setSnippetAnalyzerReady(true)}
       onError={() => setSnippetAnalyzerReady(false)}
     />
@@ -35,11 +37,15 @@ const SnippetAnalyzerEngine = forwardRef<WebView>(function SnippetAnalyzerEngine
 
 export default SnippetAnalyzerEngine;
 
+/** Как ChordsScreen hiddenWV — не участвует во flex, иначе Android режет экран пополам */
 const styles = StyleSheet.create({
   hidden: {
+    position: 'absolute',
+    left: -9999,
+    top: 0,
     width: 1,
     height: 1,
     opacity: 0,
-    position: 'absolute',
+    zIndex: -1,
   },
 });
