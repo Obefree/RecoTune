@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-05-31 | Dev :8787+:8788, P4 НАЙТИ, Studio import | [2026-05-31-dev-all-p4-studio.md](./2026-05-31-dev-all-p4-studio.md) |
 | 2026-05-31 | Melody: basic-pitch из файла (ПК) | [2026-05-31-basic-pitch-transcribe.md](./2026-05-31-basic-pitch-transcribe.md) |
 | 2026-05-31 | AI Lab: Demucs на ПК, DSP (демо) | [2026-05-31-stem-demucs-server.md](./2026-05-31-stem-demucs-server.md) |
 | 2026-05-30 | Tuner: плавная стрелка v2 (outlier, UI throttle) | [2026-05-30-tuner-display-smoothing-v2.md](./2026-05-30-tuner-display-smoothing-v2.md) |

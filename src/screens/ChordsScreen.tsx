@@ -1778,10 +1778,10 @@ export default function ChordsScreen() {
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
       const proxy = effectiveChordFetchUrl(providerSettings);
       if (proxy && libChordProxyReachable === false) {
-        return 'В офлайн-каталоге нет совпадений. Запустите npm start на ПК (прокси :8787).';
+        return 'В офлайн-каталоге нет совпадений. Запустите npm start на ПК (:8787 табы, :8788 stems).';
       }
       if (!proxy) {
-        return 'В офлайн-каталоге нет совпадений. Для AmDm/UG: npm start на ПК (прокси :8787).';
+        return 'В офлайн-каталоге нет совпадений. Для AmDm/UG: npm start на ПК (:8787).';
       }
     }
     return 'Ничего не найдено. Проверьте написание.';
@@ -3218,7 +3218,10 @@ export default function ChordsScreen() {
                   <>
                     <Ionicons name="ear-outline" size={64} color="#7c4dff33" />
                     <Text style={styles.identActionTitle}>Запись для распознавания</Text>
-                    <Text style={styles.identActionSub}>10 с → сохранение на устройстве.{'\n'}Облачный AudD отключён; сопоставление по звуку — позже.</Text>
+                    <Text style={styles.identActionSub}>
+                      10 с → сохранение на устройстве.{'\n'}
+                      Распознавание по звуку (без облака) — в разработке; без уверенного совпадения песня не подставляется.
+                    </Text>
                     {isRecognizing ? (
                       <View style={styles.recProgressBig}>
                         <ActivityIndicator color="#7c4dff" size="large" />
@@ -3241,7 +3244,10 @@ export default function ChordsScreen() {
                   <>
                     <Ionicons name="musical-note-outline" size={64} color="#ff980033" />
                     <Text style={styles.identActionTitle}>Распознать из файла</Text>
-                    <Text style={styles.identActionSub}>MP3, AAC, WAV — копия сохраняется локально.{'\n'}Поиск по метаданным каталога (без облака).</Text>
+                    <Text style={styles.identActionSub}>
+                      MP3, AAC, WAV — копия сохраняется локально.{'\n'}
+                      Из имени «Исполнитель - Название» — подсказка для каталога; иначе ищите вручную.
+                    </Text>
                     {fileLoading ? (
                       <View style={styles.recProgressBig}>
                         <ActivityIndicator color="#ff9800" size="large" />

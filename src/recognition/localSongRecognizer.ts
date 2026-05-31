@@ -3,6 +3,7 @@ import { searchSongsSmart } from '../db/searchSongsSmart';
 import { findBestSongMatch } from '../utils/songMatch';
 import type { MatchKind } from '../utils/searchScore';
 import { scoreChordProgression } from './chordFingerprint';
+import { extractSignalsFromRecording } from './recordingSignals';
 import { saveRecognitionSnippet } from './snippets';
 import type {
   RecognitionSignals,
@@ -10,9 +11,11 @@ import type {
   RecognizeOutcome,
   SongRecognizer,
 } from './types';
+const MIN_AUTO_MATCH_SCORE = 72;
+const MIN_LEAD_OVER_SECOND = 12;
 
-const SNIPPET_SAVED_MSG =
-  'Запись сохранена на устройстве. Распознавание по звуку без облака — в разработке; пока ищите в каталоге или введите название.';
+const SNIPPET_SAVED_BASE =
+  'Распознавание по звуку (без облака) — в разработке. Запись сохранена на устройстве.';
 
 function candidateFromSong(
   song: Awaited<ReturnType<typeof searchSongsSmart>>[0],
@@ -20,6 +23,33 @@ function candidateFromSong(
   reasons: RecognizeCandidate['reasons'],
 ): RecognizeCandidate {
   return { song, score, reasons };
+}
+
+function hasStrongSignal(c: RecognizeCandidate): boolean {
+  if (c.reasons.includes('text') && c.score >= 78) return true;
+  if (c.reasons.includes('chords') && c.score >= 48) return true;
+  if (c.reasons.includes('tempo') && c.score >= 54) return true;
+  return false;
+}
+
+function isConfidentTopMatch(candidates: RecognizeCandidate[]): boolean {
+  if (!candidates.length || !hasStrongSignal(candidates[0])) return false;
+  if (candidates[0].score < MIN_AUTO_MATCH_SCORE) return false;
+  const second = candidates[1]?.score ?? 0;
+  return candidates[0].score - second >= MIN_LEAD_OVER_SECOND;
+}
+
+function snippetSavedMessage(
+  signals: RecognitionSignals,
+  hadWeakCandidates: boolean,
+): string {
+  if (signals.textQuery?.trim()) {
+    return `${SNIPPET_SAVED_BASE}\n\nПодсказка из имени файла: «${signals.textQuery.trim()}» — откройте «База песен» или введите вручную.`;
+  }
+  if (hadWeakCandidates) {
+    return `${SNIPPET_SAVED_BASE}\n\nВ каталоге есть похожие записи, но уверенного совпадения по звуку нет — уточните поиск вручную.`;
+  }
+  return `${SNIPPET_SAVED_BASE}\n\nИщите в каталоге или введите название вручную.`;
 }
 
 async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCandidate[]> {
@@ -75,10 +105,10 @@ async function rankBySignals(signals: RecognitionSignals): Promise<RecognizeCand
     for (const s of all) {
       if (!s.bpm) continue;
       const diff = Math.abs(s.bpm - signals.bpm);
-      if (diff <= 8) {
+      if (diff <= 5) {
         merge(candidateFromSong(
-          { ...s, score: 60 - diff, matchKind: 'fuzzy' },
-          60 - diff,
+          { ...s, score: 62 - diff * 2, matchKind: 'fuzzy' },
+          62 - diff * 2,
           ['tempo'],
         ));
       }
@@ -108,14 +138,17 @@ export const localSongRecognizer: SongRecognizer = {
 
   async recognizeFromRecording(uri, options) {
     const snippet = await saveRecognitionSnippet(uri, options);
-    const candidates = await rankBySignals({});
-    if (candidates.length > 0) {
+    const signals = await extractSignalsFromRecording(uri, options);
+    const candidates = await rankBySignals(signals);
+
+    if (isConfidentTopMatch(candidates)) {
       return { status: 'match', candidates, snippet };
     }
+
     return {
       status: 'snippet_saved',
       snippet,
-      message: SNIPPET_SAVED_MSG,
+      message: snippetSavedMessage(signals, candidates.length > 0),
     };
   },
 };

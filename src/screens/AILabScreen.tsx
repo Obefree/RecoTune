@@ -17,7 +17,10 @@ import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
+import { importStemsToStudio } from '../utils/studioImport';
 import { assertPlaybackFileExists } from '../utils/playbackUri';
 import { StemSeparateError, probeStemServer, separateStemsOnServer } from '../providers/stemSeparateClient';
 import { resolveStemSeparateUrl, resolveStemSeparateUrlDetailed, stemSeparateSetupHint } from '../providers/stemSeparateUrl';
@@ -223,6 +226,7 @@ function stemModeOptions(engine: StemEngine): { id: StemOutputMode; label: strin
 
 export default function AILabScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<BottomTabNavigationProp<Record<string, object | undefined>>>();
   const { height: windowHeight } = useWindowDimensions();
   const [tab, setTab] = useState<'chords' | 'stems'>('chords');
 
@@ -271,7 +275,7 @@ export default function AILabScreen() {
       if (!url) {
         if (!cancelled) {
           setStemServerReady(false);
-          setStemServerHint('Сервер не найден (запустите npm run stems:dev на ПК в той же Wi‑Fi)');
+          setStemServerHint('Сервер не найден (запустите npm start на ПК в той же Wi‑Fi — :8788)');
         }
         return;
       }
@@ -595,6 +599,32 @@ export default function AILabScreen() {
     } catch (e) { Alert.alert('Ошибка', String(e)); }
   }, []);
 
+  const openStemsInStudio = useCallback(async () => {
+    const importable = stemItemsRef.current.filter(s => s.uri && !s.loadError);
+    if (!importable.length) {
+      Alert.alert('Studio', 'Нет готовых дорожек для импорта.');
+      return;
+    }
+    const preferIds = ['minus', 'vocals'];
+    const ordered = [
+      ...importable.filter(s => preferIds.includes(s.id)),
+      ...importable.filter(s => !preferIds.includes(s.id)),
+    ].slice(0, 2);
+    try {
+      await importStemsToStudio(
+        ordered.map(s => ({ uri: s.uri!, label: s.label, color: s.color })),
+        'Demucs',
+      );
+      navigation.navigate('Studio');
+      Alert.alert(
+        'Studio',
+        `Импортировано дорожек: ${ordered.length}. Вкладка Studio — сессия «Demucs».`,
+      );
+    } catch (e) {
+      Alert.alert('Studio', String(e));
+    }
+  }, [navigation]);
+
   /* ── Chord timeline (deduped) ── */
   const dedupedChords = chordEvents.filter((ev, i) =>
     i === 0 || ev.chord !== chordEvents[i - 1].chord
@@ -847,9 +877,19 @@ export default function AILabScreen() {
               keyExtractor={it => it.id}
               showsVerticalScrollIndicator={false}
               ListHeaderComponent={
-                <Text style={[styles.sectionTitle, styles.stemsListHeader]}>
-                  ▶ прослушать · ↗ экспорт WAV
-                </Text>
+                <View>
+                  <Text style={[styles.sectionTitle, styles.stemsListHeader]}>
+                    ▶ прослушать · ↗ экспорт WAV
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.studioImportBtn}
+                    onPress={() => { void openStemsInStudio(); }}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="layers" size={18} color="#7c4dff" />
+                    <Text style={styles.studioImportBtnText}>ОТКРЫТЬ В STUDIO</Text>
+                  </TouchableOpacity>
+                </View>
               }
               ListFooterComponent={
                 <Text style={styles.footerNoteCompact}>
@@ -1050,7 +1090,20 @@ const styles = StyleSheet.create({
   },
   stemsList: { flex: 1 },
   stemsListContent: { paddingBottom: 16, gap: 0 },
-  stemsListHeader: { marginBottom: 10, marginTop: 4 },
+  stemsListHeader: { marginBottom: 8, marginTop: 4 },
+  studioImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginBottom: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#7c4dff55',
+    backgroundColor: '#7c4dff18',
+  },
+  studioImportBtnText: { color: '#b39ddb', fontSize: 12, fontWeight: '800', letterSpacing: 0.6 },
   stemsIdlePane: {
     flex: 1,
     alignItems: 'center',

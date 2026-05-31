@@ -5,7 +5,9 @@
 ## Команды
 
 ```bash
-npm run stems:dev              # HTTP :8788
+npm start                      # :8787 + :8788 + Expo (рекомендуется)
+npm run dev:all                # только :8787 + :8788
+npm run stems:dev              # только HTTP :8788
 npm run test-stem-separate     # GET /health
 npm run test-stem-separate -- --separate   # POST /separate (нужен Demucs)
 npm run test-stem-transcribe   # POST /transcribe (нужен basic-pitch)
