@@ -1,0 +1,23 @@
+diff --git a/node_modules/expo-av/android/src/main/java/expo/modules/av/AVManager.java b/node_modules/expo-av/android/src/main/java/expo/modules/av/AVManager.java
+index 964af5d..a99144a 100644
+--- a/node_modules/expo-av/android/src/main/java/expo/modules/av/AVManager.java
++++ b/node_modules/expo-av/android/src/main/java/expo/modules/av/AVManager.java
+@@ -19,6 +19,7 @@ import android.util.Log;
+ import com.facebook.jni.HybridData;
+ 
+ import androidx.annotation.OptIn;
++import androidx.core.content.ContextCompat;
+ import expo.modules.core.ModuleRegistry;
+ import expo.modules.core.Promise;
+ import expo.modules.core.arguments.ReadableArguments;
+@@ -133,8 +134,8 @@ public class AVManager implements LifecycleEventListener, AudioManager.OnAudioFo
+         }
+       }
+     };
+-    mContext.registerReceiver(mNoisyAudioStreamReceiver,
+-      new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
++    ContextCompat.registerReceiver(mContext, mNoisyAudioStreamReceiver,
++      new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED);
+     mIsRegistered = true;
+ 
+ 

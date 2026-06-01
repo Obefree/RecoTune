@@ -28,7 +28,8 @@
     "prebuild:android": "expo prebuild --platform android",
     "prebuild:android:clean": "expo prebuild --platform android --clean",
     "build:android:release": "build-apk-release.bat",
-    "build:android:debug": "build-apk.bat"
+    "build:android:debug": "build-apk.bat",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -61,6 +62,7 @@
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",
     "expo-build-properties": "~1.0.10",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "overrides": {

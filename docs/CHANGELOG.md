@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Android crash (14+):** `patch-package` для `react-native-music-control` и `expo-av` — `RECEIVER_NOT_EXPORTED` при `registerReceiver`. См. [docs/features/2026-06-01-android-receiver-crash-fix.md](./features/2026-06-01-android-receiver-crash-fix.md).
 - **Android release audio:** Web Audio unlock/resume в Melody PLAY, ProGuard keep для expo-av/ExoPlayer, playback session в Video. См. [docs/features/2026-06-01-release-audio-playback.md](./features/2026-06-01-release-audio-playback.md).
 - **Android layout:** таб-бар снова внизу после P7 — `SnippetAnalyzerEngine` не в flex-колонке с навигатором. См. [docs/features/2026-05-31-android-tabbar-layout-fix.md](./features/2026-05-31-android-tabbar-layout-fix.md).
 - **P7 Melody / stem host:** лента напева (сниппет НАЙТИ + микрофон), `EXPO_PUBLIC_STEM_SERVER_URL` в AI Lab, версия **1.0.1**. См. [docs/features/2026-05-31-p7-melody-hum-stem-host.md](./features/2026-05-31-p7-melody-hum-stem-host.md).
