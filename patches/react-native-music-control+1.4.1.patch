@@ -1,13 +1,25 @@
 diff --git a/node_modules/react-native-music-control/android/src/main/java/com/tanguyantoine/react/MusicControlModule.java b/node_modules/react-native-music-control/android/src/main/java/com/tanguyantoine/react/MusicControlModule.java
-index f33abc5..83ea8eb 100644
+index f33abc5..c4a8e21 100644
 --- a/node_modules/react-native-music-control/android/src/main/java/com/tanguyantoine/react/MusicControlModule.java
 +++ b/node_modules/react-native-music-control/android/src/main/java/com/tanguyantoine/react/MusicControlModule.java
-@@ -201,7 +201,7 @@ public class MusicControlModule extends ReactContextBaseJavaModule implements Co
+@@ -8,6 +8,7 @@ import android.content.ComponentName;
+ import android.content.Intent;
+ import android.content.IntentFilter;
+ import android.content.Context;
++import androidx.core.content.ContextCompat;
+ import android.content.ServiceConnection;
+ import android.content.res.Configuration;
+ import android.graphics.Bitmap;
+@@ -201,7 +202,11 @@ public class MusicControlModule extends ReactContextBaseJavaModule implements Co
          filter.addAction(Intent.ACTION_MEDIA_BUTTON);
          filter.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
          receiver = new MusicControlReceiver(this, context);
 -        context.registerReceiver(receiver, filter);
-+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
++        if (Build.VERSION.SDK_INT >= 33) {
++            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
++        } else {
++            context.registerReceiver(receiver, filter);
++        }
  
          Intent myIntent = new Intent(context, MusicControlNotification.NotificationService.class);
  
