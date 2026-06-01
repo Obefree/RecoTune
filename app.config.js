@@ -5,6 +5,10 @@ const base = require('./app.json').expo;
 const RELEASE_PROGUARD = `
 -keep class com.swmansion.reanimated.** { *; }
 -keep class com.facebook.react.turbomodule.** { *; }
+-keep class expo.modules.av.** { *; }
+-keep class com.google.android.exoplayer2.** { *; }
+-keep class org.chromium.** { *; }
+-dontwarn com.google.android.exoplayer2.**
 `.trim();
 
 module.exports = {

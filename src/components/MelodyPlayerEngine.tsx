@@ -184,6 +184,19 @@ const HTML = `<!DOCTYPE html>
     }, 48);
   }
 
+  function resumeCtx(ac) {
+    if (!ac || ac.state === 'running' || ac.state === 'closed') return Promise.resolve();
+    return ac.resume();
+  }
+
+  window.unlockWebAudio = function() {
+    if (ctx) return resumeCtx(ctx);
+    var tmp = new (window.AudioContext || window.webkitAudioContext)();
+    return resumeCtx(tmp).then(function() {
+      try { tmp.close(); } catch (e) {}
+    });
+  };
+
   window.stopMelody = function() {
     clearProgressTimers();
     if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
@@ -216,37 +229,45 @@ const HTML = `<!DOCTYPE html>
 
     instrument = instrument === 'sine' ? 'sine' : 'piano';
     ctx = new (window.AudioContext || window.webkitAudioContext)();
-    var anchor = ctx.currentTime + anchorLeadMs / 1000;
-    var totalMs = 0;
     playbackNotes = notes;
 
-    for (var j = 0; j < notes.length; j++) {
-      var n = notes[j];
-      var startMs = n.startMs || 0;
-      var durMs = n.durationMs || 400;
-      var startSec = anchor + startMs / 1000;
-      var durSec = clampDurSec(durMs);
-      scheduleTone(startSec, midiToFreq(n.midi), durSec, instrument, 1);
-      totalMs = Math.max(totalMs, startMs + durMs);
-    }
+    var schedulePlayback = function() {
+      if (!ctx) return;
+      var anchor = ctx.currentTime + anchorLeadMs / 1000;
+      var totalMs = 0;
 
-    for (var c = 0; c < chords.length; c++) {
-      var ch = chords[c];
-      var cStartMs = ch.startMs || 0;
-      var cDurMs = ch.durationMs || 400;
-      var cStart = anchor + cStartMs / 1000;
-      var cDur = clampDurSec(cDurMs);
-      scheduleChordBlock(cStart, cDur, ch.midiNotes || []);
-      totalMs = Math.max(totalMs, cStartMs + cDurMs);
-    }
+      for (var j = 0; j < notes.length; j++) {
+        var n = notes[j];
+        var startMs = n.startMs || 0;
+        var durMs = n.durationMs || 400;
+        var startSec = anchor + startMs / 1000;
+        var durSec = clampDurSec(durMs);
+        scheduleTone(startSec, midiToFreq(n.midi), durSec, instrument, 1);
+        totalMs = Math.max(totalMs, startMs + durMs);
+      }
 
-    post({ type: 'ready' });
-    scheduleProgress(totalMs);
-    doneTimer = setTimeout(function() {
-      post({ type: 'progress', elapsedMs: totalMs, noteIndex: Math.max(0, notes.length - 1) });
-      post({ type: 'done' });
-      window.stopMelody();
-    }, anchorLeadMs + totalMs + 220);
+      for (var c = 0; c < chords.length; c++) {
+        var ch = chords[c];
+        var cStartMs = ch.startMs || 0;
+        var cDurMs = ch.durationMs || 400;
+        var cStart = anchor + cStartMs / 1000;
+        var cDur = clampDurSec(cDurMs);
+        scheduleChordBlock(cStart, cDur, ch.midiNotes || []);
+        totalMs = Math.max(totalMs, cStartMs + cDurMs);
+      }
+
+      post({ type: 'ready' });
+      scheduleProgress(totalMs);
+      doneTimer = setTimeout(function() {
+        post({ type: 'progress', elapsedMs: totalMs, noteIndex: Math.max(0, notes.length - 1) });
+        post({ type: 'done' });
+        window.stopMelody();
+      }, anchorLeadMs + totalMs + 220);
+    };
+
+    resumeCtx(ctx).then(schedulePlayback).catch(function(e) {
+      post({ type: 'error', message: 'audio:' + String(e) });
+    });
   };
 
   function encodeWAV(samples, sr, bits) {
@@ -339,8 +360,17 @@ const MelodyPlayerEngine = forwardRef<MelodyPlayerHandle, Props>(({ onMessage },
   const playMelody = useCallback((payload: MelodyPlaybackPayload, instrument: MelodyInstrument) => {
     const json = JSON.stringify(payload);
     const inst = instrument === 'sine' ? 'sine' : 'piano';
+    const payloadArg = JSON.stringify(json);
+    const instArg = JSON.stringify(inst);
     webRef.current?.injectJavaScript(
-      `window.playMelody && window.playMelody(${JSON.stringify(json)}, ${JSON.stringify(inst)}); true;`,
+      `(function(){
+        var run=function(){
+          window.playMelody&&window.playMelody(${payloadArg},${instArg});
+        };
+        if(window.unlockWebAudio){
+          Promise.resolve(window.unlockWebAudio()).then(run).catch(run);
+        }else run();
+      })();true;`,
     );
   }, []);
 
@@ -412,9 +442,11 @@ const MelodyPlayerEngine = forwardRef<MelodyPlayerHandle, Props>(({ onMessage },
       style={styles.hidden}
       onMessage={handleMessage}
       javaScriptEnabled
+      domStorageEnabled
       originWhitelist={['*']}
       allowsInlineMediaPlayback
       mediaPlaybackRequiresUserAction={false}
+      androidLayerType="hardware"
       onError={ev => onMessage?.({ type: 'error', message: ev.nativeEvent.description })}
     />
   );
@@ -428,5 +460,8 @@ const styles = StyleSheet.create({
     height: 1,
     opacity: 0,
     position: 'absolute',
+    left: -9999,
+    top: 0,
+    zIndex: -1,
   },
 });

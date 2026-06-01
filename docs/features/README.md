@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-06-01 | Release APK: звук Melody/Studio/Media | [2026-06-01-release-audio-playback.md](./2026-06-01-release-audio-playback.md) |
 | 2026-05-31 | Android: таб-бар внизу (P7 WebView flex) | [2026-05-31-android-tabbar-layout-fix.md](./2026-05-31-android-tabbar-layout-fix.md) |
 | 2026-05-31 | P7: лента напева Melody, stem host URL, 1.0.1 | [2026-05-31-p7-melody-hum-stem-host.md](./2026-05-31-p7-melody-hum-stem-host.md) |
 | 2026-05-31 | P6: НАЙТИ подсказки, Studio routing, env APK | [2026-05-31-p6-find-hints-studio-routing.md](./2026-05-31-p6-find-hints-studio-routing.md) |

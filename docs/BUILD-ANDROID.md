@@ -94,4 +94,11 @@ Output: `android\app\build\outputs\bundle\release\app-release.aab`. Signing with
 
 - Bump `version` in `app.config.js` (overrides `app.json`; current **1.0.1** after P7).
 - Optional env: `EXPO_PUBLIC_CHORD_FETCH_URL`, `EXPO_PUBLIC_STEM_SERVER_URL`.
-- `npm run build:android:release` → smoke: Tuner, Chords НАЙТИ, Melody «Напев», AI Lab neural URL.
+- `npm run build:android:release` → smoke (audio on device, volume up, silent mode off):
+  1. **Melody** — ноты на нотоносце → кнопка **PLAY** (синтез, WebView).
+  2. **Studio** — сессия с дорожкой → solo ▶ или **Play all**.
+  3. **Media → Player** — запись из Recorder → ▶.
+  4. **Media → Video** — выбрать файл → тап по центру / ▶.
+  5. Tuner / Chords НАЙТИ / AI Lab — по необходимости.
+
+Первое воспроизведение после установки: нажмите **PLAY** / ▶ на экране (жест разблокирует Web Audio и expo-av session).

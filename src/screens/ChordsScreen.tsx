@@ -356,6 +356,7 @@ async function start(isVoicePractice){
   try{
     const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     ctx=new AudioContext();
+    if(ctx.state==='suspended') await ctx.resume();
     analyser=ctx.createAnalyser();
     analyser.fftSize=8192;analyser.smoothingTimeConstant=0.4; // less pre-smoothing — let onset detection work
     src=ctx.createMediaStreamSource(st);src.connect(analyser);

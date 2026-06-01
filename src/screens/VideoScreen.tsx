@@ -5,6 +5,7 @@ import {
   StatusBar, Pressable,
 } from 'react-native';
 import { Video, AVPlaybackStatus } from 'expo-av';
+import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import SeekBar from '../components/SeekBar';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -201,8 +202,9 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   }, [currentIdx]);
 
   /* ── Navigation ── */
-  const playAt = useCallback((idx: number) => {
+  const playAt = useCallback(async (idx: number) => {
     if (idx < 0 || idx >= videos.length) return;
+    await applyPlaybackAudioMode();
     setCurrentIdx(idx); setPos(0); setDur(0);
     setShowSwitcher(false); bumpControls();
   }, [videos.length, bumpControls]);
@@ -236,6 +238,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
     const v = videoRef.current; if (!v) return;
     const st = await v.getStatusAsync() as AVPlaybackStatus;
     if (!st.isLoaded) return;
+    if (!st.isPlaying) await applyPlaybackAudioMode();
     st.isPlaying ? v.pauseAsync() : v.playAsync();
     bumpControls();
   }, [bumpControls]);
