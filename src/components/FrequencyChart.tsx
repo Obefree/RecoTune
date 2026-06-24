@@ -86,7 +86,7 @@ interface Props {
   /** Session start ts — Melody live chart; X from session start. */
   layoutOriginTs?: number | null;
   /** Fixed wall-clock width (ms); origin = newest − window. Tuner only — no unbounded X drift. */
-  rollingTimeWindowMs?: number;
+  rollingTimeWindowMs?: number | null;
   /** Auto-scroll so the latest point stays near the playhead (default on). */
   scrollFollow?: boolean;
   /** EMA on pitch-mode Y center when no tuning target (tuner). */
