@@ -4,6 +4,7 @@
 import * as cheerio from 'cheerio';
 import { buildChordPro } from './amdmFetch.mjs';
 import { validateAmdmChordLines } from './amdmChordValidate.mjs';
+import { plainChordSheetToChordPro } from './chordLayout.mjs';
 import { fetchUltimateApiTab, getUltimateApiBase, tabPayloadToLines } from './ultimateApiClient.mjs';
 
 export const UG_FETCH_UA =
@@ -63,18 +64,6 @@ async function fetchHtml(url) {
   });
   const text = await res.text();
   return { res, text };
-}
-
-/** `[ch]Am[/ch]` → `[Am]`; strip tab markers. */
-export function ugWikiContentToLines(raw) {
-  if (!raw?.trim()) return [];
-  let text = decodeHtml(raw);
-  text = text.replace(/\[(?:ch|tab)\]([^\[]+?)\[\/(?:ch|tab)\]/gi, '[$1]');
-  text = text.replace(/<\/?[^>]+>/g, '');
-  return text
-    .split('\n')
-    .map(l => l.replace(/\r/g, '').trimEnd())
-    .filter(l => l.trim());
 }
 
 function scoreUgResult(row, artist, title) {
@@ -208,10 +197,14 @@ export async function searchUgByQuery(query) {
 }
 
 function parseUltimateApiTabPayload(tab, expectedArtist, expectedTitle, sourceUrl) {
-  const lines = tabPayloadToLines(tab);
-  if (!lines.length) {
+  const rawLines = tabPayloadToLines(tab);
+  if (!rawLines.length) {
     return { ok: false, code: 'no_tab', error: 'ultimate-api: нет строк таба.' };
   }
+
+  // ultimate-api gives chord rows positioned by spaces above lyrics; the shared
+  // converter aligns them into inline [chord] markers (same path as AmDm).
+  const lines = plainChordSheetToChordPro(rawLines.join('\n'));
 
   const validation = validateAmdmChordLines(lines);
   if (!validation.ok) {

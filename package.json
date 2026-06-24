@@ -14,6 +14,7 @@
     "append-metadata": "node tools/append-metadata-artists.mjs",
     "verify-metadata-search": "node tools/verify-metadata-search.mjs",
     "verify-chord-normalize": "node tools/verify-chord-normalize.mjs",
+    "verify-chord-layout": "node tools/chord-fetch/verify-chord-layout.mjs",
     "verify-chord-transpose": "node tools/verify-chord-transpose.mjs",
     "verify-pitch-chart": "node tools/verify-pitch-chart-history.mjs",
     "verify-tuner-display": "node tools/verify-tuner-display.mjs",

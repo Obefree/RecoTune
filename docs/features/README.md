@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-06-24 | Chords: ревизия парсера/поиска, выравнивание | [2026-06-24-chords-parser-search-revision.md](./2026-06-24-chords-parser-search-revision.md) |
 | 2026-06-24 | Studio: маршрут/латентность/мик-выход, настройки | [2026-06-24-studio-routing-latency-settings.md](./2026-06-24-studio-routing-latency-settings.md) |
 | 2026-06-24 | Tuner: 1€-сглаживание, диапазон строя, octave-guard | [2026-06-24-tuner-oneeuro-octave-guard.md](./2026-06-24-tuner-oneeuro-octave-guard.md) |
 | 2026-06-01 | Android 14+: краш registerReceiver | [2026-06-01-android-receiver-crash-fix.md](./2026-06-01-android-receiver-crash-fix.md) |

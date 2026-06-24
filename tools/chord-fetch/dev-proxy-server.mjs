@@ -9,7 +9,7 @@ import { handleChordFetchRequest } from './amdmFetch.mjs';
 import { handleChordSearchRequest } from './chordSearch.mjs';
 
 /** Bump when parser/proxy behavior changes — compare with GET /health in app settings. */
-export const CHORD_FETCH_PROXY_VERSION = '2026-05-28-ultimate-api';
+export const CHORD_FETCH_PROXY_VERSION = '2026-06-24-aligned-parser';
 
 const PORT = Number(process.env.CHORD_FETCH_PORT || 8787);
 

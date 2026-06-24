@@ -5,6 +5,8 @@ import * as cheerio from 'cheerio';
 import {
   AMDM_FETCH_UA,
   buildAmdmSearchQueries,
+  COVER_PATH_RE,
+  COVER_TEXT_RE,
 } from './amdmFetch.mjs';
 import { searchUgByQuery } from './ugFetch.mjs';
 
@@ -68,7 +70,9 @@ function parseAmdmSearchHtml(html, query) {
   const rows = [];
   const seen = new Set();
 
-  $('a[href*="/akkordi/"]').each((_, el) => {
+  // Real results live in table.items; the rest of the page is a "latest tabs"
+  // sidebar that must not leak into search results.
+  $('table.items a[href*="/akkordi/"]').each((_, el) => {
     const href = $(el).attr('href') ?? '';
     const full = href.startsWith('http') ? href : `https://amdm.ru${href.startsWith('/') ? '' : '/'}${href}`;
     const parsed = parseAmdmSongUrl(full);
@@ -84,7 +88,9 @@ function parseAmdmSearchHtml(html, query) {
     } else if (linkText && linkText.length >= 2 && linkText.length < 120) {
       title = linkText;
     }
-    const score = scoreAgainstQuery(query, artist, title) + 10;
+    let score = scoreAgainstQuery(query, artist, title) + 10;
+    if (COVER_PATH_RE.test(parsed.url)) score -= 80;
+    if (linkText && COVER_TEXT_RE.test(linkText)) score -= 70;
     if (score < 8) return;
     rows.push({
       provider: 'amdm',
@@ -94,20 +100,6 @@ function parseAmdmSearchHtml(html, query) {
       score,
     });
   });
-
-  const songRe = /https:\/\/amdm\.ru\/akkordi\/[^/\s"'<>]+\/\d+\/[^/\s"'<>]+\/?/gi;
-  for (const m of html.matchAll(songRe)) {
-    const url = m[0].split('?')[0].replace(/\/+$/, '');
-    if (seen.has(url)) continue;
-    seen.add(url);
-    const parsed = parseAmdmSongUrl(url);
-    if (!parsed) continue;
-    const artist = slugToLabel(parsed.artistSlug);
-    const title = slugToLabel(parsed.titleSlug);
-    const score = scoreAgainstQuery(query, artist, title);
-    if (score < 8) continue;
-    rows.push({ provider: 'amdm', artist, title, sourceUrl: url, score });
-  }
 
   rows.sort((a, b) => b.score - a.score);
   return rows;

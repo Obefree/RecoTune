@@ -1,5 +1,3 @@
-import { normalizeLyricsChords } from './chordLyricsNormalize';
-
 const ROOT = '[A-G](?:#|b|\\u266f|\\u266d)?';
 const SUFFIX = '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|\\u00b0|\\u00d8|\\d+)?';
 const SLASH = `(?:/${ROOT})?`;
@@ -62,49 +60,4 @@ export function scoreChordSequence(queryChords: string[], targetChords: string[]
   const orderedScore = ordered > 0 ? (ordered / q.length) * 80 : 0;
   const overlapScore = overlap > 0 ? (overlap / q.length) * 45 : 0;
   return Math.round(Math.max(orderedScore, overlapScore));
-}
-
-function hasChordAnnotations(text: string): boolean {
-  return new RegExp(`\\[(${ROOT}${SUFFIX}${SLASH})\\]`, 'i').test(text);
-}
-
-function insertChordBeforeWord(words: string[], index: number, chord: string): void {
-  const safeIndex = Math.max(0, Math.min(words.length - 1, index));
-  if (!words[safeIndex].startsWith('[')) {
-    words[safeIndex] = `[${chord}]${words[safeIndex]}`;
-  }
-}
-
-/**
- * @deprecated Do not use for practice UI — glues progression onto plain lyrics.
- * Kept for legacy search helpers only.
- */
-export function projectChordsOntoLyrics(lyrics?: string | null, chords?: string | null): string {
-  const normalized = normalizeLyricsChords(lyrics?.trim() ?? '');
-  if (!normalized) return '';
-  if (hasChordAnnotations(normalized)) return normalized;
-
-  const sequence = extractChordSequence(chords);
-  if (sequence.length === 0) return normalized;
-
-  let chordIndex = 0;
-  return normalized.split('\n').map(line => {
-    const trimmed = line.trim();
-    if (!trimmed) return line;
-    const words = trimmed.split(/\s+/);
-    if (words.length === 0) return line;
-
-    const placements = words.length >= 9
-      ? [0, Math.floor(words.length / 3), Math.floor(words.length * 0.68)]
-      : words.length >= 5
-        ? [0, Math.floor(words.length / 2)]
-        : [0];
-
-    for (const pos of placements) {
-      const chord = sequence[chordIndex % sequence.length];
-      insertChordBeforeWord(words, pos, chord);
-      chordIndex++;
-    }
-    return words.join(' ');
-  }).join('\n');
 }
