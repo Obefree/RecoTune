@@ -32,19 +32,22 @@ interface Props {
   onMessage: (msg: PitchMessage) => void;
   active: boolean;
   mode?: TunerEngineMode;
+  /** Tuner only: limit detection to the selected tuning's range (fewer octave errors, less compute). */
+  minHz?: number;
+  maxHz?: number;
 }
 
 const ENGINE_PROFILES = {
   tuner: {
     name: 'tuner',
-    minHz: 60,
+    minHz: 28,
     maxHz: 1400,
     rmsGate: 0.0035,
     maxYin: 0.2,
     ring: 3,
     jumpRatio: 1.28,
     jumpBlendNew: 0.72,
-    frameMs: 55,
+    frameMs: 45,
   },
   melody: {
     name: 'melody',
@@ -59,50 +62,67 @@ const ENGINE_PROFILES = {
   },
 } as const;
 
-const buildHTML = (mode: TunerEngineMode) => `<!DOCTYPE html>
+const buildHTML = (mode: TunerEngineMode, range: { minHz: number; maxHz: number }) => `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
 <body>
 <script>
 (function() {
-  var ENGINE = ${JSON.stringify(ENGINE_PROFILES[mode])};
+  var ENGINE = ${JSON.stringify({ ...ENGINE_PROFILES[mode], ...range })};
   var NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 
-  /** YIN CMNDF: ищем глобальный минимум в диапазоне лагов (как в типичных тюнерах), а не первый порог —
-   *  «первый tau < 0.15» часто цепляется за шум/не ту гармонику → скачки и «не слышит». */
+  /** YIN CMNDF with octave-error guard: take the *smallest* lag whose CMNDF dips below a
+   *  threshold anchored to the global minimum, then a local-minimum refine + parabolic interp.
+   *  Global-min-only locked onto sub-harmonics (octave-down) → note flicker; first-dip-only
+   *  chased noise. This combines both: noise-robust AND octave-stable. */
   function detectPitch(buf, sr) {
     var minP = Math.floor(sr / ENGINE.maxHz);
     var maxP = Math.floor(sr / ENGINE.minHz);
     var len  = Math.min(buf.length, 4096);
-    if (len < maxP * 2) return null;
+    if (minP < 2) minP = 2;
+    if (len < maxP + 16) return null;
 
+    var win = len - maxP;
     var yin = new Float32Array(maxP);
     yin[0] = 1;
     var rs = 0;
     for (var tau = 1; tau < maxP; tau++) {
       var s = 0;
-      for (var i = 0; i < len - maxP; i++) {
+      for (var i = 0; i < win; i++) {
         var d = buf[i] - buf[i + tau];
         s += d * d;
       }
       rs += s;
       yin[tau] = s * tau / (rs || 1e-10);
     }
+
     var bestTau = minP;
     var bestY = yin[minP];
     for (var j = minP + 1; j < maxP; j++) {
       if (yin[j] < bestY) { bestY = yin[j]; bestTau = j; }
     }
     if (bestY > ENGINE.maxYin) return null;
-    var bt = bestTau;
-    if (bestTau > 0 && bestTau < maxP - 1) {
-      var s0 = yin[bestTau - 1], s1 = yin[bestTau], s2 = yin[bestTau + 1];
+
+    // Prefer the earliest (highest-freq) local minimum within tolerance of the deepest dip —
+    // this is the true fundamental, not its octave-down sub-harmonic.
+    var thresh = Math.min(ENGINE.maxYin, bestY + 0.08);
+    var chosen = bestTau;
+    for (var k = minP + 1; k < maxP - 1; k++) {
+      if (yin[k] < thresh && yin[k] <= yin[k - 1] && yin[k] <= yin[k + 1]) {
+        chosen = k;
+        break;
+      }
+    }
+
+    var bt = chosen;
+    if (chosen > 0 && chosen < maxP - 1) {
+      var s0 = yin[chosen - 1], s1 = yin[chosen], s2 = yin[chosen + 1];
       var dv = s0 - 2 * s1 + s2;
-      if (Math.abs(dv) > 1e-10) bt = bestTau + (s0 - s2) / (2 * dv);
+      if (Math.abs(dv) > 1e-10) bt = chosen + (s0 - s2) / (2 * dv);
     }
     var f = sr / bt;
     if (f < ENGINE.minHz || f > ENGINE.maxHz) return null;
-    return { freq: f, yin: bestY };
+    return { freq: f, yin: yin[chosen] };
   }
 
   var freqRing = [];
@@ -220,8 +240,16 @@ const buildHTML = (mode: TunerEngineMode) => `<!DOCTYPE html>
 </body>
 </html>`;
 
-const TunerEngine = forwardRef<WebView, Props>(({ onMessage, mode = 'tuner' }, ref) => {
-  const html = useMemo(() => buildHTML(mode), [mode]);
+const TunerEngine = forwardRef<WebView, Props>(({ onMessage, mode = 'tuner', minHz, maxHz }, ref) => {
+  const range = useMemo(() => {
+    const base = ENGINE_PROFILES[mode];
+    if (mode !== 'tuner') return { minHz: base.minHz, maxHz: base.maxHz };
+    return {
+      minHz: minHz != null ? Math.max(28, minHz) : base.minHz,
+      maxHz: maxHz != null ? Math.min(2200, maxHz) : base.maxHz,
+    };
+  }, [mode, minHz, maxHz]);
+  const html = useMemo(() => buildHTML(mode, range), [mode, range.minHz, range.maxHz]);
 
   const handleMessage = (e: WebViewMessageEvent) => {
     try {

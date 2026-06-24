@@ -7,7 +7,6 @@ import {
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { useRecordingBackground, warnExpoGoBackgroundRecording } from '../hooks/useRecordingBackground';
-import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import { assertPlaybackFileExists } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -308,6 +307,8 @@ export default function StudioScreen() {
   const audioRoutingRef = useRef<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
   const [audioRouteSnap, setAudioRouteSnap] = useState<AudioRouteSnapshot | null>(null);
   const [audioRouteLoading, setAudioRouteLoading] = useState(false);
+  /** Honest note when the OS ignored the manual mic choice during the last record. */
+  const [inputApplyNote, setInputApplyNote] = useState<string | null>(null);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { prerollRef.current = prerollMs; }, [prerollMs]);
 
@@ -532,7 +533,7 @@ export default function StudioScreen() {
       }
       killSolo();
 
-      await applyPlaybackAudioMode();
+      await applyStudioAudioMode(audioRoutingRef.current, { recording: false });
       const playbackUri = await assertPlaybackFileExists(track.uri);
       const { sound } = await Audio.Sound.createAsync(
         { uri: playbackUri },
@@ -720,7 +721,7 @@ export default function StudioScreen() {
     setAllPlayPos(0);
     setAllPlayDur(0);
     try {
-      await applyPlaybackAudioMode();
+      await applyStudioAudioMode(audioRoutingRef.current, { recording: false });
 
       const uris = await Promise.all(
         session.tracks.map((t) => assertPlaybackFileExists(t.uri)),
@@ -800,7 +801,17 @@ export default function StudioScreen() {
       // Prepare recording
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
-      await applyRecordingInput(rec, audioRoutingRef.current);
+      const inputResult = await applyRecordingInput(rec, audioRoutingRef.current);
+      if (inputResult === 'missing' || inputResult === 'rejected') {
+        // Honest feedback: the OS refused the chosen mic (old Android / device gone) — record on default.
+        setInputApplyNote(
+          inputResult === 'missing'
+            ? 'Выбранный микрофон не найден — пишем на системный. Обнови список в настройках.'
+            : 'Система не дала выбрать микрофон (Android < 9 или занят) — пишем на системный.',
+        );
+      } else {
+        setInputApplyNote(null);
+      }
 
       // ── Simultaneous start ───────────────────────────────────────────
       // Fire playback first (fire-and-forget), then await mic start.
@@ -1366,17 +1377,20 @@ function normArr(arr){
             ListFooterComponent={
               <View style={styles.projectFooter}>
                 {isRecording ? (
-                  <View style={styles.recordingRow}>
-                    <Animated.View style={[styles.recDot, { opacity: dotOpacity }]} />
-                    <Text style={styles.recDuration}>{fmt(recDuration)}</Text>
-                    {recInBackground ? (
-                      <Text style={styles.recBackgroundHint}>запись в фоне</Text>
-                    ) : null}
-                    <TouchableOpacity onPress={stopRecording} style={styles.stopBtn}>
-                      <Ionicons name="stop" size={22} color="#fff" />
-                      <Text style={styles.stopBtnText}>STOP REC</Text>
-                    </TouchableOpacity>
-                  </View>
+                  <>
+                    <View style={styles.recordingRow}>
+                      <Animated.View style={[styles.recDot, { opacity: dotOpacity }]} />
+                      <Text style={styles.recDuration}>{fmt(recDuration)}</Text>
+                      {recInBackground ? (
+                        <Text style={styles.recBackgroundHint}>запись в фоне</Text>
+                      ) : null}
+                      <TouchableOpacity onPress={stopRecording} style={styles.stopBtn}>
+                        <Ionicons name="stop" size={22} color="#fff" />
+                        <Text style={styles.stopBtnText}>STOP REC</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {inputApplyNote ? <Text style={styles.recWarnNote}>{inputApplyNote}</Text> : null}
+                  </>
                 ) : (
                   <>
                     <View style={styles.controlRow}>
@@ -1701,8 +1715,10 @@ function normArr(arr){
               style={{ maxHeight: studioModalBodyMaxH }}
               contentContainerStyle={styles.studioModalScrollContent}
             >
-              <Text style={styles.modalTitle}>Recording Quality</Text>
-              <Text style={styles.exportHint}>Applies to all new tracks in this session</Text>
+              <Text style={styles.modalTitle}>Настройки студии</Text>
+
+              <Text style={styles.settingsSectionLabel}>① Качество записи</Text>
+              <Text style={styles.settingsSectionHint}>Для всех новых дорожек этой сессии</Text>
               {QUALITY_PRESETS.map((p, i) => {
                 const active =
                   p.q.sampleRate === quality.sampleRate &&
@@ -1723,36 +1739,44 @@ function normArr(arr){
                   </TouchableOpacity>
                 );
               })}
-              <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
-                <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 2 }]}>Компенсация латентности (мс)</Text>
-                <Text style={[styles.qualitySub, { marginBottom: 10 }]}>
-                  Провод / динамик: пресет {PREROLL_MS_WIRED} мс (дорожки 2+).{'\n'}
-                  Bluetooth: пресет {PREROLL_MS_BLUETOOTH} мс.{'\n'}
-                  Если 2-я дорожка запаздывает — увеличь. Если опережает — уменьши.
-                </Text>
-                <Text style={{ color: '#666', fontSize: 10, lineHeight: 14, marginBottom: 8 }}>
-                  BT: слушать в наушниках, писать с телефона — отключи «Звонки» для гарнитуры в настройках Bluetooth.
+              <View style={styles.settingsSection}>
+                <Text style={styles.settingsSectionLabel}>② Задержка дорожек (мс)</Text>
+                <Text style={styles.settingsSectionHint}>
+                  Дорожки 2+ сдвигаются на эту величину, чтобы попасть в минус.
+                  Запаздывает — увеличь, опережает — уменьши. Пресеты: провод {PREROLL_MS_WIRED}, BT {PREROLL_MS_BLUETOOTH}.
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
                   <TouchableOpacity onPress={() => savePreroll(Math.max(0, prerollMs - 20))}
-                    style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>−</Text>
+                    style={styles.latencyStepBtn}>
+                    <Text style={styles.latencyStepText}>−</Text>
                   </TouchableOpacity>
-                  <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', width: 60, textAlign: 'center' }}>{prerollMs}</Text>
+                  <Text style={styles.latencyBigVal}>{prerollMs}</Text>
                   <TouchableOpacity onPress={() => savePreroll(Math.min(1200, prerollMs + 20))}
-                    style={{ width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 22, lineHeight: 26 }}>+</Text>
+                    style={styles.latencyStepBtn}>
+                    <Text style={styles.latencyStepText}>+</Text>
                   </TouchableOpacity>
                 </View>
-                <TouchableOpacity onPress={() => savePreroll(DEFAULT_PREROLL_MS)}
-                  style={{ alignSelf: 'center', marginTop: 8 }}>
-                  <Text style={{ color: '#555', fontSize: 11 }}>сброс → {DEFAULT_PREROLL_MS} мс</Text>
-                </TouchableOpacity>
+                <View style={styles.latencyPresetRow}>
+                  <TouchableOpacity onPress={() => savePreroll(PREROLL_MS_WIRED)}
+                    style={[styles.latencyPresetChip, prerollMs === PREROLL_MS_WIRED && styles.latencyPresetChipActive]}>
+                    <Text style={[styles.latencyPresetText, prerollMs === PREROLL_MS_WIRED && { color: '#00e676' }]}>Провод {PREROLL_MS_WIRED}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => savePreroll(PREROLL_MS_BLUETOOTH)}
+                    style={[styles.latencyPresetChip, prerollMs === PREROLL_MS_BLUETOOTH && styles.latencyPresetChipActive]}>
+                    <Text style={[styles.latencyPresetText, prerollMs === PREROLL_MS_BLUETOOTH && { color: '#00bcd4' }]}>BT {PREROLL_MS_BLUETOOTH}</Text>
+                  </TouchableOpacity>
+                </View>
+                {(activeSession?.tracks.length ?? 0) > 1 && (
+                  <TouchableOpacity onPress={() => { void resetAllOffsets(); }} style={styles.applyOffsetsBtn} activeOpacity={0.8}>
+                    <Ionicons name="sync-outline" size={14} color="#7c4dff" />
+                    <Text style={styles.applyOffsetsText}>Применить {prerollMs} мс ко всем дорожкам 2+</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
-              <View style={{ marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <Text style={[styles.qualityName, { color: '#ccc', marginBottom: 0 }]}>Звук</Text>
+              <View style={styles.settingsSection}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={[styles.settingsSectionLabel, { marginBottom: 0 }]}>③ Звук — микрофон и выход</Text>
                   <TouchableOpacity onPress={() => void refreshAudioRoutes()} disabled={audioRouteLoading} style={{ padding: 6 }}>
                     <Ionicons name="refresh" size={18} color={audioRouteLoading ? '#333' : '#7c4dff'} />
                   </TouchableOpacity>
@@ -1850,7 +1874,8 @@ function normArr(arr){
                     )}
 
                     <Text style={{ color: '#444', fontSize: 10, lineHeight: 14, marginTop: 6 }}>
-                      Выход BT/AUX — системный маршрут. Микрофон — в списке выше.
+                      Принудительно приложение умеет только «Трубка» (тихо, у уха). Динамик / BT / AUX — звук идёт туда
+                      автоматически, когда устройство подключено; выбор здесь задаёт пресет задержки (BT {PREROLL_MS_BLUETOOTH} мс).
                     </Text>
                   </>
                 )}
@@ -1934,7 +1959,6 @@ const styles = StyleSheet.create({
   trackTime: { fontSize: 10, fontWeight: '600' },
   scrubTrack: { height: 3, backgroundColor: '#2a2a38', borderRadius: 2, marginTop: 6, overflow: 'visible', position: 'relative' },
   scrubFill: { height: 3, borderRadius: 2 },
-  scrubThumb: { position: 'absolute', width: 12, height: 12, borderRadius: 6, top: -4.5, marginLeft: -6 },
   soloBtn: { padding: 2 },
   iconBtn: { padding: 5 },
 
@@ -1943,6 +1967,7 @@ const styles = StyleSheet.create({
   recDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#ff1744' },
   recDuration: { color: '#ff5252', fontSize: 22, fontWeight: '700', letterSpacing: 2, minWidth: 56 },
   recBackgroundHint: { color: '#ff9800', fontSize: 11, fontWeight: '600' },
+  recWarnNote: { color: '#ff9800', fontSize: 10, lineHeight: 14, textAlign: 'center', marginTop: 6, paddingHorizontal: 8 },
   stopBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#ff1744', paddingHorizontal: 18, paddingVertical: 9, borderRadius: 18 },
   stopBtnText: { color: '#fff', fontWeight: '700', fontSize: 12, letterSpacing: 1 },
 
@@ -1958,11 +1983,23 @@ const styles = StyleSheet.create({
   trackOffsetVal:     { color: '#aaa', fontSize: 10, fontWeight: '700', minWidth: 38, textAlign: 'center' },
 
   latencyBar: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8, backgroundColor: '#0d0d18', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: '#1e1e30', flexWrap: 'wrap' },
-  latencyLabel: { color: '#7c4dff', fontSize: 12, fontWeight: '700', flex: 1 },
   latencyVal: { color: '#fff', fontSize: 14, fontWeight: '800', minWidth: 54, textAlign: 'center' },
   latencyBtn: { width: 30, height: 30, backgroundColor: '#7c4dff30', borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   latencyBtnText: { color: '#fff', fontSize: 20, lineHeight: 24, fontWeight: '700' },
-  latencySettingsBtn: { padding: 4, marginLeft: 2 },
+
+  // Settings modal sections
+  settingsSection: { marginTop: 16, borderTopWidth: 1, borderColor: '#1e1e28', paddingTop: 14 },
+  settingsSectionLabel: { color: '#7c4dff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5, marginBottom: 4 },
+  settingsSectionHint: { color: '#666', fontSize: 11, lineHeight: 15, marginBottom: 10 },
+  latencyStepBtn: { width: 40, height: 40, backgroundColor: '#1e1e28', borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  latencyStepText: { color: '#fff', fontSize: 22, lineHeight: 26 },
+  latencyBigVal: { color: '#fff', fontSize: 22, fontWeight: '800', width: 60, textAlign: 'center' },
+  latencyPresetRow: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 10 },
+  latencyPresetChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a38', backgroundColor: '#1a1a24' },
+  latencyPresetChipActive: { borderColor: '#00e67644', backgroundColor: '#00e67614' },
+  latencyPresetText: { color: '#888', fontSize: 11, fontWeight: '700' },
+  applyOffsetsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: '#7c4dff44', backgroundColor: '#7c4dff14' },
+  applyOffsetsText: { color: '#7c4dff', fontSize: 11, fontWeight: '700' },
 
   controlRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
   controlBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 11, backgroundColor: '#1e1e28', borderRadius: 14, borderWidth: 1, borderColor: '#2a2a38' },
@@ -2014,7 +2051,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1e1e28',
   },
-  routeStatusLabel: { color: '#555', fontSize: 9, letterSpacing: 1.5, fontWeight: '700', marginBottom: 6 },
   routeStatusLine: { color: '#bbb', fontSize: 12, lineHeight: 17 },
   routeModeRow: {
     flexDirection: 'row',
@@ -2050,27 +2086,11 @@ const styles = StyleSheet.create({
   routeOutputChipWarn: { borderColor: '#ff980044' },
   routeOutputChipLabel: { color: '#888', fontSize: 10, fontWeight: '700' },
   routeWarnText: { color: '#ff9800', fontSize: 10, lineHeight: 14, marginBottom: 4 },
-  routeInputGroup: { marginBottom: 8 },
-  routeInputGroupTitle: { color: '#666', fontSize: 9, fontWeight: '800', letterSpacing: 1, marginBottom: 4 },
-  routeInputGroupEmpty: { color: '#444', fontSize: 10, lineHeight: 14, paddingVertical: 6, paddingHorizontal: 4 },
-  routeInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 10,
-    marginBottom: 6,
-    borderRadius: 10,
-    backgroundColor: '#1a1a24',
-    borderWidth: 1,
-    borderColor: '#2a2a38',
-  },
-  routeInputRowActive: { borderColor: '#00e67655', backgroundColor: '#00e67610' },
   qualityRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#1a1a24', borderRadius: 12, padding: 13, marginTop: 8, borderWidth: 1, borderColor: '#2a2a38', width: '100%' },
   qualityRowActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff10' },
   qualityName: { color: '#ccc', fontSize: 14, fontWeight: '700' },
   qualitySub:  { color: '#555', fontSize: 11, marginTop: 2 },
 
-  modalOverlay: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'center', alignItems: 'center' },
   /** Полноэкранный слой: таб-бар скрывается отдельно; карточка выше Pressable-затемнения */
   studioModalOverlay: {
     flex: 1,
@@ -2110,7 +2130,6 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 12,
   },
-  modalBox: { backgroundColor: '#1a1a24', borderRadius: 20, padding: 24, width: '80%', borderWidth: 1, borderColor: '#2a2a38' },
   modalTitle: { color: '#ccc', fontSize: 16, fontWeight: '700', marginBottom: 16, textAlign: 'center' },
   modalInput: { backgroundColor: '#0d0d15', borderRadius: 12, padding: 12, color: '#e0e0e0', fontSize: 15, borderWidth: 1, borderColor: '#2a2a38', marginBottom: 16 },
   modalBtns: { flexDirection: 'row', gap: 10 },

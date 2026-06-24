@@ -240,23 +240,42 @@ export async function applyStudioAudioMode(
     await applyRecordingBackgroundAudioMode({ playThroughEarpieceAndroid });
     return;
   }
+  // Single studio playback session setter. staysActiveInBackground keeps Play all / solo
+  // alive when the screen is backgrounded; playThroughEarpieceAndroid honours the manual
+  // "Трубка" route (was previously reset to false by a separate playback-mode setter).
   await Audio.setAudioModeAsync({
-    allowsRecordingIOS: manual,
+    allowsRecordingIOS: false,
     playsInSilentModeIOS: true,
+    staysActiveInBackground: true,
     playThroughEarpieceAndroid,
-    shouldDuckAndroid: true,
+    shouldDuckAndroid: false,
     interruptionModeAndroid: 1,
     interruptionModeIOS: 1,
   });
 }
 
-export async function applyRecordingInput(rec: Audio.Recording, routing: StudioAudioRouting): Promise<void> {
-  if (routing.mode !== 'manual' || !routing.inputUid) return;
+export type RecordingInputResult = 'default' | 'applied' | 'missing' | 'rejected';
+
+/**
+ * Apply the chosen mic to a prepared recording. On Android 9+ expo-av maps this to
+ * AudioRecord.setPreferredDevice (and startBluetoothSco for BT), so it genuinely works —
+ * we return a status instead of swallowing errors so the UI can be honest when the OS
+ * ignores the request (older Android, device vanished).
+ */
+export async function applyRecordingInput(
+  rec: Audio.Recording,
+  routing: StudioAudioRouting,
+): Promise<RecordingInputResult> {
+  if (routing.mode !== 'manual' || !routing.inputUid) return 'default';
   try {
     const inputs = await rec.getAvailableInputs();
     const found = inputs.find(i => i.uid === routing.inputUid);
-    if (found) await rec.setInput(found.uid);
-  } catch {}
+    if (!found) return 'missing';
+    await rec.setInput(found.uid);
+    return 'applied';
+  } catch {
+    return 'rejected';
+  }
 }
 
 /**

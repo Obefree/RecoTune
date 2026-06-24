@@ -11,6 +11,8 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-06-24 | Studio: маршрут/латентность/мик-выход, настройки | [2026-06-24-studio-routing-latency-settings.md](./2026-06-24-studio-routing-latency-settings.md) |
+| 2026-06-24 | Tuner: 1€-сглаживание, диапазон строя, octave-guard | [2026-06-24-tuner-oneeuro-octave-guard.md](./2026-06-24-tuner-oneeuro-octave-guard.md) |
 | 2026-06-01 | Android 14+: краш registerReceiver | [2026-06-01-android-receiver-crash-fix.md](./2026-06-01-android-receiver-crash-fix.md) |
 | 2026-06-01 | Release APK: звук Melody/Studio/Media | [2026-06-01-release-audio-playback.md](./2026-06-01-release-audio-playback.md) |
 | 2026-05-31 | Android: таб-бар внизу (P7 WebView flex) | [2026-05-31-android-tabbar-layout-fix.md](./2026-05-31-android-tabbar-layout-fix.md) |

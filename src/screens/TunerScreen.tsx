@@ -64,6 +64,14 @@ export default function TunerScreen() {
   const [tuning, setTuning]           = useState<Tuning>(TUNINGS[0]);
   const [showPicker, setShowPicker]   = useState(false);
 
+  // Restrict detection to the selected tuning's range: fewer octave errors + less WebView compute.
+  const detectRange = (() => {
+    const fs = tuning.strings.map(s => s.frequency);
+    const lo = Math.min(...fs);
+    const hi = Math.max(...fs);
+    return { minHz: Math.max(28, lo * 0.75), maxHz: Math.min(1400, hi * 2.2) };
+  })();
+
   const webViewRef      = useRef<WebView>(null);
   const pulseAnim       = useRef(new Animated.Value(1)).current;
   const signalAnim      = useRef(new Animated.Value(0)).current;
@@ -94,7 +102,7 @@ export default function TunerScreen() {
     } else if (msg.type === 'pitch' && msg.frequency && msg.note) {
       const raw = msg.rawFrequency ?? msg.frequency;
       const ts = Date.now();
-      const disp = tunerDisplayRef.current.process(raw, ts);
+      const disp = tunerDisplayRef.current.process(raw, ts, msg.yinConfidence);
       if (!disp) return;
 
       setSignalLevel(msg.signal ?? 0);
@@ -206,7 +214,7 @@ export default function TunerScreen() {
 
   return (
     <View style={[styles.wrapper, { paddingTop: insets.top }]}>
-      {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} mode="tuner" />}
+      {isActive && <TunerEngine ref={webViewRef} onMessage={handleMessage} active={isActive} mode="tuner" minHz={detectRange.minHz} maxHz={detectRange.maxHz} />}
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 

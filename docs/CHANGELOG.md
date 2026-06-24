@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- **Tuner (глубокая ревизия):** адаптивный 1€-фильтр вместо стека rate-limit+EMA+spring (плавно и быстро без «убегания»), детект по диапазону выбранного строя, octave-guard в YIN, поддержка баса (E1/B0), confidence-gate. См. [docs/features/2026-06-24-tuner-oneeuro-octave-guard.md](./features/2026-06-24-tuner-oneeuro-octave-guard.md).
+- **Studio:** фикс маршрута «Трубка» (затирался на воспроизведении), единый audio-сеттер (dedupe), кнопка «применить задержку ко всем дорожкам» (был мёртвый код), честный статус выбора микрофона, честный текст про AUX/BT (системный маршрут), компактные настройки в 3 секции, удалён мёртвый CSS. См. [docs/features/2026-06-24-studio-routing-latency-settings.md](./features/2026-06-24-studio-routing-latency-settings.md).
 - **Android crash (14+):** `patch-package` для `react-native-music-control` и `expo-av` — `RECEIVER_NOT_EXPORTED` при `registerReceiver`. См. [docs/features/2026-06-01-android-receiver-crash-fix.md](./features/2026-06-01-android-receiver-crash-fix.md).
 - **Android release audio:** Web Audio unlock/resume в Melody PLAY, ProGuard keep для expo-av/ExoPlayer, playback session в Video. См. [docs/features/2026-06-01-release-audio-playback.md](./features/2026-06-01-release-audio-playback.md).
 - **Android layout:** таб-бар снова внизу после P7 — `SnippetAnalyzerEngine` не в flex-колонке с навигатором. См. [docs/features/2026-05-31-android-tabbar-layout-fix.md](./features/2026-05-31-android-tabbar-layout-fix.md).

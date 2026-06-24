@@ -70,11 +70,13 @@ export default function TunerNeedle({ cents, color }: Props) {
 
   useEffect(() => {
     const angle = cents !== null ? centsToAngle(cents) : 0;
+    // Input is already smoothed by the 1€ filter, so the spring can be snappy
+    // (low lag) without re-introducing jitter; clamp prevents overshoot.
     Animated.spring(rotation, {
       toValue: angle,
-      damping: 28,
-      stiffness: 68,
-      mass: 0.95,
+      damping: 17,
+      stiffness: 120,
+      mass: 0.7,
       overshootClamping: true,
       useNativeDriver: true,
     }).start();
