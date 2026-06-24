@@ -10,7 +10,9 @@
  * - "G\\nBut I'm a creep" / "But [G]I'm a creep" → chord on last word, not before I'm
  */
 
-const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]*(?:\/[A-G][#b♯♭\d]*)?[^\]]*\]/i;
+// [A-H]: H is German/Russian notation for B (used widely on AmDm / pesni.ru);
+// must match the server parser tools/chord-fetch/chordLayout.mjs so H/Hm tabs verify.
+const CHORD_MARKER_RE = /\[[A-H][#b♯♭\d]*(?:\/[A-H][#b♯♭\d]*)?[^\]]*\]/i;
 
 /** Guitar/bass tab row — must stay one line in practice UI (no word-wrap). */
 export function isTablatureLine(line: string): boolean {
@@ -23,7 +25,7 @@ export function isTablatureLine(line: string): boolean {
   return false;
 }
 
-const ROOT = '[A-G](?:#|b|♯|♭)?';
+const ROOT = '[A-H](?:#|b|♯|♭)?';
 const CHORD_SUFFIX =
   '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|°|Ø|\\d+)?';
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
@@ -59,7 +61,7 @@ function normalizeLyricApostrophes(text: string): string {
 
 function lastWordHasInlineChord(line: string): boolean {
   const last = line.trim().split(/\s+/).pop() ?? '';
-  return /\[[A-G][^\]]*\]/i.test(last);
+  return /\[[A-H][^\]]*\]/i.test(last);
 }
 
 function firstWordCore(line: string): string {
@@ -91,7 +93,7 @@ function isBareWordChordToken(token: string, opts?: BareChordOpts): boolean {
   if (!isChordToken(token)) return false;
   if (LYRIC_ARTICLE_TOKENS.has(token)) return false;
   if (!opts?.chordLine && LYRIC_PRONOUN_TOKENS.has(token)) return false;
-  if (token.length === 1) return /^[A-G]$/i.test(token);
+  if (token.length === 1) return /^[A-H]$/i.test(token);
   return true;
 }
 

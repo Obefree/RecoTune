@@ -19,6 +19,10 @@ function parseRoot(symbol: string): { rootIdx: number; rest: string } | null {
     if (FLAT_TO_SHARP[candidate] != null) {
       return { rootIdx: FLAT_TO_SHARP[candidate], rest: s.slice(len) };
     }
+    // German/Russian H = B natural (AmDm / pesni.ru). Transposes into English names.
+    if (candidate === 'H' || candidate === 'h') {
+      return { rootIdx: NOTE_NAMES.indexOf('B'), rest: s.slice(len) };
+    }
   }
   return null;
 }
@@ -47,7 +51,7 @@ export function transposeChordProText(text: string, semitones: number): string {
   if (!semitones || !text) return text;
   return text.replace(/\[([^\]]+)\]/g, (full, chord) => {
     const inner = String(chord).trim();
-    if (!/^[A-G]/i.test(inner)) return full;
+    if (!/^[A-H]/i.test(inner)) return full;
     return `[${transposeChordSymbol(inner, semitones)}]`;
   });
 }
@@ -60,7 +64,7 @@ export function transposeChordProgression(text: string, semitones: number): stri
     .split(/([\s,|/]+)/)
     .map(part => {
       if (!part.trim() || /^[\s,|/]+$/.test(part)) return part;
-      if (/^[A-G]/i.test(part.trim())) return transposeChordSymbol(part.trim(), semitones);
+      if (/^[A-H]/i.test(part.trim())) return transposeChordSymbol(part.trim(), semitones);
       return part;
     })
     .join('');

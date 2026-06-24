@@ -12,6 +12,7 @@ function parseRoot(s) {
     const i = NOTE_NAMES.indexOf(c);
     if (i >= 0) return { i, rest: raw.slice(len) };
     if (FLAT[c] != null) return { i: FLAT[c], rest: raw.slice(len) };
+    if (c === 'H' || c === 'h') return { i: NOTE_NAMES.indexOf('B'), rest: raw.slice(len) };
   }
   return null;
 }
@@ -31,11 +32,15 @@ function transposeChordProText(text, semi) {
   if (!semi) return text;
   return text.replace(/\[([^\]]+)\]/g, (full, ch) => {
     const inner = String(ch).trim();
-    return /^[A-G]/i.test(inner) ? `[${transposeChordSymbol(inner, semi)}]` : full;
+    return /^[A-H]/i.test(inner) ? `[${transposeChordSymbol(inner, semi)}]` : full;
   });
 }
 
 assert.equal(transposeChordSymbol('Am', 2), 'Bm');
 assert.equal(transposeChordSymbol('F/A', 1), 'F#/A#');
 assert.equal(transposeChordProText('[Am]Hello [F]world', 2), '[Bm]Hello [G]world');
+// German/Russian H = B natural → transposes into English names.
+assert.equal(transposeChordSymbol('H', 1), 'C');
+assert.equal(transposeChordSymbol('Hm', -2), 'Am');
+assert.equal(transposeChordProText('[Hm]Много [D]дней', 2), '[C#m]Много [E]дней');
 console.log('verify-chord-transpose: ok');

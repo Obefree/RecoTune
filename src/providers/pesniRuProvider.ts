@@ -46,11 +46,24 @@ export function pesniRuAttribution(): ProviderAttribution {
   };
 }
 
+/** pesni.ru indents every line with leading tabs; strip them before alignment. */
+function dedentPesniText(text: string): string {
+  return text.replace(/^\t+/gm, '');
+}
+
+/** Compilations / parodies / karaoke on pesni.ru — never the original tab. */
+const PESNI_COVER_RE =
+  /(переделанн|пароди|песни-переделк|караоке|karaoke|\bминус\b|\bcover\b|кавер|\bby\b|\(мотив|ремикс|remix)/i;
+
+function isPesniCoverOrParody(track: PesniRuTrackSummary): boolean {
+  return PESNI_COVER_RE.test(track.artist?.name ?? '') || PESNI_COVER_RE.test(track.name ?? '');
+}
+
 /** Chord-above-lyric plain text from pesni.ru → inline ChordPro for practice. */
 export function pesniRuTextToVerifiedLyrics(text: string): string | null {
   const raw = text?.trim();
   if (!raw) return null;
-  const merged = normalizeLyricsChords(raw, { allowMerge: true });
+  const merged = normalizeLyricsChords(dedentPesniText(raw), { allowMerge: true });
   if (!isVerifiedChordProLyrics(merged)) return null;
   return merged;
 }
@@ -109,6 +122,7 @@ function scorePesniTrack(track: PesniRuTrackSummary, artist: string, title: stri
   else if (wantT && (gotT.includes(wantT) || wantT.includes(gotT))) score += 45;
   if (wantA && gotA === wantA) score += 40;
   else if (wantA && (gotA.includes(wantA) || wantA.includes(gotA))) score += 25;
+  if (isPesniCoverOrParody(track)) score -= 70;
   return score;
 }
 
@@ -122,6 +136,7 @@ function scoreSearchHit(track: PesniRuTrackSummary, query: string): number {
   else if (q && title.includes(q)) score += 40;
   if (q && combined.includes(q)) score += 25;
   if (q && artist.includes(q)) score += 15;
+  if (isPesniCoverOrParody(track)) score -= 60;
   return score;
 }
 

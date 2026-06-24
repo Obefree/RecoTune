@@ -4,13 +4,13 @@
  * (Uses inline logic mirror — no TS build required.)
  */
 
-const ROOT = '[A-G](?:#|b|♯|♭)?';
+const ROOT = '[A-H](?:#|b|♯|♭)?';
 const CHORD_SUFFIX =
   '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|°|Ø|\\d+)?';
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
-const CHORD_MARKER_RE = /\[[A-G][#b♯♭\d]*(?:\/[A-G][#b♯♭\d]*)?[^\]]*\]/i;
+const CHORD_MARKER_RE = /\[[A-H][#b♯♭\d]*(?:\/[A-H][#b♯♭\d]*)?[^\]]*\]/i;
 const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
 const LYRIC_PRONOUN_TOKENS = new Set(['I']);
 
@@ -22,7 +22,7 @@ function isBareWordChordToken(token, opts) {
   if (!isChordToken(token)) return false;
   if (LYRIC_ARTICLE_TOKENS.has(token)) return false;
   if (!opts?.chordLine && LYRIC_PRONOUN_TOKENS.has(token)) return false;
-  if (token.length === 1) return /^[A-G]$/i.test(token);
+  if (token.length === 1) return /^[A-H]$/i.test(token);
   return true;
 }
 
@@ -99,7 +99,7 @@ function normalizeLyricApostrophes(text) {
 
 function lastWordHasInlineChord(line) {
   const last = line.trim().split(/\s+/).pop() ?? '';
-  return /\[[A-G][^\]]*\]/i.test(last);
+  return /\[[A-H][^\]]*\]/i.test(last);
 }
 
 function firstWordCore(line) {
@@ -213,6 +213,28 @@ function normalizeLyricsChords(text, opts) {
   return stripSpuriousChordBrackets(normalized).trim();
 }
 
+function lineIsChordOnly(line) {
+  const tokens = line.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.every(t => isChordToken(t.replace(/^\[|\]$/g, '')));
+}
+
+function isVerifiedChordProLyrics(text) {
+  if (!text?.trim()) return false;
+  const lines = text.replace(/\r\n/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  let markers = 0;
+  let lyricWords = 0;
+  for (const line of lines) {
+    if (CHORD_MARKER_RE.test(line)) markers++;
+    const prose = line.replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ');
+    if (/[a-zA-Zа-яА-ЯёЁ]{2,}/.test(prose)) lyricWords++;
+  }
+  if (markers < 2 || lyricWords < 2) return false;
+  if (lines.every(lineIsChordOnly)) return false;
+  return true;
+}
+
 const creep =
   "When you were here before\nG\nCouldn't look you in the eye";
 const creepOut = normalizeLyricsChords(creep, { allowMerge: true });
@@ -228,6 +250,12 @@ const creepChorusCurly = normalizeLyricsChords('But [G]I\u2019m a creep');
 const creepMergeBad = normalizeLyricsChords("G\nBut [G]I'm a creep", { allowMerge: true });
 const csharpLine = normalizeLyricsChords('C#\nHello world', { allowMerge: true });
 const bbLine = normalizeLyricsChords('Bb\nShe loves you', { allowMerge: true });
+// German/Russian H (=B) used on AmDm / pesni.ru — must be recognized as a chord.
+const hmLine = normalizeLyricsChords('Hm\nМного дней грустил', { allowMerge: true });
+const hRow = normalizeLyricsChords('A G Hm D\nраз два три четыре', { allowMerge: true });
+const hVerified = isVerifiedChordProLyrics(
+  normalizeLyricsChords('Hm\nМного дней грустил\nEm\nНе знал народ', { allowMerge: true }),
+);
 
 const tests = [
   ['creep no [e]', !/\[e\]/i.test(creepOut)],
@@ -283,6 +311,9 @@ const tests = [
     'feather article lowercase',
     !/\[a\]/i.test(normalizeLyricsChords('like a feather', { allowMerge: true })),
   ],
+  ['H chord line', hmLine.includes('[Hm]Много')],
+  ['H in chord row', /\[A\].*\[G\].*\[Hm\].*\[D\]/.test(hRow.split('\n')[0])],
+  ['H tab verifies', hVerified === true],
 ];
 
 console.log('Output:\n' + creepOut + '\n');

@@ -1,4 +1,5 @@
-const ROOT = '[A-G](?:#|b|\\u266f|\\u266d)?';
+// [A-H]: H = German/Russian B (AmDm / pesni.ru tabs); keep in sync with chordLyricsNormalize.
+const ROOT = '[A-H](?:#|b|\\u266f|\\u266d)?';
 const SUFFIX = '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|\\u00b0|\\u00d8|\\d+)?';
 const SLASH = `(?:/${ROOT})?`;
 const CHORD_TOKEN_RE = new RegExp(`^${ROOT}${SUFFIX}${SLASH}$`, 'i');
@@ -18,7 +19,7 @@ export function isChordToken(token: string): boolean {
   const clean = cleanChordToken(token);
   if (!clean) return false;
   if (/^[AI]$/i.test(clean)) return false;
-  if (clean.length === 1 && !/^[BCDEFG]$/i.test(clean)) return false;
+  if (clean.length === 1 && !/^[BCDEFGH]$/i.test(clean)) return false;
   return CHORD_TOKEN_RE.test(clean);
 }
 
