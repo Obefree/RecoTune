@@ -42,15 +42,26 @@ const TRANSCRIPTION = {
   chartMaxYin: 0.24,
   pitchJumpSemitones: 0.72,
   transitionConfirmFrames: 2,
-  minSegmentMs: 165,
+  /** Shorter so genuine fast notes survive (~2 frames at melody cadence). */
+  minSegmentMs: 110,
   silenceGapMs: 220,
   /** Bridge brief dropouts between two sung regions (portamento / breath). */
   voicedBridgeGapMs: 130,
   mergeSameMidiGapMs: 130,
   mergeSameMidiMaxCents: 55,
-  shortFragmentMs: 220,
-  shortFragmentFrames: 3,
+  shortFragmentMs: 150,
+  shortFragmentFrames: 2,
   shortFragmentMaxSemitones: 1.05,
+  /**
+   * Energy-onset split for repeated same-pitch notes (C-C-C).
+   * Pitch alone cannot separate repeats; detect an amplitude release (dip below
+   * `onsetReleaseRatio` × running peak) followed by a re-attack (recovery above
+   * `onsetAttackRatio` × peak) and start a fresh note at the same pitch.
+   */
+  onsetPeakDecay: 0.9,
+  onsetReleaseRatio: 0.62,
+  onsetAttackRatio: 0.9,
+  onsetMinRepeatMs: 90,
 } as const;
 
 /** Contour / transcription voiced gate. */
@@ -123,6 +134,8 @@ function mean(nums: number[]): number {
 
 interface RawSegment {
   frames: PitchFrame[];
+  /** Started by an energy re-attack at the same pitch (repeated note) — never merge back. */
+  onsetStart?: boolean;
 }
 
 function midiToFreq(midi: number): number {
@@ -174,6 +187,9 @@ function splitRawSegments(voiced: PitchFrame[]): RawSegment[] {
 
   const segments: RawSegment[] = [];
   let current: PitchFrame[] = [voiced[0]];
+  let currentOnset = false;
+  let peak = voiced[0].rms;
+  let released = false;
 
   for (let i = 1; i < voiced.length; i++) {
     const prev = voiced[i - 1];
@@ -182,9 +198,15 @@ function splitRawSegments(voiced: PitchFrame[]): RawSegment[] {
     const med = segmentMedianMidiFloat(current);
     const semiJump = Math.abs(cur.midi! - med);
 
+    peak = Math.max(cur.rms, peak * TRANSCRIPTION.onsetPeakDecay);
+    if (cur.rms < peak * TRANSCRIPTION.onsetReleaseRatio) released = true;
+
     if (gap >= TRANSCRIPTION.silenceGapMs) {
-      segments.push({ frames: current });
+      segments.push({ frames: current, onsetStart: currentOnset });
       current = [cur];
+      currentOnset = false;
+      peak = cur.rms;
+      released = false;
       continue;
     }
 
@@ -192,15 +214,36 @@ function splitRawSegments(voiced: PitchFrame[]): RawSegment[] {
       semiJump >= TRANSCRIPTION.pitchJumpSemitones
       && isConfirmedPitchMove(voiced, i, med)
     ) {
-      segments.push({ frames: current });
+      segments.push({ frames: current, onsetStart: currentOnset });
       current = [cur];
+      currentOnset = false;
+      peak = cur.rms;
+      released = false;
+      continue;
+    }
+
+    // Repeated same-pitch note: amplitude dipped then re-attacked while pitch held.
+    const segDurMs = cur.t - current[0].t;
+    const reAttack =
+      released
+      && semiJump < TRANSCRIPTION.pitchJumpSemitones
+      && cur.rms > peak * TRANSCRIPTION.onsetAttackRatio
+      && cur.rms > prev.rms
+      && segDurMs >= TRANSCRIPTION.onsetMinRepeatMs;
+
+    if (reAttack) {
+      segments.push({ frames: current, onsetStart: currentOnset });
+      current = [cur];
+      currentOnset = true;
+      peak = cur.rms;
+      released = false;
       continue;
     }
 
     current.push(cur);
   }
 
-  if (current.length > 0) segments.push({ frames: current });
+  if (current.length > 0) segments.push({ frames: current, onsetStart: currentOnset });
   return segments;
 }
 
@@ -220,11 +263,13 @@ function mergeNearSameMidiSegments(raw: RawSegment[]): RawSegment[] {
 
     if (
       prevMidi === curMidi
+      && !cur.onsetStart
       && gap < TRANSCRIPTION.mergeSameMidiGapMs
       && centsDiff < TRANSCRIPTION.mergeSameMidiMaxCents
     ) {
       out[out.length - 1] = {
         frames: [...prev.frames, ...cur.frames],
+        onsetStart: prev.onsetStart,
       };
     } else {
       out.push(cur);
@@ -256,6 +301,13 @@ function absorbShortFragments(raw: RawSegment[]): RawSegment[] {
     const prevMed = prev ? segmentMedianMidiFloat(prev.frames) : null;
     const nextMed = next ? segmentMedianMidiFloat(next.frames) : null;
 
+    // A short re-attacked repeat at the same pitch is a real note, not a glitch — keep it.
+    if (cur.onsetStart && prevMed != null && Math.round(prevMed) === Math.round(curMed)) {
+      out.push(cur);
+      i++;
+      continue;
+    }
+
     if (
       prev
       && next
@@ -263,7 +315,10 @@ function absorbShortFragments(raw: RawSegment[]): RawSegment[] {
       && nextMed != null
       && Math.round(prevMed) === Math.round(nextMed)
     ) {
-      out[out.length - 1] = { frames: [...prev.frames, ...cur.frames, ...next.frames] };
+      out[out.length - 1] = {
+        frames: [...prev.frames, ...cur.frames, ...next.frames],
+        onsetStart: prev.onsetStart,
+      };
       i += 2;
       continue;
     }
@@ -274,13 +329,16 @@ function absorbShortFragments(raw: RawSegment[]): RawSegment[] {
     const canMergeNext = next != null && nextDiff <= TRANSCRIPTION.shortFragmentMaxSemitones;
 
     if (canMergePrev && (!canMergeNext || prevDiff <= nextDiff)) {
-      out[out.length - 1] = { frames: [...prev.frames, ...cur.frames] };
+      out[out.length - 1] = {
+        frames: [...prev.frames, ...cur.frames],
+        onsetStart: prev.onsetStart,
+      };
       i++;
       continue;
     }
 
     if (canMergeNext) {
-      out.push({ frames: [...cur.frames, ...next.frames] });
+      out.push({ frames: [...cur.frames, ...next.frames], onsetStart: cur.onsetStart });
       i += 2;
       continue;
     }
@@ -345,8 +403,8 @@ export function transcribeFromPitchFrames(frames: PitchFrame[]): TranscriptionRe
   const segments: TranscribedNoteSegment[] = [];
 
   for (const raw of split) {
-    const dur = raw.frames[raw.frames.length - 1].t - raw.frames[0].t;
-    if (dur < TRANSCRIPTION.minSegmentMs && raw.frames.length < 3) continue;
+    // Drop only true 1-frame glitches; keep genuine fast notes (≥2 frames).
+    if (raw.frames.length < 2) continue;
     const seg = fitSegment(raw.frames);
     if (seg) segments.push(seg);
   }

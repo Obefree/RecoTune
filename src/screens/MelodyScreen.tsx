@@ -939,6 +939,8 @@ export default function MelodyScreen() {
           <Text style={styles.recognitionStats}>
             кадры {pitchFrames.length}
             {' · '}
+            голос {transcription.voicedFrameCount}
+            {' · '}
             ноты {transcription.segments.length}
             {recognitionMode === 'classic' ? '' : ` / классика ${registeredEvents.length}`}
             {useContourRecognition ? ' · PLAY: контур (как на графике)' : recognitionMode === 'contour' ? ' · PLAY: классика (fallback)' : ' · PLAY: классика'}
@@ -1365,17 +1367,6 @@ const styles = StyleSheet.create({
   signalLabel: { color: '#444', fontSize: 9, letterSpacing: 1.5, fontWeight: '700', width: 24 },
   signalTrack: { flex: 1, height: 4, backgroundColor: '#1e1e28', borderRadius: 2, overflow: 'hidden' },
   signalBar: { height: 4, backgroundColor: '#7c4dff', borderRadius: 2 },
-  detectorDebugChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#1a1528',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#7c4dff44',
-  },
-  detectorDebugText: { color: '#7c4dff', fontSize: 9, fontWeight: '700', fontFamily: 'monospace' },
   recognitionRow: {
     flexDirection: 'row',
     alignItems: 'center',

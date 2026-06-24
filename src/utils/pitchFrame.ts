@@ -13,9 +13,13 @@ export type PitchFrame = {
 export const PITCH_FRAME_RING = {
   /** ~12 s at the faster melody engine cadence. */
   maxFrames: 220,
-  /** Melody transcription vocal range (Hz) */
-  freqMin: 80,
-  freqMax: 1000,
+  /**
+   * Melody transcription range (Hz). Must match the TunerEngine melody profile
+   * (70–1200 Hz) — a narrower gate here silently drops pitches that already
+   * reached the detector (low bass / high notes never become notes).
+   */
+  freqMin: 70,
+  freqMax: 1200,
 } as const;
 
 export const freqToMidiFloat = freqToMidi;
