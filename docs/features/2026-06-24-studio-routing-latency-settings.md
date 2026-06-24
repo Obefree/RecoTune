@@ -22,6 +22,7 @@
 |------|-----------|
 | `src/utils/studioAudioRouting.ts` | `applyStudioAudioMode` (не-запись) — единый сеттер playback-сессии: `staysActiveInBackground:true`, честный `playThroughEarpieceAndroid` (больше не затирается). `applyRecordingInput` возвращает статус (`applied`/`missing`/`rejected`/`default`) вместо «молчать в catch» |
 | `src/screens/StudioScreen.tsx` | solo и Play all переведены с `applyPlaybackAudioMode()` на `applyStudioAudioMode(routing,{recording:false})` (dedupe + фикс earpiece). Подключён `resetAllOffsets` → кнопка «Применить N мс ко всем дорожкам 2+». При отказе ОС в выбранном мике — честная подсказка под таймером записи. Удалён мёртвый CSS (`scrubThumb`, `latencyLabel`, `routeInputGroup*`, `routeInputRow*`, `modalOverlay`, `modalBox`, …) |
+| `src/screens/StudioScreen.tsx` (запись) | Бэкинг при записи теперь уважает **отрицательные** offsetMs (старт через `setTimeout`), как в Play all — монитор-микс совпадает с финальным выравниванием (раньше отрицательные стартовали сразу) |
 | Настройки (модалка) | Переразбиты на пронумерованные секции: ① Качество записи · ② Задержка дорожек (+пресеты провод/BT, «применить ко всем») · ③ Звук — микрофон и выход. Честный текст: принудительно только «Трубка», остальное — авто-маршрут системы + пресет задержки |
 
 ## Было → стало

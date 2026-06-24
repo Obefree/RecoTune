@@ -818,7 +818,13 @@ export default function StudioScreen() {
       // Backing tracks are already pre-positioned at their offsets, same as
       // during playAll, so recording happens against the identical audio.
       // The new track gets offsetMs = prerollMs to compensate for mic latency.
-      playbackSounds.forEach(s => { s.playAsync().catch(() => {}); });
+      // Mirror Play all: positive-offset tracks (pre-positioned) play now; negative-offset
+      // tracks start after |offset| ms so the monitor mix matches final playback alignment.
+      playbackSounds.forEach((s, i) => {
+        const off = session.tracks[i]?.offsetMs ?? 0;
+        if (off >= 0) s.playAsync().catch(() => {});
+        else setTimeout(() => { s.playAsync().catch(() => {}); }, Math.abs(off));
+      });
       await rec.startAsync();
       recRef.current = rec;
       startRef.current = Date.now();
