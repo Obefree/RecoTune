@@ -2251,18 +2251,18 @@ export default function ChordsScreen() {
       setLyricsEditMode(false);
       return true;
     }
+    if (mode === 'practice' && (practiceSong || practiceInput.trim())) {
+      // Back from a song → reset immersive/tab bar and return to the song list in one clean step
+      lyricsImmersiveRef.current = false;
+      setTabBarHidden(false);
+      clearPracticeSelection();
+      setShowLibrary(true);
+      return true;
+    }
     if (tabBarHidden) {
       lyricsImmersiveRef.current = false;
       setTabBarHidden(false);
       setShowPracticePanel(true);
-      return true;
-    }
-    if (mode === 'practice' && practiceLyrics.trim().length > 0 && !showPracticePanel) {
-      setShowPracticePanel(true);
-      return true;
-    }
-    if (mode === 'practice' && (practiceSong || practiceInput.trim())) {
-      clearPracticeSelection();
       return true;
     }
     if (mode === 'identify') {
@@ -2313,12 +2313,11 @@ export default function ChordsScreen() {
     showBasicChordsModal,
     showInstrumentModal,
     showLibrary,
+    setShowLibrary,
     lyricsEditMode,
     tabBarHidden,
     setTabBarHidden,
     mode,
-    practiceLyrics,
-    showPracticePanel,
     practiceSong,
     practiceInput,
     isRecognizing,

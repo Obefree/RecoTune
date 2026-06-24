@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-06-25 | Chords/Практика: «Назад» из песни → чистый возврат к списку | [2026-06-25-chords-back-return-to-song-list.md](./2026-06-25-chords-back-return-to-song-list.md) |
 | 2026-06-25 | Chords/Практика: фикс «полный экран → кусок + чёрная зона» | [2026-06-25-chords-practice-fullscreen-black-void-fix.md](./2026-06-25-chords-practice-fullscreen-black-void-fix.md) |
 | 2026-06-24 | Chords: источники (AmDm/UG primary), pesni backup, нотация H/Hm | [2026-06-24-chord-sourcing-phone-fallback-h-notation.md](./2026-06-24-chord-sourcing-phone-fallback-h-notation.md) |
 | 2026-06-24 | Melody: распознавание — диапазон, onset повторов, короткие ноты | [2026-06-24-melody-recognition-onset-range.md](./2026-06-24-melody-recognition-onset-range.md) |
