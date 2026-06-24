@@ -2438,7 +2438,7 @@ export default function ChordsScreen() {
     ? Math.max(140, practiceBodyApproxH - practiceLyricsChromeH)
     : 0;
   /** При свёрнутой панели — нижний предел по полному экрану; при открытой — не больше оставшейся высоты */
-  const lyricsMinHeight =
+  const lyricsMinHeightTarget =
     hasLyricsBody && !showPracticePanel
       ? Math.max(lyricsMinHeightRaw, Math.round(windowH * 0.76), lyricsMinHeightFit)
       : hasLyricsBody
@@ -2447,6 +2447,16 @@ export default function ChordsScreen() {
             Math.round(practiceBodyApproxH * 0.42),
           )
         : 0;
+  /**
+   * Жёсткий потолок = реально доступная высота тела практики.
+   * `windowH * 0.76` не учитывает шапку/бар/док/insets, поэтому в immersive он
+   * мог превысить высоту flex-родителя: колонка текста переполняла столбец, и на
+   * Android оставался «маленький кусок аккордов + чёрная зона». minHeight — только
+   * нижний предел, чтобы текст не сжимался в ленточку; выше доступного он не нужен.
+   */
+  const lyricsMinHeight = hasLyricsBody
+    ? Math.min(lyricsMinHeightTarget, practiceBodyApproxH)
+    : 0;
 
   useEffect(() => {
     restoreLyricsScrollAfterLayout();
