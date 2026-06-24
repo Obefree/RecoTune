@@ -3202,18 +3202,9 @@ export default function ChordsScreen() {
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
               ) : identifyChordedLyrics ? (
                 lyricsSource === 'library' && libraryMatch && hasVerifiedPracticeLyrics(libraryMatch) ? (
-                  <View style={styles.resultChordedLyrics}>
-                    {identifyChordedLyrics.split('\n').map((line, li) => (
-                      <ChordLyricsLine
-                        key={`identify-line-${li}`}
-                        line={line}
-                        currentChord=""
-                        lineIdx={li}
-                        activeChordPos={null}
-                        onChordTap={() => {}}
-                      />
-                    ))}
-                  </View>
+                  <Text style={styles.identifyPlainLyrics}>
+                    Текст с аккордами открывается в практике — нажмите «В практику с аккордами» выше.
+                  </Text>
                 ) : (
                   <Text style={styles.identifyPlainLyrics}>{identifyChordedLyrics}</Text>
                 )
@@ -4985,7 +4976,6 @@ const styles = StyleSheet.create({
   resultLyricsHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' },
   lyricsSourceTag: { color: '#444', fontSize: 9, fontWeight: '700', marginLeft: 'auto' as const },
   resultLyricsText: { color: '#aaa', fontSize: 14, lineHeight: 24 },
-  resultChordedLyrics: { paddingTop: 4 },
   lyricsLabel:      { color: '#444', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
   identifyLyricsEmpty: { color: '#333', fontSize: 13, fontStyle: 'italic', marginTop: 12 },
   identifyPlainLyrics: { color: '#bbb', fontSize: 14, lineHeight: 22, marginTop: 8 },
