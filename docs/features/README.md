@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-06-27 | Фикс синего/пустого экрана на телефоне: expo-font 55 → 14.x (SDK 54) | [2026-06-27-expo-font-version-mismatch-blue-screen-fix.md](./2026-06-27-expo-font-version-mismatch-blue-screen-fix.md) |
 | 2026-06-25 | Chords: убран дубль-лист аккордов на результате НАЙТИ (старое лекало) | [2026-06-25-find-result-duplicate-chord-sheet-removed.md](./2026-06-25-find-result-duplicate-chord-sheet-removed.md) |
 | 2026-06-25 | Chords/Практика: «Назад» из песни → чистый возврат к списку | [2026-06-25-chords-back-return-to-song-list.md](./2026-06-25-chords-back-return-to-song-list.md) |
 | 2026-06-25 | Chords/Практика: фикс «полный экран → кусок + чёрная зона» | [2026-06-25-chords-practice-fullscreen-black-void-fix.md](./2026-06-25-chords-practice-fullscreen-black-void-fix.md) |
