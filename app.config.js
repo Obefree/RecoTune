@@ -27,6 +27,9 @@ module.exports = {
         'expo-build-properties',
         {
           android: {
+            // Local dev/VPS proxies (chord-fetch, stems) are plain http — SDK 54 dropped
+            // the top-level android.usesCleartextTraffic config key, so it lives here.
+            usesCleartextTraffic: true,
             enableMinifyInReleaseBuilds: true,
             enableShrinkResourcesInReleaseBuilds: true,
             extraProguardRules: RELEASE_PROGUARD,

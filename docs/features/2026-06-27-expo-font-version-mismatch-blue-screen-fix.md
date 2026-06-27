@@ -46,3 +46,18 @@ JS из `expo-font@55` вызывает нативный API шрифтов, к�
 
 - `package.json` (+`expo-font` в dependencies)
 - `package-lock.json` (дедуп expo-font → 14.0.12)
+
+## Follow-up (после фикса всё ещё «не стартует на телефоне»)
+
+`expo-font` проверен — единственная версия `14.0.12`, дубликатов 55.x нет (`npm ls expo-font`). Других дублей/несовместимых нативных модулей нет: reanimated 4.1.7 + worklets 0.5.1, gesture-handler 2.28, screens 4.16, safe-area 5.6.2, webview 13.15, expo-av 16.0.8 — все в одном экземпляре под SDK 54. Бандл (`expo export`) собирается чисто.
+
+Доп. выравнивание под SDK 54 (`npx expo install --fix`):
+
+| package | было | стало |
+| --- | --- | --- |
+| expo | 54.0.34 | 54.0.35 |
+| expo-file-system | 19.0.22 | 19.0.23 |
+
+Починен config-эррор `expo-doctor`: `android.usesCleartextTraffic` убран из `app.json` (в SDK 54 этого ключа в схеме нет) и перенесён в плагин `expo-build-properties` в `app.config.js` — http к локальным прокси (chord-fetch/stems) в standalone/dev-сборках продолжит работать. `expo-doctor` 14/18 → 16/18 (остаются только 2 предупреждения: эвристика про app.json+app.config и unmaintained `react-native-music-control` — не блокеры).
+
+**Вывод:** код/зависимости/конфиг чистые под SDK 54. Если приложение всё ещё не стартует — причина в **окружении** (несовпадение SDK у Expo Go на телефоне, сеть PC↔телефон на Windows, или нужна dev-сборка из-за `react-native-music-control` + New Arch), а не в JS. Для точного диагноза нужен текст ошибки с экрана / `adb logcat` при подключении телефона по USB.
