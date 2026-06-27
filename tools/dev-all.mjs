@@ -16,7 +16,6 @@ function runScript(relPath) {
       cwd: root,
       stdio: 'inherit',
       env: process.env,
-      shell: process.platform === 'win32',
     });
     child.on('error', reject);
     child.on('close', code => {

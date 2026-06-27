@@ -104,7 +104,6 @@ async function startDevStack(reason) {
     cwd: here,
     detached: true,
     stdio: 'ignore',
-    shell: process.platform === 'win32',
     env: process.env,
   });
   child.unref();
