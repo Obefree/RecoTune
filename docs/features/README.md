@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-06-28 | Expo Go SDK 54 не запускает RecoTune: expo-av удалён из Expo Go → dev build / правка bat | [2026-06-28-expo-go-sdk54-expo-av-removed.md](./2026-06-28-expo-go-sdk54-expo-av-removed.md) |
 | 2026-06-27 | Фикс синего/пустого экрана на телефоне: expo-font 55 → 14.x (SDK 54) | [2026-06-27-expo-font-version-mismatch-blue-screen-fix.md](./2026-06-27-expo-font-version-mismatch-blue-screen-fix.md) |
 | 2026-06-25 | Chords: убран дубль-лист аккордов на результате НАЙТИ (старое лекало) | [2026-06-25-find-result-duplicate-chord-sheet-removed.md](./2026-06-25-find-result-duplicate-chord-sheet-removed.md) |
 | 2026-06-25 | Chords/Практика: «Назад» из песни → чистый возврат к списку | [2026-06-25-chords-back-return-to-song-list.md](./2026-06-25-chords-back-return-to-song-list.md) |
