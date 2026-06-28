@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions
-title RecoTune - Metro (dev build, live JS)
+title RecoTune - Metro (live JS)
 set "REPO=C:\Users\lev\Documents\GitHub\RecoTune"
 cd /d "%REPO%"
 if errorlevel 1 (
@@ -12,17 +12,9 @@ if errorlevel 1 (
 echo.
 echo  === RecoTune Metro (live JS over LAN) ===
 echo.
-echo  HEADS UP (Expo SDK 54): Expo Go can NO LONGER run RecoTune.
-echo  Expo dropped expo-av from Expo Go in SDK 54, and RecoTune uses it for
-echo  the Tuner/Studio/Media. In Expo Go the app loads the bundle, then crashes
-echo  at startup with: "native module 'ExponentAV' doesn't exist" (the blue/red
-echo  error after the long load). This is NOT fixable from this .bat.
-echo.
-echo  USE A DEV BUILD instead (full audio + same one-click live JS):
-echo    1) Build once:  build-apk.bat   -^> android\app\build\outputs\apk\debug\app-debug.apk
-echo    2) Install app-debug.apk on the phone (USB cable, or copy + open it).
-echo    3) Run THIS bat, then open RecoTune on the phone (same Wi-Fi).
-echo       The dev build connects to this Metro on port 8081 automatically.
+echo  Expo Go SDK 54: should start (expo-av + expo-font ~14.0.12).
+echo  Expo Go SDK 55+: in-app screen explains dev build (no blue crash).
+echo  Full audio / lock-screen controls: dev build (build-apk.bat -^> app-debug.apk).
 echo.
 echo  Working dir: %CD%
 echo  Git:
@@ -31,13 +23,14 @@ if errorlevel 1 echo    (git unavailable^)
 git log -1 --oneline 2>nul
 echo.
 
-rem Free the default Metro port (8081) if a stale instance is holding it.
+rem Free default Metro port 8081 if stale.
 for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8081 "') do taskkill /PID %%a /F >nul 2>&1
 
 set EXPO_NO_TELEMETRY=1
 
-echo  Starting Metro: npx expo start -c   (cache cleared)
-echo  Tip: if your network/VPN makes startup hang, add --offline to the line below.
+echo  Starting: npx expo start -c   (port 8081, cache cleared)
+echo  Tip: VPN/hang at startup - add --offline to the line below (not default).
+echo  Scan QR in Expo Go OR open installed dev build on same Wi-Fi.
 echo.
 call npx expo start -c
 echo.

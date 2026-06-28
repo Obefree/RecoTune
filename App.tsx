@@ -1,24 +1,28 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { TabBarVisibilityProvider, useTabBarVisibility } from './src/context/TabBarVisibility';
 import { LocaleProvider } from './src/context/LocaleContext';
-import TunerScreen from './src/screens/TunerScreen';
-import StudioScreen from './src/screens/StudioScreen';
-import ChordsScreen from './src/screens/ChordsScreen';
-import MelodyScreen from './src/screens/MelodyScreen';
 import SnippetAnalyzerEngine from './src/components/SnippetAnalyzerEngine';
-import MediaScreen from './src/screens/MediaScreen';
-import AILabScreen from './src/screens/AILabScreen';
+import ExpoAvRequiredScreen from './src/screens/ExpoAvRequiredScreen';
 import { initMediaRemoteControls } from './src/utils/mediaRemoteControls';
 import { initSongLibrary } from './src/services/initSongLibrary';
 import { ensureAutoChordProxySettings } from './src/providers/autoChordProxy';
+import { isExpoAvNativeAvailable } from './src/utils/expoAvAvailable';
+
+/** Lazy tabs — expo-av throws at import when ExponentAV is missing (Expo Go SDK 55+). */
+const TunerScreen = React.lazy(() => import('./src/screens/TunerScreen'));
+const StudioScreen = React.lazy(() => import('./src/screens/StudioScreen'));
+const ChordsScreen = React.lazy(() => import('./src/screens/ChordsScreen'));
+const MelodyScreen = React.lazy(() => import('./src/screens/MelodyScreen'));
+const MediaScreen = React.lazy(() => import('./src/screens/MediaScreen'));
+const AILabScreen = React.lazy(() => import('./src/screens/AILabScreen'));
 
 const Tab = createBottomTabNavigator();
 
@@ -57,6 +61,7 @@ function AppInner() {
   return (
     <View style={styles.root}>
       <View style={styles.navFill}>
+      <Suspense fallback={<View style={styles.bootFallback}><ActivityIndicator color={ACTIVE} /></View>}>
       <NavigationContainer
         theme={{
           dark: true,
@@ -143,6 +148,7 @@ function AppInner() {
           <Tab.Screen name="AILab"    component={AILabScreen}  options={{ title: 'AI Lab' }} />
         </Tab.Navigator>
       </NavigationContainer>
+      </Suspense>
       </View>
       {/* WebView вне flex-колонки с навигатором — иначе на Android ~50% экрана «белая зона» и таб-бар посередине */}
       <View style={styles.analyzerOverlay} pointerEvents="box-none">
@@ -156,6 +162,7 @@ function AppInner() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   navFill: { flex: 1 },
+  bootFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: DARK_BG },
   analyzerOverlay: {
     position: 'absolute',
     left: 0,
@@ -167,6 +174,15 @@ const styles = StyleSheet.create({
 });
 
 export default function App() {
+  if (!isExpoAvNativeAvailable()) {
+    return (
+      <SafeAreaProvider style={{ flex: 1 }}>
+        <ExpoAvRequiredScreen />
+        <StatusBar style="light" />
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider style={{ flex: 1 }}>
