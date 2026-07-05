@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-07-05 | Studio: запись овердаба больше не требует удвоить задержку (ждём реальный старт бэкинга) | [2026-07-05-studio-record-latency-double-fix.md](./2026-07-05-studio-record-latency-double-fix.md) |
 | 2026-07-05 | Melody: одна схема распознавания (убран флип 2 детекторов), единый timebase, фикс слияния разных нот | [2026-07-05-melody-single-path-timebase-merge.md](./2026-07-05-melody-single-path-timebase-merge.md) |
 | 2026-06-28 | Expo Go: gate + lazy tabs вместо краша ExponentAV; bat без --offline | [2026-06-28-expo-go-startup-gate-lazy-tabs.md](./2026-06-28-expo-go-startup-gate-lazy-tabs.md) |
 | 2026-06-28 | Expo Go / bat: док про SDK 55+ и dev build (superseded gate-фиксом) | [2026-06-28-expo-go-sdk54-expo-av-removed.md](./2026-06-28-expo-go-sdk54-expo-av-removed.md) |

@@ -63,11 +63,31 @@ const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.js
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
 const LATENCY_FILE        = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
 
-// Android mic hardware latency is typically 80–200 ms.
-// prerollMs = how long to wait (after rec starts) before starting playback.
-// New track stores this as offsetMs so that silence is skipped during playback.
-// Дорожки 2+ получают offsetMs = preroll при записи; пресеты: провод 150, BT 700.
+// prerollMs = оценка задержки монитор→микрофон (~150 мс провод, ~700 мс BT).
+// ЕДИНСТВЕННЫЙ владелец компенсации: дорожки 2+ получают offsetMs = prerollMs, и
+// на воспроизведении/сведении дорожка сдвигается раньше ровно на эту величину.
+// Запись стартует только после того, как бэкинг реально зазвучал (waitForPlaybackStart),
+// чтобы микрофон не записал ещё и «холодный старт» плеера — раньше из-за него задержку
+// приходилось удваивать. Пресеты: провод 150, BT 700.
 const DEFAULT_PREROLL_MS = PREROLL_MS_WIRED;
+
+/**
+ * Дождаться, пока только что запущенный бэкинг реально начнёт играть (позиция ушла
+ * дальше предпозиционированного старта). Так овердаб пишется под слышимый бэкинг, а не
+ * под тишину прогрева плеера. Ограничено по времени, чтобы никогда не подвесить запись.
+ */
+async function waitForPlaybackStart(sound: Audio.Sound, startMs: number): Promise<void> {
+  const deadline = Date.now() + 500;
+  while (Date.now() < deadline) {
+    try {
+      const st = await sound.getStatusAsync();
+      if (st.isLoaded && st.isPlaying && (st.positionMillis ?? 0) > startMs + 4) return;
+    } catch {
+      return;
+    }
+    await new Promise<void>(r => setTimeout(r, 16));
+  }
+}
 
 const TRACK_COLORS = [
   '#7c4dff', '#00e676', '#ff5252', '#ffeb3b',
@@ -813,18 +833,22 @@ export default function StudioScreen() {
         setInputApplyNote(null);
       }
 
-      // ── Simultaneous start ───────────────────────────────────────────
-      // Fire playback first (fire-and-forget), then await mic start.
-      // Backing tracks are already pre-positioned at their offsets, same as
-      // during playAll, so recording happens against the identical audio.
-      // The new track gets offsetMs = prerollMs to compensate for mic latency.
-      // Mirror Play all: positive-offset tracks (pre-positioned) play now; negative-offset
-      // tracks start after |offset| ms so the monitor mix matches final playback alignment.
+      // ── Старт записи под УЖЕ ЗВУЧАЩИЙ бэкинг ─────────────────────────
+      // Бэкинг пре-позиционирован по своим offset (как в Play all): дорожки с off≥0
+      // играют сразу, с off<0 — через |off| мс. Затем ждём, пока бэкинг реально
+      // зазвучит, и только потом стартуем микрофон. Иначе запись захватывала бы ещё
+      // и «холодный старт» плеера, и задержку записанной дорожки приходилось удваивать
+      // (baseline preroll стекался поверх латентности старта плеера). Компенсацию
+      // латентности владеет ОДНО место — offsetMs = prerollMs при сохранении.
       playbackSounds.forEach((s, i) => {
         const off = session.tracks[i]?.offsetMs ?? 0;
         if (off >= 0) s.playAsync().catch(() => {});
         else setTimeout(() => { s.playAsync().catch(() => {}); }, Math.abs(off));
       });
+      const refIdx = session.tracks.findIndex(t => (t.offsetMs ?? 0) >= 0);
+      if (refIdx >= 0 && playbackSounds[refIdx]) {
+        await waitForPlaybackStart(playbackSounds[refIdx], Math.max(0, session.tracks[refIdx].offsetMs ?? 0));
+      }
       await rec.startAsync();
       recRef.current = rec;
       startRef.current = Date.now();
@@ -874,7 +898,7 @@ export default function StudioScreen() {
           uri:      dst,
           label:    TRACK_LABELS[idx] ?? `Track ${idx + 1}`,
           color:    TRACK_COLORS[idx % TRACK_COLORS.length],
-          // Strip the leading silence introduced by the preroll approach
+          // Единственная компенсация латентности: сдвиг дорожки раньше на prerollMs.
           offsetMs: idx > 0 ? prerollRef.current : 0,
           gain:     1,
         };
