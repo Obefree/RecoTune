@@ -11,6 +11,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "ingest-metadata": "node tools/ingest-musicbrainz-metadata.mjs --target=5000 --limit-artists=80 --max-pages=12",
+    "ingest-pesni-chords": "node tools/ingest-pesni-chordpro.mjs --target=300 --per-artist=8",
     "append-metadata": "node tools/append-metadata-artists.mjs",
     "verify-metadata-search": "node tools/verify-metadata-search.mjs",
     "verify-chord-normalize": "node tools/verify-chord-normalize.mjs",

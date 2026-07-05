@@ -125,7 +125,7 @@ export function countAnnotatedInEntries(songs: SongEntry[]): number {
 }
 
 export const PROGRESSION_ONLY_HINT =
-  'Полный таб — AmDm / Ultimate Guitar через прокси на ПК (npm run dev-proxy).';
+  'Эта песня — только метаданные или прогрессия. Полный таб: AmDm/UG через ПК (npm start) или авто-подгрузка с pesni.ru с телефона. Фильтр «ТАБЫ» — ~330 офлайн-песен с аккордами.';
 
 export function contentQualityScore(song: SongEntry): number {
   if (hasVerifiedPracticeLyrics(song)) {

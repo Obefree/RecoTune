@@ -1555,6 +1555,10 @@ export default function ChordsScreen() {
         const msg = `Каталог обновлён: ${upgrade.fullChordCount} с полными аккордами (из ${upgrade.totalBuiltin})`;
         setCatalogUpgradeToast(msg);
         setTimeout(() => setCatalogUpgradeToast(null), 6000);
+      } else if (upgrade.pesniArchiveImported > 0) {
+        const msg = `+${upgrade.pesniArchiveImported} офлайн-табов (pesni.ru). Фильтр «ТАБЫ» в базе.`;
+        setCatalogUpgradeToast(msg);
+        setTimeout(() => setCatalogUpgradeToast(null), 6000);
       }
       const [songs, favs, userSongs] = await Promise.all([
         listSongs(),

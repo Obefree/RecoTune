@@ -3,13 +3,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent';
 import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
+import { importPesniChordProArchive } from './pesniArchiveImport';
 
 const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
 export const BUILTIN_SEED_VERSION = '2026-05-24-verified-chordpro-only';
 /** Dev-only bundle marker; not shown in production Chords UI. */
-export const CHORD_LIBRARY_BUILD = 'chord-v3';
+export const CHORD_LIBRARY_BUILD = 'chord-v4-pesni300';
 
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
 const FAVORITES_FILE = (FileSystem.documentDirectory ?? '') + 'song_favorites.json';
@@ -38,6 +39,8 @@ export type BuiltinCatalogUpgradeResult = {
   upgraded: boolean;
   totalBuiltin: number;
   fullChordCount: number;
+  /** First-time pesni.ru archive seed into SQLite (0 if already at bundle version). */
+  pesniArchiveImported: number;
 };
 
 function builtinCatalogStats(): BuiltinCatalogUpgradeResult {
@@ -46,6 +49,7 @@ function builtinCatalogStats(): BuiltinCatalogUpgradeResult {
     upgraded: false,
     totalBuiltin: SONGS.length,
     fullChordCount: countAnnotatedInEntries(bundled),
+    pesniArchiveImported: 0,
   };
 }
 
@@ -296,8 +300,10 @@ async function purgeStaleBuiltinRows(database: SQLite.SQLiteDatabase): Promise<v
   const keepIds = SONGS.map(s => s.id);
   if (keepIds.length === 0) return;
   const placeholders = keepIds.map(() => '?').join(',');
+  // Keep pesni.ru verified-tab bundle rows (id `pesni_ru_*`) — they are seeded by
+  // importPesniChordProArchive, not part of SONGS, and must not be purged.
   await database.runAsync(
-    `DELETE FROM songs WHERE source = 'builtin' AND id NOT IN (${placeholders})`,
+    `DELETE FROM songs WHERE source = 'builtin' AND id NOT IN (${placeholders}) AND id NOT LIKE 'pesni_ru_%'`,
     ...keepIds,
   );
 }
@@ -391,7 +397,12 @@ async function upgradeBuiltinCatalog(database: SQLite.SQLiteDatabase): Promise<B
   }
 
   await setMeta(database, 'builtin_seed_version', BUILTIN_SEED_VERSION);
-  return { upgraded: true, totalBuiltin: stats.totalBuiltin, fullChordCount: stats.fullChordCount };
+  return {
+    upgraded: true,
+    totalBuiltin: stats.totalBuiltin,
+    fullChordCount: stats.fullChordCount,
+    pesniArchiveImported: 0,
+  };
 }
 
 export async function initSongLibrary(): Promise<BuiltinCatalogUpgradeResult> {
@@ -403,10 +414,11 @@ export async function initSongLibrary(): Promise<BuiltinCatalogUpgradeResult> {
       await purgeStaleBuiltinRows(database);
       const upgrade = await upgradeBuiltinCatalog(database);
       await repairBuiltinLyricsInDb(database);
+      const pesni = await importPesniChordProArchive(database);
       await purgeUnverifiedMergedLyrics(database);
       await migrateLegacyJson(database);
       db = database;
-      return upgrade;
+      return { ...upgrade, pesniArchiveImported: pesni.imported };
     })().catch(err => {
       initPromise = null;
       db = null;
