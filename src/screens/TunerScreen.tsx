@@ -12,7 +12,7 @@ import WebView from 'react-native-webview';
 
 import TunerEngine, { PitchMessage } from '../components/TunerEngine';
 import {
-  centsToColor, findNearestString, INSTRUMENTS, TUNINGS,
+  centsToColor, findNearestStringWithHysteresis, INSTRUMENTS, TUNINGS,
   getTuningsForInstrument, type Tuning,
 } from '../utils/noteUtils';
 import TunerNeedle from '../components/TunerNeedle';
@@ -63,6 +63,10 @@ export default function TunerScreen() {
   const [instrument, setInstrument]   = useState('Guitar');
   const [tuning, setTuning]           = useState<Tuning>(TUNINGS[0]);
   const [showPicker, setShowPicker]   = useState(false);
+  // Committed string target: hysteresis so it holds while a string is tuned and only
+  // switches on a clear move, instead of flickering to a lower string each frame.
+  const [activeStringNumber, setActiveStringNumber] = useState<number | null>(null);
+  const committedStringRef = useRef<number | null>(null);
 
   // Restrict detection to the selected tuning's range: fewer octave errors + less WebView compute.
   const detectRange = (() => {
@@ -119,6 +123,15 @@ export default function TunerScreen() {
         };
         setFrequency(disp.frequency);
         setNote(n);
+
+        const match = findNearestStringWithHysteresis(
+          disp.frequency, tuning.strings, committedStringRef.current,
+        );
+        const nextString = match && match.distance < 60 ? match.stringDef.string : null;
+        if (nextString !== committedStringRef.current) {
+          committedStringRef.current = nextString;
+          setActiveStringNumber(nextString);
+        }
       }
 
       const chartMidi = disp.chartDisplayMidi;
@@ -169,16 +182,18 @@ export default function TunerScreen() {
       sungDetectorRef.current.process({ frequency: null, signal: msg.signal ?? 0 });
       tunerDisplayRef.current.reset();
       lastUiFlushMsRef.current = 0;
-      setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0);
+      committedStringRef.current = null;
+      setNote(null); setFrequency(null); setSignalLevel(msg.signal ?? 0); setActiveStringNumber(null);
     } else if (msg.type === 'silent') {
       sungDetectorRef.current.process({ frequency: null, signal: 0 });
       tunerDisplayRef.current.reset();
       lastUiFlushMsRef.current = 0;
-      setNote(null); setFrequency(null); setSignalLevel(0);
+      committedStringRef.current = null;
+      setNote(null); setFrequency(null); setSignalLevel(0); setActiveStringNumber(null);
     } else if (msg.type === 'error') {
       setError(msg.message ?? t('micError')); setIsActive(false);
     }
-  }, [t]);
+  }, [t, tuning]);
 
   const start = useCallback(async () => {
     const { status } = await Audio.requestPermissionsAsync();
@@ -186,8 +201,10 @@ export default function TunerScreen() {
     setError(null); setHistory([]); setRegisteredEvents([]);
     sungDetectorRef.current.reset();
     tunerDisplayRef.current.reset();
+    committedStringRef.current = null;
     lastChartPtMsRef.current = 0;
     lastUiFlushMsRef.current = 0;
+    setActiveStringNumber(null);
     setIsActive(true);
   }, [t]);
 
@@ -195,8 +212,9 @@ export default function TunerScreen() {
     webViewRef.current?.injectJavaScript('window.stopTuner && window.stopTuner(); true;');
     sungDetectorRef.current.reset();
     tunerDisplayRef.current.reset();
+    committedStringRef.current = null;
     lastUiFlushMsRef.current = 0;
-    setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0);
+    setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0); setActiveStringNumber(null);
   }, []);
 
   useFocusEffect(useCallback(() => () => stop(), [stop]));
@@ -205,12 +223,6 @@ export default function TunerScreen() {
   const displayCents = note?.displayCents ?? note?.cents ?? 0;
   const tuneColor   = note && isActive ? centsToColor(displayCents) : '#3a3a4a';
   const inTune      = note && isActive && Math.abs(displayCents) <= 5;
-
-  const activeStringNumber = (() => {
-    if (!frequency || !isActive) return null;
-    const match = findNearestString(frequency, tuning.strings);
-    return match && match.distance < 50 ? match.stringDef.string : null;
-  })();
 
   return (
     <View style={[styles.wrapper, { paddingTop: insets.top }]}>
@@ -408,7 +420,7 @@ export default function TunerScreen() {
               {getTuningsForInstrument(instrument).map(item => (
                 <TouchableOpacity
                   key={item.id}
-                  onPress={() => { setTuning(item); setShowPicker(false); }}
+                  onPress={() => { setTuning(item); committedStringRef.current = null; setActiveStringNumber(null); setShowPicker(false); }}
                   style={[styles.tuningRow, tuning.id === item.id && styles.tuningRowActive]}
                 >
                   <View style={{ flex: 1 }}>

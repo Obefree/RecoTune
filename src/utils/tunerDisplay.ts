@@ -16,10 +16,14 @@ export const NOTE_MIN_HOLD_MS = 70;
 export const NOTE_SWITCH_OFFSET_CENTS = 33;
 /** Light EMA for Hz readout only — not used for note / needle. */
 export const HZ_DISPLAY_EMA = 0.25;
-/** Display-only EMA for tuner chart trace (decoupled from needle). */
-export const CHART_MIDI_EMA = 0.3;
-/** A single-frame pitch jump beyond this (¢) is treated as an octave/harmonic glitch. */
+/** A single-frame, non-octave pitch jump beyond this (¢) is treated as a transient glitch. */
 export const OUTLIER_CENTS_JUMP = 200;
+/**
+ * Octave/harmonic errors (×2, ÷2, …) land within this many semitones of the tracked pitch
+ * after shifting by whole octaves → fold them back instead of letting them poison the reading.
+ * A real neighbour-note change is never an exact octave, so tracking is unaffected.
+ */
+export const OCTAVE_FOLD_SEMITONES = 1.5;
 
 /**
  * 1€ filter (Casiez, Roussel, Vogel 2012) parameters, tuned in the semitone domain.
@@ -46,7 +50,7 @@ export interface TunerDisplayFrame {
   displayCents: number;
   frequency: number;
   lockedMidi: number;
-  /** Chart Y only — EMA of smoothed pitch */
+  /** Chart Y only — same 1€-smoothed pitch as the needle (single smoothing path) */
   chartDisplayMidi: number;
 }
 
@@ -107,7 +111,6 @@ export class TunerPitchDisplay {
   private smoothMidi: number | null = null;
   private displayCents = 0;
   private hzDisplay: number | null = null;
-  private chartMidiDisplay: number | null = null;
   private candidateMidi: number | null = null;
   private candidateFrames = 0;
   private candidateStartTs: number | null = null;
@@ -120,7 +123,6 @@ export class TunerPitchDisplay {
     this.smoothMidi = null;
     this.displayCents = 0;
     this.hzDisplay = null;
-    this.chartMidiDisplay = null;
     this.candidateMidi = null;
     this.candidateFrames = 0;
     this.candidateStartTs = null;
@@ -145,18 +147,26 @@ export class TunerPitchDisplay {
     this.lastTs = ts;
     const dtSec = dtMs / 1000;
 
-    const rawMidi = freqToMidi(rawHz);
-
-    // Single-frame octave/harmonic glitch: skip this sample (hold), don't poison filter.
-    if (this.lastRawMidi != null) {
-      const jumpCents = Math.abs((rawMidi - this.lastRawMidi) * 100);
-      if (jumpCents > OUTLIER_CENTS_JUMP) {
-        this.lastRawMidi = rawMidi;
-        return this.lockedMidi == null ? null : this.snapshot();
+    // Fold octave/harmonic errors (×2, ÷2, …) onto the tracked pitch. A sustained harmonic
+    // flip would otherwise slip past the single-frame outlier skip and jump the needle, chart
+    // and string target by an octave — the real cause of the "mush" and lower-string snaps.
+    const detectedMidi = freqToMidi(rawHz);
+    let rawMidi = detectedMidi;
+    if (this.smoothMidi != null) {
+      const k = Math.round((this.smoothMidi - rawMidi) / 12);
+      if (k !== 0 && Math.abs(rawMidi + 12 * k - this.smoothMidi) <= OCTAVE_FOLD_SEMITONES) {
+        rawMidi += 12 * k;
       }
+    }
+
+    // Non-octave transient spike: skip a single frame (hold), don't poison the filter.
+    if (this.lastRawMidi != null && Math.abs((rawMidi - this.lastRawMidi) * 100) > OUTLIER_CENTS_JUMP) {
+      this.lastRawMidi = rawMidi;
+      return this.lockedMidi == null ? null : this.snapshot();
     }
     this.lastRawMidi = rawMidi;
 
+    const foldedHz = rawMidi === detectedMidi ? rawHz : A4 * 2 ** ((rawMidi - A4_MIDI) / 12);
     const nearestMidi = Math.round(rawMidi);
     this.smoothMidi = this.euro.filter(rawMidi, dtSec);
 
@@ -171,14 +181,8 @@ export class TunerPitchDisplay {
 
     this.hzDisplay =
       this.hzDisplay == null
-        ? rawHz
-        : HZ_DISPLAY_EMA * rawHz + (1 - HZ_DISPLAY_EMA) * this.hzDisplay;
-
-    const instantChartMidi = this.smoothMidi;
-    this.chartMidiDisplay =
-      this.chartMidiDisplay == null
-        ? instantChartMidi
-        : CHART_MIDI_EMA * instantChartMidi + (1 - CHART_MIDI_EMA) * this.chartMidiDisplay;
+        ? foldedHz
+        : HZ_DISPLAY_EMA * foldedHz + (1 - HZ_DISPLAY_EMA) * this.hzDisplay;
 
     return this.snapshot();
   }
@@ -194,7 +198,7 @@ export class TunerPitchDisplay {
       displayCents: this.displayCents,
       frequency: Math.round(hz * 10) / 10,
       lockedMidi: locked,
-      chartDisplayMidi: this.chartMidiDisplay ?? locked,
+      chartDisplayMidi: this.smoothMidi ?? locked,
     };
   }
 

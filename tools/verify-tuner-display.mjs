@@ -15,8 +15,8 @@ const NOTE_CONFIRM_CENTS = 28;
 const NOTE_MIN_HOLD_MS = 70;
 const NOTE_SWITCH_OFFSET_CENTS = 33;
 const HZ_DISPLAY_EMA = 0.25;
-const CHART_MIDI_EMA = 0.3;
 const OUTLIER_CENTS_JUMP = 200;
+const OCTAVE_FOLD_SEMITONES = 1.5;
 const EURO_MIN_CUTOFF = 0.6;
 const EURO_BETA = 0.9;
 const EURO_D_CUTOFF = 1.0;
@@ -69,7 +69,6 @@ class TunerPitchDisplay {
     this.smoothMidi = null;
     this.displayCents = 0;
     this.hzDisplay = null;
-    this.chartMidiDisplay = null;
     this.candidateMidi = null;
     this.candidateFrames = 0;
     this.candidateStartTs = null;
@@ -82,7 +81,7 @@ class TunerPitchDisplay {
       lockedMidi: this.lockedMidi,
       cents: Math.round(this.displayCents),
       displayCents: this.displayCents,
-      chartDisplayMidi: this.chartMidiDisplay ?? this.lockedMidi,
+      chartDisplayMidi: this.smoothMidi ?? this.lockedMidi,
     };
   }
   process(rawHz, ts = Date.now(), yinConfidence) {
@@ -93,15 +92,20 @@ class TunerPitchDisplay {
     const dtMs = this.lastTs == null ? 55 : Math.min(160, Math.max(16, ts - this.lastTs));
     this.lastTs = ts;
     const dtSec = dtMs / 1000;
-    const rawMidi = freqToMidi(rawHz);
-    if (this.lastRawMidi != null) {
-      const jumpCents = Math.abs((rawMidi - this.lastRawMidi) * 100);
-      if (jumpCents > OUTLIER_CENTS_JUMP) {
-        this.lastRawMidi = rawMidi;
-        return this.lockedMidi == null ? null : this.snapshot();
+    const detectedMidi = freqToMidi(rawHz);
+    let rawMidi = detectedMidi;
+    if (this.smoothMidi != null) {
+      const k = Math.round((this.smoothMidi - rawMidi) / 12);
+      if (k !== 0 && Math.abs(rawMidi + 12 * k - this.smoothMidi) <= OCTAVE_FOLD_SEMITONES) {
+        rawMidi += 12 * k;
       }
     }
+    if (this.lastRawMidi != null && Math.abs((rawMidi - this.lastRawMidi) * 100) > OUTLIER_CENTS_JUMP) {
+      this.lastRawMidi = rawMidi;
+      return this.lockedMidi == null ? null : this.snapshot();
+    }
     this.lastRawMidi = rawMidi;
+    const foldedHz = rawMidi === detectedMidi ? rawHz : A4 * 2 ** ((rawMidi - A4_MIDI) / 12);
     const nearestMidi = Math.round(rawMidi);
     this.smoothMidi = this.euro.filter(rawMidi, dtSec);
     if (this.lockedMidi == null) this.lockedMidi = nearestMidi;
@@ -109,11 +113,7 @@ class TunerPitchDisplay {
     const locked = this.lockedMidi;
     this.displayCents = Math.max(-50, Math.min(50, (this.smoothMidi - locked) * 100));
     this.hzDisplay =
-      this.hzDisplay == null ? rawHz : HZ_DISPLAY_EMA * rawHz + (1 - HZ_DISPLAY_EMA) * this.hzDisplay;
-    this.chartMidiDisplay =
-      this.chartMidiDisplay == null
-        ? this.smoothMidi
-        : CHART_MIDI_EMA * this.smoothMidi + (1 - CHART_MIDI_EMA) * this.chartMidiDisplay;
+      this.hzDisplay == null ? foldedHz : HZ_DISPLAY_EMA * foldedHz + (1 - HZ_DISPLAY_EMA) * this.hzDisplay;
     return this.snapshot();
   }
   updateLockedNote(rawMidi, nearestMidi, ts) {
@@ -220,5 +220,21 @@ for (let i = 0; i < 5; i++) d.process(a4, (t += 55));
 const heldCents = d.displayCents;
 const out = d.process(a4 * 1.05, (t += 55), 0.5); // junk frame, low confidence
 assert(out && Math.abs(out.displayCents - heldCents) < 0.001, 'low-confidence frame holds reading');
+
+// Sustained harmonic flip (detector jumps to the octave for several frames) is folded back,
+// so the note and needle hold instead of jumping an octave (root cause of "mush" + string snap).
+d.reset();
+t = 0;
+for (let i = 0; i < 6; i++) d.process(a4, (t += 55)); // hold A4 (midi 69)
+for (let i = 0; i < 8; i++) d.process(880, (t += 55)); // detector stuck on 2nd harmonic
+assert(d.lockedMidi === 69, `sustained octave flip stays on A4 (got ${d.lockedMidi})`);
+assert(Math.abs(d.displayCents) < 6, `sustained octave flip keeps needle centred (${d.displayCents.toFixed(1)}¢)`);
+
+// A real neighbour change (not an octave) is NOT folded — it still tracks.
+d.reset();
+t = 0;
+for (let i = 0; i < 6; i++) d.process(a4, (t += 55));
+for (let i = 0; i < NOTE_CONFIRM_FRAMES + 8; i++) d.process(a4 * 2 ** (5 / 12), (t += 55)); // up a fourth (D5)
+assert(d.lockedMidi === 74, `non-octave change still tracked (got ${d.lockedMidi})`);
 
 console.log('verify-tuner-display: OK');
