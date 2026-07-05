@@ -1,4 +1,4 @@
-# Chords: офлайн-база +300 verified табов (pesni.ru bundle)
+# Chords: офлайн-база +300 verified табов (pesni.ru archive bundle)
 
 **Дата:** 2026-07-05  
 **Зачем:** жалоба #3 — поиск находит песни, но почти без аккордов (только названия/метаданные).
@@ -42,6 +42,7 @@
 
 ## Проверка
 
-- `npm run verify-chord-normalize`
+- `npm run verify-chord-normalize` / `verify-chord-transpose` / `verify-chord-layout`
+- `npx tsc --noEmit`
 - Фильтр «ТАБЫ» в базе → ~330 песен с «текст ✓»
 - Metadata-песня без офлайн-таба → честный hint + auto-fetch (pesni с телефона)

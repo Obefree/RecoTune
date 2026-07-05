@@ -11,7 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
-| 2026-07-05 | Chords #3: +300 офлайн verified табов (pesni bundle), честный hint | [2026-07-05-chords-offline-pesni-bundle.md](./2026-07-05-chords-offline-pesni-bundle.md) |
+| 2026-07-05 | Chords #3: +300 офлайн verified табов (pesni archive bundle), честный hint | [2026-07-05-chords-pesni-archive-bundle.md](./2026-07-05-chords-pesni-archive-bundle.md) |
 | 2026-07-05 | Tuner: гистерезис целевой струны + октавная свёртка (без каши/снапа вниз) | [2026-07-05-tuner-string-hysteresis-octave-fold.md](./2026-07-05-tuner-string-hysteresis-octave-fold.md) |
 | 2026-07-05 | Studio: запись овердаба больше не требует удвоить задержку (ждём реальный старт бэкинга) | [2026-07-05-studio-record-latency-double-fix.md](./2026-07-05-studio-record-latency-double-fix.md) |
 | 2026-07-05 | Melody: одна схема распознавания (убран флип 2 детекторов), единый timebase, фикс слияния разных нот | [2026-07-05-melody-single-path-timebase-merge.md](./2026-07-05-melody-single-path-timebase-merge.md) |
