@@ -308,12 +308,17 @@ function absorbShortFragments(raw: RawSegment[]): RawSegment[] {
       continue;
     }
 
+    // Bridge prev+cur+next ONLY when the short middle fragment is close in pitch
+    // to the surrounding note (a dip / smear of the same note). A genuinely
+    // different short note between two same-pitch notes (A–C–A) must survive as
+    // its own note — otherwise distinct notes get merged into one.
     if (
       prev
       && next
       && prevMed != null
       && nextMed != null
       && Math.round(prevMed) === Math.round(nextMed)
+      && Math.abs(curMed - prevMed) <= TRANSCRIPTION.shortFragmentMaxSemitones
     ) {
       out[out.length - 1] = {
         frames: [...prev.frames, ...cur.frames, ...next.frames],

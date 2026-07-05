@@ -443,6 +443,14 @@ export function buildStaffPlaybackTimings(
   playbackNotes: MelodyPlayNote[],
   registeredEvents: RegisteredNoteEvent[],
 ): { startMs: number; durationMs: number }[] {
+  // Contour path: staff notes, playback notes and segments are 1:1 — align by
+  // index so the playhead + durations match the recognized notes exactly.
+  // (The jitter grouping below only applies when playback merged duplicates,
+  // i.e. the loaded-snapshot path where counts differ.)
+  if (staffNoteCount === playbackNotes.length) {
+    return playbackNotes.map(n => ({ startMs: n.startMs, durationMs: n.durationMs }));
+  }
+
   const groups = staffIndicesPerPlaybackNote(registeredEvents);
   const fallbackDur = playbackNotes.length === 1 && playbackNotes[0]
     ? playbackNotes[0].durationMs

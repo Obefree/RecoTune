@@ -151,7 +151,8 @@ function absorbShort(raw) {
     const pm = prev ? segMed(prev.frames) : null;
     const nm = next ? segMed(next.frames) : null;
     if (cur.onsetStart && pm != null && Math.round(pm) === Math.round(cm)) { out.push(cur); i++; continue; }
-    if (prev && next && pm != null && nm != null && Math.round(pm) === Math.round(nm)) {
+    if (prev && next && pm != null && nm != null && Math.round(pm) === Math.round(nm)
+      && Math.abs(cm - pm) <= T.shortFragmentMaxSemitones) {
       out[out.length - 1] = { frames: [...prev.frames, ...cur.frames, ...next.frames], onsetStart: prev.onsetStart };
       i += 2; continue;
     }
@@ -217,5 +218,19 @@ const glitch = [
 ];
 const glitchNotes = transcribe(glitch);
 assert(!glitchNotes.includes(Math.round(freqToMidi(740))), '1-frame outlier must not become a note');
+
+// 6) Distinct short note between two same-pitch notes (A4 · C5 · A4) must survive —
+//    a real different note must not be absorbed/merged into one.
+const sandwich = [
+  ...held(0, 440, 3, 0.5),        // A4
+  ...held(165, 523, 2, 0.5),      // C5 (short, distinct)
+  ...held(275, 440, 3, 0.5),      // A4
+];
+const sandwichNotes = transcribe(sandwich);
+assert(
+  sandwichNotes.includes(Math.round(freqToMidi(523))),
+  `distinct short C5 between two A4 must survive, got ${JSON.stringify(sandwichNotes)}`,
+);
+assert(sandwichNotes.length === 3, `A4-C5-A4 should be 3 notes, got ${sandwichNotes.length}`);
 
 console.log('verify-melody-transcription: OK');

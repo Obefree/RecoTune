@@ -107,8 +107,6 @@ export default function MelodyScreen() {
   const [playbackNoteIndex, setPlaybackNoteIndex] = useState(-1);
   const [quantizeRhythm, setQuantizeRhythm] = useState(false);
   const [instrument, setInstrument] = useState<MelodyInstrument>('piano');
-  /** contour = transcription from pitch frames; classic = SungNoteDetector */
-  const [recognitionMode, setRecognitionMode] = useState<'contour' | 'classic'>('contour');
   const [fileImport, setFileImport] = useState<TranscriptionResult | null>(null);
   const [humContour, setHumContour] = useState<TranscriptionResult | null>(null);
   const [fileImportBusy, setFileImportBusy] = useState(false);
@@ -124,7 +122,6 @@ export default function MelodyScreen() {
   const smoothedFreqRef = useRef<number | null>(null);
 
   const {
-    notes: sungNotes,
     pitchHistory,
     chartLayoutOriginTs,
     pitchFrames,
@@ -143,8 +140,14 @@ export default function MelodyScreen() {
 
   const contourSource = fileImport ? 'basic-pitch' : humContour ? 'напев' : 'микрофон';
 
-  const useContourRecognition = (recognitionMode === 'contour' || fileImport != null || humContour != null)
-    && isTranscriptionConfidenceOk(transcription);
+  /**
+   * Single recognition path: pitch-frame contour is the source of truth. Fresh
+   * segments (mic / hum / basic-pitch) always drive notes, staff and playback.
+   * `registeredEvents` is only the loaded-from-storage fallback (saved melodies
+   * have no pitch frames). No confidence-gated swap between detectors — that was
+   * the run-to-run variance ("наслоение разных функций").
+   */
+  const useContourRecognition = transcription.segments.length > 0;
 
   const activeEvents = useMemo(() => {
     if (useContourRecognition) {
@@ -304,7 +307,6 @@ export default function MelodyScreen() {
     const events = segmentsToRegisteredEvents(result.segments);
     setHumContour(result);
     setFileImport(null);
-    setRecognitionMode('contour');
     setShowStaff(true);
     loadSnapshot({
       notes: events.map(e => ({
@@ -403,7 +405,6 @@ export default function MelodyScreen() {
       const events = segmentsToRegisteredEvents(result.segments);
       setFileImport(result);
       setHumContour(null);
-      setRecognitionMode('contour');
       setShowStaff(true);
       loadSnapshot({
         notes: events.map(e => ({
@@ -654,14 +655,21 @@ export default function MelodyScreen() {
   );
 
   const handleSaveMelody = useCallback(async () => {
-    if (sungNotes.length === 0) return;
+    if (activeEvents.length === 0) return;
     const rhythm = estimateRhythm(activeEvents);
     const name = `${t('melodyDefaultName')} ${new Date().toLocaleString()}`;
     const q = fitToKey && keyEst ? quantizeNotesToKey(quantizeInputs, keyEst) : undefined;
     const chords = activeChords ?? undefined;
     const saved = await saveMelodyFile({
       name,
-      notes: sungNotes,
+      notes: activeEvents.map(e => ({
+        name: e.name,
+        octave: e.octave,
+        midi: e.midi,
+        freq: e.freq,
+        ts: e.ts,
+        confidence: e.confidence,
+      })),
       key: keyEst?.label,
       bpm: rhythm?.bpmApprox ?? undefined,
       chords,
@@ -669,7 +677,7 @@ export default function MelodyScreen() {
     });
     setSelectedMelodyId(saved.id);
     await refreshSaved();
-  }, [sungNotes, activeEvents, t, refreshSaved, fitToKey, keyEst, quantizeInputs, activeChords]);
+  }, [activeEvents, t, refreshSaved, fitToKey, keyEst, quantizeInputs, activeChords]);
 
   const handleSuggestChords = useCallback(() => {
     if (!keyEst || activeEvents.length === 0) return;
@@ -855,21 +863,8 @@ export default function MelodyScreen() {
 
         <View style={styles.recognitionRow}>
           <Text style={styles.recognitionLabel}>
-            Распознавание: {fileImport ? 'basic-pitch' : humContour ? 'напев' : recognitionMode === 'contour' ? 'контур' : 'классика'}
+            Распознавание: {fileImport ? 'basic-pitch' : humContour ? 'напев' : 'контур (график)'}
           </Text>
-          <Switch
-            value={recognitionMode === 'contour'}
-            onValueChange={v => {
-              setRecognitionMode(v ? 'contour' : 'classic');
-              if (!v) {
-                setFileImport(null);
-                setHumContour(null);
-              }
-            }}
-            disabled={fileImport != null || humContour != null}
-            trackColor={{ false: '#252532', true: '#7c4dff88' }}
-            thumbColor={recognitionMode === 'contour' ? '#7c4dff' : '#555'}
-          />
         </View>
         <View style={styles.fileImportRow}>
           <TouchableOpacity
@@ -942,8 +937,7 @@ export default function MelodyScreen() {
             голос {transcription.voicedFrameCount}
             {' · '}
             ноты {transcription.segments.length}
-            {recognitionMode === 'classic' ? '' : ` / классика ${registeredEvents.length}`}
-            {useContourRecognition ? ' · PLAY: контур (как на графике)' : recognitionMode === 'contour' ? ' · PLAY: классика (fallback)' : ' · PLAY: классика'}
+            {' · PLAY: контур (как на графике)'}
           </Text>
         ) : null}
 
@@ -951,7 +945,7 @@ export default function MelodyScreen() {
           history={pitchHistory}
           layoutOriginTs={chartLayoutOriginTs}
           registeredEvents={activeEvents}
-          segmentOverlays={recognitionMode === 'contour' || fileImport || humContour ? segmentOverlays : []}
+          segmentOverlays={segmentOverlays}
           active={isActive}
           chartPlotWidth={chartPlotWidth}
         />
@@ -1104,9 +1098,9 @@ export default function MelodyScreen() {
 
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[styles.saveBtn, sungNotes.length === 0 && styles.btnDisabled]}
+            style={[styles.saveBtn, activeEvents.length === 0 && styles.btnDisabled]}
             onPress={handleSaveMelody}
-            disabled={sungNotes.length === 0}
+            disabled={activeEvents.length === 0}
             activeOpacity={0.85}
           >
             <Ionicons name="save-outline" size={18} color="#0a0a0f" />

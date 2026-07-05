@@ -4,9 +4,7 @@ import type { HistoryPoint } from '../components/FrequencyChart';
 
 import {
   SungNote,
-  SungNoteDetector,
   SungNoteSample,
-  mergeJitterNotes,
 } from '../utils/sungNoteDetector';
 import {
   type PitchFrame,
@@ -19,9 +17,7 @@ import {
   softenLastChartPoint,
 } from '../utils/pitchChartHistory';
 
-const MAX_NOTES = 64;
-
-/** `frequency` feeds classic detector, `frameFrequency` feeds contour, `chartFrequency` feeds graph/UI. */
+/** `frameFrequency` feeds the contour pitch-frame ring, `chartFrequency` feeds graph/UI. */
 export interface SungNoteFeedSample extends SungNoteSample {
   chartFrequency?: number;
   frameFrequency?: number;
@@ -56,12 +52,6 @@ function toRegisteredEvent(note: SungNote): RegisteredNoteEvent {
 }
 
 export function useSungNoteHistory() {
-  const detectorRef = useRef(
-    new SungNoteDetector({
-      midiSlopeMaxSemitonesPerSec: 12,
-      maxYinConfidence: 0.2,
-    }),
-  );
   const chartStabilizerRef = useRef(new ChartFreqStabilizer());
   const chartRecordingRef = useRef(true);
   const pitchFrameRingRef = useRef<PitchFrame[]>([]);
@@ -75,7 +65,6 @@ export function useSungNoteHistory() {
   const [pitchFrames, setPitchFrames] = useState<PitchFrame[]>([]);
   const [registeredEvents, setRegisteredEvents] = useState<RegisteredNoteEvent[]>([]);
   const reset = useCallback(() => {
-    detectorRef.current.reset();
     chartStabilizerRef.current.reset();
     chartRecordingRef.current = true;
     pitchFrameRingRef.current = [];
@@ -96,7 +85,6 @@ export function useSungNoteHistory() {
   }, []);
 
   const loadSnapshot = useCallback((snap: MelodySnapshot) => {
-    detectorRef.current.reset();
     pitchFrameRingRef.current = snap.pitchFrames ?? [];
     setNotes(snap.notes);
     setPitchHistory(snap.pitchHistory);
@@ -158,20 +146,6 @@ export function useSungNoteHistory() {
           return result.history;
         }
         return prev;
-      });
-    }
-
-    const detected = detectorRef.current.process({ ...sample, ts });
-
-    if (detected) {
-      setNotes(prev => {
-        const merged = mergeJitterNotes([...prev, detected]);
-        return merged.length > MAX_NOTES ? merged.slice(-MAX_NOTES) : merged;
-      });
-      setRegisteredEvents(prev => {
-        const ev = toRegisteredEvent(detected);
-        const merged = mergeJitterNotes([...prev, ev]);
-        return merged.length > MAX_NOTES ? merged.slice(-MAX_NOTES) : merged;
       });
     }
   }, []);
