@@ -21,3 +21,13 @@ npx tsx tools/export-legacy-catalog.ts
 Default builtin practice songs: `src/data/builtinSongsSeed.ts` (~32 songs with annotated ChordPro-style lyrics).
 
 Metadata search (~5000 titles): `assets/metadata/chunk-*.json` — lazy scan, no full SQLite import on Chords open.
+
+## `pesni-chordpro.json`
+
+**1113** verified ChordPro tabs from pesni.ru (bundle version **2**), imported into SQLite on app start (background). Regenerate on PC:
+
+```bash
+npm run ingest-pesni-chords
+```
+
+Checkpoint: `tools/.pesni-ingest-checkpoint.json` (gitignored). See `docs/features/2026-07-20-chords-phone-scale.md`.

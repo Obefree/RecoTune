@@ -1,51 +1,49 @@
-# Chords: phone UX, расширение офлайн pesni, масштаб практики
+# Chords: масштаб офлайн-табов на телефоне (pesni bundle + UX)
 
 **Дата:** 2026-07-20  
-**Зачем:** телефон без ПК — понятная подгрузка табов, не блокировать старт приложения на большом pesni-архиве, путь к **~1200** verified офлайн-табам (D22). Политика **D8** без изменений.
+**Зачем:** на телефоне нужно **гораздо больше** реальных verified-табов без заглушек (D8); metadata ~5200 по-прежнему без таба в APK.
 
-## Что сделано
+## Ingest pesni.ru
+
+| | Было (D21) | Стало |
+|---|------------|-------|
+| Bundled verified ChordPro | 300 | **1113** |
+| Bundle version | 1 | **2** (`version:count` в `schema_meta`) |
+| Офлайн full tabs (seed + bundle) | ~332 | **~1145** |
+| Размер `pesni-chordpro.json` | ~0.9 MB | **~3.0 MB** |
+
+- **Аудит ingest:** лимит API 60/min соблюдается (`RATE_MS=1200`, retry на 429). Фильтры: `pesniRuTextToVerifiedLyrics`, `isQualityTab`, каверы, tab-dump titles, dedupe по slug/key.
+- **Фикс resume:** убран skip по `doneArtists` — при `--target` выше можно добрать до 12 табов с артиста (раньше застревали на 300).
+- **Команда для Alex (продолжить/обновить):**  
+  `npm run ingest-pesni-chords`  
+  (resume checkpoint, target 1200, per-artist 12). Свежий прогон с нуля: `npm run ingest-pesni-chords:fresh` (удалить `tools/.pesni-ingest-checkpoint.json`).
+
+## Приложение
 
 | Файл | Изменение |
 |------|-----------|
-| `package.json` | `ingest-pesni-chords`: `--target=1200 --per-artist=12 --resume`; `:fresh` без resume |
-| `tools/ingest-pesni-chordpro.mjs` | `BUNDLE_VERSION=2`; ingest не пропускает артиста после первого прохода (можно добирать треки); только verified ChordPro |
-| `src/db/pesniArchiveImport.ts` | meta `version:count` → переимпорт при росте бандла; батчи по 48 + yield (меньше ANR на телефоне) |
-| `src/db/songLibrary.ts` | pesni-импорт **в фоне** после быстрого init; `getPesniArchiveImportPromise()`; `CHORD_LIBRARY_BUILD` → `chord-v5-pesni1200` |
-| `src/screens/ChordsScreen.tsx` | toast «Импорт офлайн-табов…»; спиннер + этапы fetch в пустой практике; прогресс auto-fetch с pesni без прокси; ошибки до 120 символов |
-| `src/providers/pesniRuProvider.ts` | русские подписи этапов pesni (поиск / verify / cache) |
-| `src/providers/onDemandChordAuto.ts` | честные сообщения: нет прокси → «AmDm/UG — только с ПК…» |
-| `src/utils/songContent.ts` | `bundledOfflineVerifiedTabCount()`; динамический `PROGRESSION_ONLY_HINT` |
+| `src/db/pesniArchiveImport.ts` | meta `2:1113`, батчи по 48 в transaction + yield |
+| `src/db/songLibrary.ts` | pesni-импорт **в фоне** после открытия БД; toast «Импорт…» |
+| `src/utils/songContent.ts` | hint с динамическим ~N офлайн; phone vs ПК |
+| `src/providers/pesniRuProvider.ts` | русские стадии прогресса pesni |
+| `src/providers/onDemandChordAuto.ts` | честные ошибки цепочки (ПК vs pesni) |
+| `src/screens/ChordsScreen.tsx` | прогресс auto-fetch в пустой практике; pesni-first progress без прокси |
+| `tools/ingest-pesni-chordpro.mjs` | bundle v2, без блокировки doneArtists |
+| `package.json` | `ingest-pesni-chords` / `:fresh` → target 1200 |
 
-## Было → стало
+## Phone vs ПК
 
-| | Было | Стало |
-|---|------|-------|
-| Старт приложения | ждал полный pesni SQLite import | UI готов раньше; импорт в фоне + toast при открытии «База» |
-| Офлайн hint | «~330» захардкожено | **~332** сейчас (32 seed + **300** в бандле); после ingest → до **~1232** |
-| Ingest default | 300 / 8 треков на артиста | **1200 / 12**, resume по checkpoint |
-| Пустая практика при fetch | только текст hint | **ActivityIndicator** + подпись этапа |
-| Ошибка auto-chain | часто «Не найдено» | различие «нет прокси» vs «нет на pesni» |
-
-## D8 (no stubs)
-
-Ingest и импорт по-прежнему фильтруют `isVerifiedChordProLyrics`; progression-only и metadata не попадают в практику как таб.
-
-## Ingest (ПК, долго)
-
-```bash
-npm run ingest-pesni-chords          # resume → assets/archive/pesni-chordpro.json
-npm run ingest-pesni-chords:fresh    # с нуля
-```
-
-Checkpoint: `tools/.pesni-ingest-checkpoint.json` (gitignore). После ingest закоммитить обновлённый JSON отдельно (большой файл).
+| Источник | Телефон | ПК / VPS |
+|----------|---------|----------|
+| **~1145 офлайн табов** (фильтр «ТАБЫ») | да | да |
+| **metadata ~5200** | поиск; таб auto-fetch | то же |
+| **pesni.ru on-demand** | да, кэш `chord_cache` 7 дней | да |
+| **AmDm / Ultimate Guitar** | нет (нужен прокси) | `npm start` :8787 или `EXPO_PUBLIC_CHORD_FETCH_URL` |
+| **Stem / basic-pitch** | нет | :8788 |
 
 ## Проверка
 
-```bash
-npm run verify-chord-normalize
-npm run verify-chord-transpose
-npm run verify-chord-layout
-npx tsc --noEmit
-```
-
-На телефоне: metadata-песня без таба → спиннер + «pesni.ru: …»; фильтр «ТАБЫ» растёт после фонового импорта.
+- `npm run verify-chord-normalize` / `verify-chord-transpose` / `verify-chord-layout`
+- `npx tsc --noEmit`
+- Фильтр «ТАБЫ» → ~1100+ с «текст ✓»
+- Metadata-песня без таба → индикатор «pesni.ru: поиск…» → таб или честная ошибка

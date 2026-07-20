@@ -10,7 +10,7 @@ const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
 export const BUILTIN_SEED_VERSION = '2026-05-24-verified-chordpro-only';
 /** Dev-only bundle marker; not shown in production Chords UI. */
-export const CHORD_LIBRARY_BUILD = 'chord-v5-pesni1200';
+export const CHORD_LIBRARY_BUILD = 'chord-v5-pesni1113';
 
 let pesniArchiveImportPromise: Promise<{ imported: number }> | null = null;
 

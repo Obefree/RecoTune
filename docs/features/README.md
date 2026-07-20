@@ -11,7 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
-| 2026-07-20 | Chords D22: phone UX, фоновый pesni import, ingest 1200 | [2026-07-20-chords-phone-scale.md](./2026-07-20-chords-phone-scale.md) |
+| 2026-07-20 | Chords D22: **1113** офлайн pesni, фоновый import, UX auto-fetch | [2026-07-20-chords-phone-scale.md](./2026-07-20-chords-phone-scale.md) |
 | 2026-07-20 | Media: микрофон → колонки — AEC, gain, латентность | [2026-07-20-mic-monitor-echo-latency.md](./2026-07-20-mic-monitor-echo-latency.md) |
 | 2026-07-20 | Media: микрофон → колонки / BT (live monitor, честные лимиты) | [2026-07-20-mic-live-monitor-bt.md](./2026-07-20-mic-live-monitor-bt.md) |
 | 2026-07-05 | Chords #3: +300 офлайн verified табов (pesni archive bundle), честный hint | [2026-07-05-chords-pesni-archive-bundle.md](./2026-07-05-chords-pesni-archive-bundle.md) |
