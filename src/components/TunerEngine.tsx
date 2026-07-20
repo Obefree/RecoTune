@@ -6,6 +6,8 @@ import React, { forwardRef, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
 
+import { MIC_MONITOR_DEFAULT_GAIN } from '../utils/micLiveMonitor';
+
 export interface PitchMessage {
   type: 'ready' | 'pitch' | 'signal' | 'silent' | 'error';
   /** Backward-compatible stable frequency used by existing screens. */
@@ -62,12 +64,15 @@ const ENGINE_PROFILES = {
   },
 } as const;
 
-const buildMonitorHTML = `<!DOCTYPE html>
+const buildMonitorHTML = () => {
+  const monitorCfg = JSON.stringify({ defaultGain: MIC_MONITOR_DEFAULT_GAIN });
+  return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
 <body>
 <script>
 (function() {
+  var MONITOR = ${monitorCfg};
   var METER_MS = 50;
   function post(obj) {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj));
@@ -87,20 +92,26 @@ const buildMonitorHTML = `<!DOCTYPE html>
   async function startMonitor() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: false,
+          channelCount: { ideal: 1 },
+        },
         video: false
       });
       var AC = window.AudioContext || window.webkitAudioContext;
       ctx = new AC({ latencyHint: 'interactive' });
       gainNode = ctx.createGain();
-      gainNode.gain.value = 1.0;
+      gainNode.gain.value = MONITOR.defaultGain;
       analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0;
       buf = new Float32Array(analyser.fftSize);
       var src = ctx.createMediaStreamSource(stream);
       src.connect(gainNode);
-      gainNode.connect(analyser);
       gainNode.connect(ctx.destination);
+      src.connect(analyser);
       if (ctx.state === 'suspended') await ctx.resume();
       active = true;
       post({ type: 'ready', sourceMode: 'monitor' });
@@ -134,6 +145,7 @@ const buildMonitorHTML = `<!DOCTYPE html>
 </script>
 </body>
 </html>`;
+};
 
 const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: number }) => `<!DOCTYPE html>
 <html>
@@ -324,7 +336,7 @@ const TunerEngine = forwardRef<WebView, Props>(({ onMessage, mode = 'tuner', min
     };
   }, [mode, minHz, maxHz]);
   const html = useMemo(
-    () => (mode === 'monitor' ? buildMonitorHTML : buildHTML(mode, range)),
+    () => (mode === 'monitor' ? buildMonitorHTML() : buildHTML(mode, range)),
     [mode, range.minHz, range.maxHz],
   );
 

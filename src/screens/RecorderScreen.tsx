@@ -36,7 +36,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import {
   applyMicMonitorAudioMode,
   releaseMicMonitorAudioMode,
-  micMonitorRouteHint,
+  micMonitorActiveHint,
   micMonitorLimitationsText,
 } from '../utils/micLiveMonitor';
 
@@ -605,9 +605,9 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
             <View style={[styles.micMonitorMeterFill, { width: `${Math.round(micMonitorLevel * 100)}%` }]} />
           </View>
         )}
-        <Text style={styles.micMonitorHint} numberOfLines={3}>
+        <Text style={styles.micMonitorHint} numberOfLines={4}>
           {micMonitorOn
-            ? micMonitorRouteHint(audioRouteSnap?.listenHint, audioRouting)
+            ? micMonitorActiveHint(audioRouteSnap?.listenHint, audioRouting)
             : micMonitorLimitationsText()}
         </Text>
         {micMonitorError ? (

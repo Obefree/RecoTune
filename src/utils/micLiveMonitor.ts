@@ -8,6 +8,9 @@ import type { StudioAudioRouting } from './studioAudioRouting';
 export const MIC_MONITOR_LATENCY_WIRED_MS = 80;
 export const MIC_MONITOR_LATENCY_BT_MS = 200;
 
+/** Passthrough gain (WebView). Lower default reduces speaker→mic feedback; not a full IEM chain. */
+export const MIC_MONITOR_DEFAULT_GAIN = 0.55;
+
 export function playThroughEarpieceForRouting(routing: StudioAudioRouting): boolean {
   return routing.mode === 'manual' && routing.output === 'earpiece';
 }
@@ -37,6 +40,14 @@ export function micMonitorRouteHint(snapListen: string | undefined, routing: Stu
   return `${base}. RecoTune не выбирает колонку по имени — маршрут задаёт телефон.`;
 }
 
+/** Shown while monitor is running (route + echo/latency tips). */
+export function micMonitorActiveHint(snapListen: string | undefined, routing: StudioAudioRouting): string {
+  const route = micMonitorRouteHint(snapListen, routing);
+  const echo =
+    'AEC включён для колонки/динамика; без эха надёжнее проводные наушники. Не держи mic у динамика — громкость монитора снижена.';
+  return `${route} ${echo}`;
+}
+
 export function micMonitorLimitationsText(): string {
   const lat =
     Platform.OS === 'android'
@@ -49,5 +60,8 @@ export function micMonitorLimitationsText(): string {
   const micSrc =
     'Микрофон — захват WebView (обычно встроенный телефона). BT-мик через setPreferredDevice — только в Studio/Recorder при записи expo-av, не в режиме монитора.';
 
-  return `${lat} ${micSrc} ${Platform.OS === 'android' ? expoGo : ''}`.trim();
+  const echo =
+    'Колонка/динамик: возможно эхо — лучше наушники; при мониторе включено подавление эха (WebRTC AEC).';
+
+  return `${lat} ${echo} ${micSrc} ${Platform.OS === 'android' ? expoGo : ''}`.trim();
 }
