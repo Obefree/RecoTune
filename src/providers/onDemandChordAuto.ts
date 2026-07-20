@@ -50,7 +50,23 @@ export function shortOnDemandError(e: unknown, source: OnDemandChordProviderId):
 }
 
 /** One short Russian message when every source failed. */
-export function formatAutoChainFailureMessage(_attempts: OnDemandChainAttempt[]): string {
+export function formatAutoChainFailureMessage(attempts: OnDemandChainAttempt[]): string {
+  const pesniTry = attempts.find(a => a.source === 'pesni_ru' && !a.skipped && a.error);
+  if (pesniTry?.error && pesniTry.error !== 'Не найдено') {
+    return pesniTry.error.length <= 100 ? pesniTry.error : 'На pesni.ru нет verified-таба';
+  }
+  const proxySkipped = attempts.filter(
+    a => (a.source === 'amdm' || a.source === 'ultimate_guitar') && a.skipped,
+  );
+  const pesniFailed = attempts.find(a => a.source === 'pesni_ru' && !a.skipped);
+  if (
+    proxySkipped.length >= 2 &&
+    pesniFailed &&
+    (pesniFailed.error === 'Не найдено' || !pesniFailed.error)
+  ) {
+    return 'AmDm/UG — только с ПК (npm start). На pesni.ru таб не найден.';
+  }
+  if (pesniFailed?.error) return pesniFailed.error;
   return 'Не найдено';
 }
 

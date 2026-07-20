@@ -19,6 +19,7 @@ import {
   deleteUserSong,
   getFavoriteIds,
   setFavorite,
+  getPesniArchiveImportPromise,
 } from '../services/initSongLibrary';
 import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
@@ -1551,7 +1552,18 @@ export default function ChordsScreen() {
     try {
       setLibraryInitError(null);
       const upgrade = await initSongLibrary();
-      if (upgrade.upgraded) {
+      const pesniPending = getPesniArchiveImportPromise();
+      if (pesniPending) {
+        setCatalogUpgradeToast('Импорт офлайн-табов pesni.ru…');
+        const pesni = await pesniPending;
+        if (pesni.imported > 0) {
+          const msg = `+${pesni.imported} офлайн-табов (pesni.ru). Фильтр «ТАБЫ» в базе.`;
+          setCatalogUpgradeToast(msg);
+          setTimeout(() => setCatalogUpgradeToast(null), 6000);
+        } else {
+          setCatalogUpgradeToast(null);
+        }
+      } else if (upgrade.upgraded) {
         const msg = `Каталог обновлён: ${upgrade.fullChordCount} с полными аккордами (из ${upgrade.totalBuiltin})`;
         setCatalogUpgradeToast(msg);
         setTimeout(() => setCatalogUpgradeToast(null), 6000);
@@ -1796,8 +1808,8 @@ export default function ChordsScreen() {
   function chordFetchErrorHint(e: unknown): string {
     if (e instanceof ChordFetchError) {
       const msg = e.message.trim();
+      if (msg.length > 0 && msg.length <= 120) return msg;
       if (msg === 'Не найдено') return msg;
-      if (__DEV__ && msg.length <= 80) return msg;
     }
     return 'Не найдено';
   }
@@ -1882,7 +1894,10 @@ export default function ChordsScreen() {
   async function runAutoChordEnrichment(initial: SongEntry) {
     if (chordFetchLoading) return;
     setChordFetchLoading(true);
-    setChordFetchProgress({ source: 'amdm', stage: 'search' });
+    const proxy = effectiveChordFetchUrl(providerSettings);
+    setChordFetchProgress(
+      proxy ? { source: 'amdm', stage: 'search' } : { source: 'pesni_ru', stage: 'search' },
+    );
     setAutoChordFetchDone(false);
     try {
       const result = await enrichSongForPractice(initial);
@@ -3072,13 +3087,27 @@ export default function ChordsScreen() {
               <Text style={[styles.lyricsEmptyText, { marginTop: 12 }]}>
                 {practiceContentHint ? 'Нет строк с аккордами' : 'Текст с аккордами'}
               </Text>
-              <Text style={styles.lyricsEmptyHint} numberOfLines={4}>
-                {practiceContentHint ?? (
-                  practiceSong
-                    ? 'Выберите песню из БАЗЫ или вставьте текст (ред.).\nФормат: [Am]Слово [F]другое'
-                    : 'Выберите песню из базы (кнопка «База песен» вверху).'
+              <Text style={styles.lyricsEmptyHint} numberOfLines={6}>
+                {chordFetchLoading ? (
+                  practiceContentHint ?? 'Подгрузка таба…'
+                ) : (
+                  practiceContentHint ?? (
+                    practiceSong
+                      ? 'Выберите песню из БАЗЫ или вставьте текст (ред.).\nФормат: [Am]Слово [F]другое'
+                      : 'Выберите песню из базы (кнопка «База песен» вверху).'
+                  )
                 )}
               </Text>
+              {chordFetchLoading ? (
+                <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+                  <ActivityIndicator size="small" color="#7c4dff" />
+                  {chordFetchProgressLabel(chordFetchProgress) ? (
+                    <Text style={{ color: '#888', fontSize: 12, marginTop: 6, textAlign: 'center' }}>
+                      {chordFetchProgressLabel(chordFetchProgress)}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
               {practiceFetchHint ? (
                 <Text style={styles.lyricsEmptyFetchErr} numberOfLines={6}>
                   {practiceFetchHint}

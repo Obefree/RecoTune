@@ -1,5 +1,7 @@
 import type { SongEntry } from '../data/songDatabase';
+import { SONGS } from '../data/songDatabase';
 import { BUILTIN_SONGS_SEED } from '../data/builtinSongsSeed';
+import { PESNI_OFFLINE_TAB_COUNT } from '../db/pesniArchiveImport';
 import {
   cleanupVerifiedChordPro,
   isVerifiedChordProLyrics,
@@ -124,8 +126,13 @@ export function countAnnotatedInEntries(songs: SongEntry[]): number {
   return songs.filter(s => hasVerifiedPracticeLyrics(s)).length;
 }
 
+/** Approximate offline verified tabs: legacy seed + bundled pesni.ru archive. */
+export function bundledOfflineVerifiedTabCount(): number {
+  return countAnnotatedInEntries(SONGS) + PESNI_OFFLINE_TAB_COUNT;
+}
+
 export const PROGRESSION_ONLY_HINT =
-  'Эта песня — только метаданные или прогрессия. Полный таб: AmDm/UG через ПК (npm start) или авто-подгрузка с pesni.ru с телефона. Фильтр «ТАБЫ» — ~330 офлайн-песен с аккордами.';
+  `Эта песня — только метаданные или прогрессия. С телефона: авто-подгрузка с pesni.ru (кэш 7 дней). AmDm/UG — только ПК (npm start, :8787). Фильтр «ТАБЫ» — ~${bundledOfflineVerifiedTabCount()} офлайн-песен с аккордами.`;
 
 export function contentQualityScore(song: SongEntry): number {
   if (hasVerifiedPracticeLyrics(song)) {

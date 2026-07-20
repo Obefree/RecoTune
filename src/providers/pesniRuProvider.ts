@@ -31,9 +31,9 @@ export type PesniFetchStage = 'search' | 'verify' | 'cache';
 export type PesniFetchProgress = (stage: PesniFetchStage, detail?: string) => void;
 
 export const PESNI_FETCH_STAGE_LABEL: Record<PesniFetchStage, string> = {
-  search: '',
-  verify: '',
-  cache: '',
+  search: 'pesni.ru: поиск…',
+  verify: 'pesni.ru: проверка таба…',
+  cache: 'pesni.ru: сохранение…',
 };
 
 export const PESNI_RU_TRACK_ID_PREFIX = 'pesni_ru_';

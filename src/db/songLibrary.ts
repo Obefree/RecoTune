@@ -10,7 +10,14 @@ const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
 export const BUILTIN_SEED_VERSION = '2026-05-24-verified-chordpro-only';
 /** Dev-only bundle marker; not shown in production Chords UI. */
-export const CHORD_LIBRARY_BUILD = 'chord-v4-pesni300';
+export const CHORD_LIBRARY_BUILD = 'chord-v5-pesni1200';
+
+let pesniArchiveImportPromise: Promise<{ imported: number }> | null = null;
+
+/** Await background pesni bundle import started during init (null if none / finished). */
+export function getPesniArchiveImportPromise(): Promise<{ imported: number }> | null {
+  return pesniArchiveImportPromise;
+}
 
 const CUSTOM_SONGS_FILE = (FileSystem.documentDirectory ?? '') + 'custom_songs.json';
 const FAVORITES_FILE = (FileSystem.documentDirectory ?? '') + 'song_favorites.json';
@@ -414,11 +421,21 @@ export async function initSongLibrary(): Promise<BuiltinCatalogUpgradeResult> {
       await purgeStaleBuiltinRows(database);
       const upgrade = await upgradeBuiltinCatalog(database);
       await repairBuiltinLyricsInDb(database);
-      const pesni = await importPesniChordProArchive(database);
-      await purgeUnverifiedMergedLyrics(database);
-      await migrateLegacyJson(database);
       db = database;
-      return { ...upgrade, pesniArchiveImported: pesni.imported };
+      pesniArchiveImportPromise = (async () => {
+        const pesni = await importPesniChordProArchive(database);
+        await purgeUnverifiedMergedLyrics(database);
+        await migrateLegacyJson(database);
+        return pesni;
+      })().finally(() => {
+        pesniArchiveImportPromise = null;
+      });
+      void pesniArchiveImportPromise.catch(err => {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[RecoTune] pesni archive import failed', err);
+        }
+      });
+      return { ...upgrade, pesniArchiveImported: 0 };
     })().catch(err => {
       initPromise = null;
       db = null;

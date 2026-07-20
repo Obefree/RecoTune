@@ -9,6 +9,7 @@ export {
   getFavoriteIds,
   setFavorite,
   isUserSongId,
+  getPesniArchiveImportPromise,
 } from '../db/songLibrary';
 export { searchSongsSmart, filterSongsQuick, type SmartSearchHit } from '../db/searchSongsSmart';
 export { BUILTIN_SEED_VERSION, CHORD_LIBRARY_BUILD } from '../db/songLibrary';

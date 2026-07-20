@@ -6,8 +6,7 @@
  * (pesniRuTextToVerifiedLyrics → isVerifiedChordProLyrics) are kept — no stubs,
  * no progression-only, no fake tabs. Songs without line-by-line chords are skipped.
  *
- *   node tools/ingest-pesni-chordpro.mjs --target=300 --per-artist=8
- *   node tools/ingest-pesni-chordpro.mjs --resume
+ *   node tools/ingest-pesni-chordpro.mjs --target=1200 --per-artist=12 --resume
  *   node tools/ingest-pesni-chordpro.mjs --target=40 --limit-artists=12   # smoke
  *
  * Re-run with a higher --target to expand the offline chord DB.
@@ -35,7 +34,7 @@ const ARTISTS_PATH = join(ROOT, 'data/seed-artists-mb.json');
 
 const API_BASE = 'https://pesni.ru/api/v1';
 const RATE_MS = 1200;
-const BUNDLE_VERSION = 1;
+const BUNDLE_VERSION = 2;
 const MAX_LYRIC_CHARS = 8000;
 
 const COVER_RE =
@@ -234,11 +233,10 @@ async function main() {
     }
     await sleep(RATE_MS);
 
-    if (!resolved || doneArtists.has(resolved.slug)) {
-      console.log(`[${ai + 1}/${artists.length}] ${artist}: ${resolved ? 'dup artist' : 'not found'}`);
+    if (!resolved) {
+      console.log(`[${ai + 1}/${artists.length}] ${artist}: not found`);
       continue;
     }
-    doneArtists.add(resolved.slug);
 
     let tracks;
     try {
