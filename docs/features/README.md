@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-07-20 | Media: микрофон → колонки / BT (live monitor, честные лимиты) | [2026-07-20-mic-live-monitor-bt.md](./2026-07-20-mic-live-monitor-bt.md) |
 | 2026-07-05 | Chords #3: +300 офлайн verified табов (pesni archive bundle), честный hint | [2026-07-05-chords-pesni-archive-bundle.md](./2026-07-05-chords-pesni-archive-bundle.md) |
 | 2026-07-05 | Tuner: гистерезис целевой струны + октавная свёртка (без каши/снапа вниз) | [2026-07-05-tuner-string-hysteresis-octave-fold.md](./2026-07-05-tuner-string-hysteresis-octave-fold.md) |
 | 2026-07-05 | Studio: запись овердаба больше не требует удвоить задержку (ждём реальный старт бэкинга) | [2026-07-05-studio-record-latency-double-fix.md](./2026-07-05-studio-record-latency-double-fix.md) |

@@ -31,6 +31,14 @@ import {
 } from '../utils/studioAudioRouting';
 import RecordingInputPicker from '../components/RecordingInputPicker';
 import { useRecordingBackground, warnExpoGoBackgroundRecording } from '../hooks/useRecordingBackground';
+import TunerEngine, { PitchMessage } from '../components/TunerEngine';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import {
+  applyMicMonitorAudioMode,
+  releaseMicMonitorAudioMode,
+  micMonitorRouteHint,
+  micMonitorLimitationsText,
+} from '../utils/micLiveMonitor';
 
 interface Recording {
   id: string;
@@ -67,11 +75,17 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
   const [audioRouting, setAudioRouting] = useState<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
   const [audioRouteSnap, setAudioRouteSnap] = useState<AudioRouteSnapshot | null>(null);
   const [audioRouteLoading, setAudioRouteLoading] = useState(false);
+  const [micMonitorOn, setMicMonitorOn] = useState(false);
+  const [micMonitorBusy, setMicMonitorBusy] = useState(false);
+  const [micMonitorError, setMicMonitorError] = useState<string | null>(null);
+  const [micMonitorLevel, setMicMonitorLevel] = useState(0);
+  const micMonitorOnRef = useRef(false);
   const audioRoutingRef = useRef<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
   const qualityRef = useRef<RecQuality>(DEFAULT_QUALITY);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { audioRoutingRef.current = audioRouting; }, [audioRouting]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { micMonitorOnRef.current = micMonitorOn; }, [micMonitorOn]);
 
   const anyRecModalOpen = showQuality || renameRec !== null;
   useEffect(() => {
@@ -187,6 +201,61 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
     }
   }, []);
 
+  const stopMicMonitor = useCallback(async () => {
+    setMicMonitorOn(false);
+    micMonitorOnRef.current = false;
+    setMicMonitorLevel(0);
+    setMicMonitorError(null);
+    setMicMonitorBusy(false);
+    try {
+      deactivateKeepAwake();
+    } catch {}
+    await releaseMicMonitorAudioMode();
+  }, []);
+
+  const handleMicMonitorMessage = useCallback((msg: PitchMessage) => {
+    if (msg.type === 'ready') {
+      setMicMonitorError(null);
+      setMicMonitorBusy(false);
+    } else if (msg.type === 'error') {
+      setMicMonitorBusy(false);
+      setMicMonitorError(msg.message ?? 'Микрофон недоступен');
+      void stopMicMonitor();
+    } else if (msg.type === 'signal' && typeof msg.signal === 'number') {
+      setMicMonitorLevel(msg.signal);
+    }
+  }, [stopMicMonitor]);
+
+  const startMicMonitor = useCallback(async () => {
+    if (isRecordingRef.current || micMonitorOnRef.current || micMonitorBusy) return;
+    const { status } = await Audio.requestPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Нет доступа к микрофону');
+      return;
+    }
+    setMicMonitorBusy(true);
+    setMicMonitorError(null);
+    killSound();
+    try {
+      const snap = await refreshAudioRoutes();
+      await applyMicMonitorAudioMode(audioRoutingRef.current);
+      await activateKeepAwakeAsync();
+      setMicMonitorOn(true);
+      micMonitorOnRef.current = true;
+      if (!snap.hasBluetooth && audioRoutingRef.current.output === 'bluetooth') {
+        setMicMonitorError('Bluetooth не в списке — подключи колонку и обнови настройки.');
+      }
+    } catch (e) {
+      setMicMonitorBusy(false);
+      Alert.alert('Монитор', String(e));
+    }
+  }, [killSound, micMonitorBusy, refreshAudioRoutes]);
+
+  const toggleMicMonitor = useCallback(() => {
+    if (micMonitorOn) void stopMicMonitor();
+    else void startMicMonitor();
+  }, [micMonitorOn, startMicMonitor, stopMicMonitor]);
+
   useFocusEffect(useCallback(() => {
     load();
     if (!isRecordingRef.current) {
@@ -199,12 +268,13 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
     }
     return () => {
       killSound();
+      void stopMicMonitor();
       setTabBarHidden(false);
       setShowQuality(false);
       setRenameRec(null);
       setRenameText('');
     };
-  }, [killSound, load, setTabBarHidden]));
+  }, [killSound, load, setTabBarHidden, stopMicMonitor]));
 
   const handleRecordingInterrupted = useCallback(() => {
     if (!isRecordingRef.current) return;
@@ -344,6 +414,9 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
 
   /* ─── Recording ─── */
   const startRecording = async () => {
+    if (micMonitorOnRef.current) {
+      await stopMicMonitor();
+    }
     const { status } = await Audio.requestPermissionsAsync();
     if (status !== 'granted') { Alert.alert('Permission denied'); return; }
     warnExpoGoBackgroundRecording();
@@ -511,6 +584,37 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
         )}
       </View>
 
+      <View style={styles.micMonitorCard}>
+        <TouchableOpacity
+          style={[styles.micMonitorBtn, micMonitorOn && styles.micMonitorBtnOn]}
+          onPress={toggleMicMonitor}
+          disabled={isRecording || micMonitorBusy}
+          activeOpacity={0.85}
+        >
+          <Ionicons
+            name={micMonitorOn ? 'radio' : 'megaphone-outline'}
+            size={18}
+            color={micMonitorOn ? '#0a0a0f' : '#00e676'}
+          />
+          <Text style={[styles.micMonitorBtnText, micMonitorOn && styles.micMonitorBtnTextOn]}>
+            {micMonitorBusy && !micMonitorOn ? '…' : micMonitorOn ? 'Стоп монитор' : 'Микрофон → колонки'}
+          </Text>
+        </TouchableOpacity>
+        {micMonitorOn && (
+          <View style={styles.micMonitorMeterTrack}>
+            <View style={[styles.micMonitorMeterFill, { width: `${Math.round(micMonitorLevel * 100)}%` }]} />
+          </View>
+        )}
+        <Text style={styles.micMonitorHint} numberOfLines={3}>
+          {micMonitorOn
+            ? micMonitorRouteHint(audioRouteSnap?.listenHint, audioRouting)
+            : micMonitorLimitationsText()}
+        </Text>
+        {micMonitorError ? (
+          <Text style={styles.micMonitorWarn}>{micMonitorError}</Text>
+        ) : null}
+      </View>
+
       {/* Record button */}
       <View style={styles.recordArea}>
         {isRecording && (
@@ -526,6 +630,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
           onPress={isRecording ? stopRecording : startRecording}
           style={[styles.recBtn, isRecording ? styles.recBtnActive : null]}
           activeOpacity={0.8}
+          disabled={micMonitorOn && !isRecording}
         >
           <Ionicons name={isRecording ? 'stop' : 'mic'} size={36} color="#fff" />
         </TouchableOpacity>
@@ -645,6 +750,10 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
           </View>
         </View>
       </Modal>
+
+      {micMonitorOn && (
+        <TunerEngine mode="monitor" active onMessage={handleMicMonitorMessage} />
+      )}
     </View>
   );
 }
@@ -660,6 +769,40 @@ const styles = StyleSheet.create({
   qualityRowActive: { borderColor: '#7c4dff44', backgroundColor: '#7c4dff10' },
   qualityName:{ color: '#ccc', fontSize: 14, fontWeight: '700' },
   qualitySub: { color: '#555', fontSize: 11, marginTop: 2 },
+
+  micMonitorCard: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 12,
+    backgroundColor: '#111118',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1e2a22',
+  },
+  micMonitorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#00e67655',
+    backgroundColor: '#00e67612',
+  },
+  micMonitorBtnOn: { backgroundColor: '#00e676', borderColor: '#00e676' },
+  micMonitorBtnText: { color: '#00e676', fontSize: 13, fontWeight: '700' },
+  micMonitorBtnTextOn: { color: '#0a0a0f' },
+  micMonitorMeterTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#1a1a24',
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  micMonitorMeterFill: { height: '100%', backgroundColor: '#00e676', borderRadius: 2 },
+  micMonitorHint: { color: '#555', fontSize: 10, lineHeight: 14, marginTop: 8 },
+  micMonitorWarn: { color: '#ff9800', fontSize: 10, marginTop: 6 },
 
   recordArea: { alignItems: 'center', paddingVertical: 20, marginHorizontal: 16, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#222', marginBottom: 20 },
   recDurRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },

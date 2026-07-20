@@ -26,7 +26,7 @@ export interface PitchMessage {
   message?: string;
 }
 
-export type TunerEngineMode = 'tuner' | 'melody';
+export type TunerEngineMode = 'tuner' | 'melody' | 'monitor';
 
 interface Props {
   onMessage: (msg: PitchMessage) => void;
@@ -62,7 +62,80 @@ const ENGINE_PROFILES = {
   },
 } as const;
 
-const buildHTML = (mode: TunerEngineMode, range: { minHz: number; maxHz: number }) => `<!DOCTYPE html>
+const buildMonitorHTML = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+(function() {
+  var METER_MS = 50;
+  function post(obj) {
+    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+  }
+  var ctx, stream, gainNode, analyser, buf, active = false, meterId = null;
+
+  function meterLoop() {
+    if (!active || !analyser) return;
+    analyser.getFloatTimeDomainData(buf);
+    var rms = 0;
+    for (var i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+    rms = Math.sqrt(rms / buf.length);
+    post({ type: 'signal', signal: Math.min(1, rms * 10), sourceMode: 'monitor' });
+    meterId = setTimeout(meterLoop, METER_MS);
+  }
+
+  async function startMonitor() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        video: false
+      });
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC({ latencyHint: 'interactive' });
+      gainNode = ctx.createGain();
+      gainNode.gain.value = 1.0;
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      buf = new Float32Array(analyser.fftSize);
+      var src = ctx.createMediaStreamSource(stream);
+      src.connect(gainNode);
+      gainNode.connect(analyser);
+      gainNode.connect(ctx.destination);
+      if (ctx.state === 'suspended') await ctx.resume();
+      active = true;
+      post({ type: 'ready', sourceMode: 'monitor' });
+      meterLoop();
+    } catch (e) {
+      post({ type: 'error', message: e.message || String(e), sourceMode: 'monitor' });
+    }
+  }
+
+  window.stopTuner = function() {
+    active = false;
+    if (meterId) clearTimeout(meterId);
+    try {
+      if (stream) stream.getTracks().forEach(function(t) { t.stop(); });
+    } catch (_) {}
+    stream = null;
+    if (ctx) ctx.close();
+    ctx = null;
+  };
+
+  document.addEventListener('message', function(e) {
+    if (e.data === 'stop') window.stopTuner();
+    try {
+      var msg = typeof e.data === 'string' ? JSON.parse(e.data) : null;
+      if (msg && msg.type === 'gain' && gainNode) gainNode.gain.value = Math.max(0, Math.min(2, msg.value));
+    } catch (_) {}
+  });
+
+  startMonitor();
+})();
+</script>
+</body>
+</html>`;
+
+const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: number }) => `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
 <body>
@@ -242,6 +315,7 @@ const buildHTML = (mode: TunerEngineMode, range: { minHz: number; maxHz: number 
 
 const TunerEngine = forwardRef<WebView, Props>(({ onMessage, mode = 'tuner', minHz, maxHz }, ref) => {
   const range = useMemo(() => {
+    if (mode === 'monitor') return { minHz: 0, maxHz: 0 };
     const base = ENGINE_PROFILES[mode];
     if (mode !== 'tuner') return { minHz: base.minHz, maxHz: base.maxHz };
     return {
@@ -249,7 +323,10 @@ const TunerEngine = forwardRef<WebView, Props>(({ onMessage, mode = 'tuner', min
       maxHz: maxHz != null ? Math.min(2200, maxHz) : base.maxHz,
     };
   }, [mode, minHz, maxHz]);
-  const html = useMemo(() => buildHTML(mode, range), [mode, range.minHz, range.maxHz]);
+  const html = useMemo(
+    () => (mode === 'monitor' ? buildMonitorHTML : buildHTML(mode, range)),
+    [mode, range.minHz, range.maxHz],
+  );
 
   const handleMessage = (e: WebViewMessageEvent) => {
     try {
