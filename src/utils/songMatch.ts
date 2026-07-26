@@ -67,3 +67,25 @@ export function findBuiltinVerifiedMatch(
   const verified = BUILTIN_SONGS_SEED.filter(s => hasVerifiedPracticeLyrics(s));
   return findBestSongMatch(artist, title, verified, minScore);
 }
+
+/**
+ * Verified-tab catalog match — title + artist must align (no fuzzy pesni swap).
+ * Used when enriching metadata-only rows; minScore 130 = title hit + artist partial.
+ */
+export function findVerifiedCatalogMatch(
+  artist: string,
+  title: string,
+  songs: SongEntry[],
+  minScore = 130,
+): SongEntry | null {
+  const verified = songs.filter(s => hasVerifiedPracticeLyrics(s));
+  const match = findBestSongMatch(artist, title, verified, minScore);
+  if (!match) return null;
+  const nt = normalizeSongText(title);
+  const st = normalizeSongText(match.title);
+  if (nt && st && nt !== st && !st.includes(nt) && !nt.includes(st)) return null;
+  const na = normalizeSongText(artist);
+  const sa = normalizeSongText(match.artist);
+  if (na && sa && na !== sa && !sa.includes(na) && !na.includes(sa)) return null;
+  return match;
+}

@@ -7,6 +7,7 @@
 import {
   normalizeLyricsChords,
   isVerifiedChordProLyrics,
+  isTabArchiveDumpLyrics,
 } from './lib/chordNormalize.mjs';
 
 const creep =
@@ -88,6 +89,9 @@ const tests = [
   ['H chord line', hmLine.includes('[Hm]Много')],
   ['H in chord row', /\[A\].*\[G\].*\[Hm\].*\[D\]/.test(hRow.split('\n')[0])],
   ['H tab verifies', hVerified === true],
+  ['tab dump PLEASE NOTE rejected', !isVerifiedChordProLyrics('#----------------PLEASE NOTE----------------\nBand: X\nSong: [A] Y\nLine one\nLine two')],
+  ['tab dump Band:/Song: rejected', !isVerifiedChordProLyrics('Band: Coldplay\nSong: Ghost\n[A] one two\n[B] three four')],
+  ['isTabArchiveDumpLyrics', isTabArchiveDumpLyrics('#---PLEASE NOTE---\ninterpretation') === true],
 ];
 
 console.log('Output:\n' + creepOut + '\n');

@@ -138,6 +138,11 @@ function difficultyFor(chords) {
 /** Reject email/OLGA dumps and require enough real chord-over-lyric lines. */
 function isQualityTab(lyrics) {
   if (DUMP_HEADER_RE.test(lyrics.slice(0, 400))) return false;
+  if (/PLEASE\s+NOTE|author'?s\s+own\s+work|This\s+file\s+is\s+the|Usenet|OLGA|Guitar\s*Pro/i.test(lyrics.slice(0, 900))) {
+    return false;
+  }
+  if (/^#\s*-{3,}/m.test(lyrics.slice(0, 900)) && /interpreta/i.test(lyrics.slice(0, 900))) return false;
+  if (/^\s*Band\s*:/im.test(lyrics.slice(0, 400)) && /^\s*Song\s*:/im.test(lyrics.slice(0, 400))) return false;
   const lines = lyrics.split('\n').map(l => l.trim()).filter(Boolean);
   let chordLines = 0;
   let lyricLines = 0;

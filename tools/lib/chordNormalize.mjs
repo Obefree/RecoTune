@@ -223,8 +223,22 @@ function lineIsChordOnly(line) {
   return tokens.every(t => isChordToken(t.replace(/^\[|\]$/g, '')));
 }
 
+/** ASCII/OLGA guitar-tab archive headers — not ChordPro practice content (D8). */
+export function isTabArchiveDumpLyrics(text) {
+  if (!text?.trim()) return false;
+  const head = text.slice(0, 900);
+  if (/^\s*(Date|From|Subject|Newsgroups|To|Reply-To|Message-ID)\s*:/im.test(head)) return true;
+  if (/PLEASE\s+NOTE|author'?s\s+own\s+work|This\s+file\s+is\s+the|Usenet|OLGA|Guitar\s*Pro/i.test(head)) {
+    return true;
+  }
+  if (/^#\s*-{3,}/m.test(head) && /interpreta/i.test(head)) return true;
+  if (/^\s*Band\s*:/im.test(head) && /^\s*Song\s*:/im.test(head)) return true;
+  return false;
+}
+
 export function isVerifiedChordProLyrics(text) {
   if (!text?.trim()) return false;
+  if (isTabArchiveDumpLyrics(text)) return false;
   const lines = text.replace(/\r\n/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
   if (lines.length < 2) return false;
   let markers = 0;

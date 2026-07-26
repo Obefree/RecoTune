@@ -130,7 +130,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import FrequencyChart, { type HistoryPoint, type PitchSegmentOverlay } from '../components/FrequencyChart';
 import { useLocale } from '../context/LocaleContext';
 import { frequencyToNote } from '../utils/noteUtils';
-import { findBestSongMatch } from '../utils/songMatch';
+import { findBestSongMatch, findBuiltinVerifiedMatch, findVerifiedCatalogMatch } from '../utils/songMatch';
 import { fetchLyricsForTrack } from '../utils/lyricsApi';
 import {
   formatHintCandidateLabel,
@@ -1607,12 +1607,15 @@ export default function ChordsScreen() {
 
   useFocusEffect(useCallback(() => {
     void reloadLibrary();
-    if (practiceSong) {
-      setShowLibrary(false);
-    } else {
+  }, []));
+
+  const didInitialLibraryOpenRef = useRef(false);
+  useEffect(() => {
+    if (!didInitialLibraryOpenRef.current && !practiceSong) {
+      didInitialLibraryOpenRef.current = true;
       setShowLibrary(true);
     }
-  }, [practiceSong]));
+  }, [practiceSong]);
 
   const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
@@ -1842,7 +1845,9 @@ export default function ChordsScreen() {
       return { song: resolved, lyrics: resolved.lyrics!, hint: null, stillNeedsFetch: false };
     }
 
-    const catalogMatch = findBestSongMatch(resolved.artist, resolved.title, allSongsRef.current);
+    const catalogMatch =
+      findBuiltinVerifiedMatch(resolved.artist, resolved.title)
+      ?? findVerifiedCatalogMatch(resolved.artist, resolved.title, allSongsRef.current);
     if (catalogMatch && catalogMatch.id !== resolved.id) {
       const fromDb = await loadSongForPractice(catalogMatch);
       if (hasVerifiedPracticeLyrics(fromDb)) {
@@ -1902,8 +1907,9 @@ export default function ChordsScreen() {
     try {
       const result = await enrichSongForPractice(initial);
       setPracticeSong(result.song);
-      setPracticeInput(result.song.chords?.trim() || 'C G Am F');
-      parsePracticeInput(result.song.chords?.trim() || 'C G Am F');
+      const chordLine = result.song.chords?.trim() || '';
+      setPracticeInput(chordLine);
+      parsePracticeInput(chordLine);
       setPracticeChordIdx(0);
       if (result.lyrics) {
         setPracticeLyrics(result.lyrics);
@@ -2106,8 +2112,8 @@ export default function ChordsScreen() {
     setPracticeContentHint(null);
     setPracticeFetchHint(null);
     setAutoChordFetchDone(false);
-    setPracticeInput(resolved.chords?.trim() || 'C G Am F');
-    parsePracticeInput(resolved.chords?.trim() || 'C G Am F');
+    setPracticeInput(resolved.chords?.trim() || '');
+    parsePracticeInput(resolved.chords?.trim() || '');
     setPracticeChordIdx(0);
     setLyricsEditMode(false);
     setShowLibrary(false);
@@ -2146,8 +2152,8 @@ export default function ChordsScreen() {
       setOnDemandAttribution(detail.attribution ?? null);
       const full = await loadSongForPractice(persisted);
       setPracticeSong(full);
-      setPracticeInput(full.chords?.trim() || 'C G Am F');
-      parsePracticeInput(full.chords?.trim() || 'C G Am F');
+      setPracticeInput(full.chords?.trim() || '');
+      parsePracticeInput(full.chords?.trim() || '');
       setPracticeChordIdx(0);
       if (hasVerifiedPracticeLyrics(full)) {
         setPracticeLyrics(full.lyrics!);
@@ -2430,7 +2436,7 @@ export default function ChordsScreen() {
 
   const currentInstrumentLabel = CHORD_DIAGRAM_OPTIONS.find(o => o.id === chordDiagramId)?.label ?? '—';
 
-  const hasLyricsBody = practiceLyrics.trim().length > 0;
+  const hasLyricsBody = Boolean(practiceLyricsDisplay?.trim());
   /** Гриф / график / ноты — если всё выкл., не держим пустую строку под шапкой панели */
   const practiceDiagAny =
     showPracticeFretboard || showPracticePitchGraph || showPracticeNoteMatch;
@@ -2813,7 +2819,7 @@ export default function ChordsScreen() {
       )}
 
       {/* ── PRACTICE MODE ── */}
-      {mode === 'practice' && (
+      {mode === 'practice' && !showLibrary && (
         <View style={styles.practiceRootColumn}>
           <View style={{ flexShrink: 0 }}>
             <View style={styles.practiceBarRow}>
@@ -3415,7 +3421,7 @@ export default function ChordsScreen() {
 
       {/* Мик/REC: привязка к низу экрана Chords (контейнер), а не к внутренней колонке практики —
           иначе при сбое flex-высоты остаётся пустая полоса между доком и нижними вкладками. */}
-      {mode === 'practice' && (
+      {mode === 'practice' && !showLibrary && (
         <View
           onLayout={e => {
             const h = Math.round(e.nativeEvent.layout.height);

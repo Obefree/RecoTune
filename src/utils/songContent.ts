@@ -12,7 +12,9 @@ import { extractChordSequence } from './chordProgression';
 
 const CHORD_MARKER_RE = /\[[A-G][#b\d]*(?:\/[A-G][#b\d]*)?[^\]]*\]/i;
 
-const BUILTIN_VERIFIED_IDS = new Set(BUILTIN_SONGS_SEED.map(s => s.id));
+const BUILTIN_VERIFIED_IDS = new Set(
+  BUILTIN_SONGS_SEED.filter(s => isVerifiedChordProLyrics(s.lyrics)).map(s => s.id),
+);
 
 /** Inline [Am] markers present in text (not proof of verified alignment). */
 export function hasAnnotatedLyrics(text?: string | null): boolean {

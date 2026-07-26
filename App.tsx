@@ -59,8 +59,8 @@ function AppInner() {
   );
 
   return (
-    <View style={styles.root}>
-      <View style={styles.navFill}>
+    <View style={[styles.root, { backgroundColor: DARK_BG }]}>
+      <View style={[styles.navFill, { backgroundColor: DARK_BG }]}>
       <Suspense fallback={<View style={styles.bootFallback}><ActivityIndicator color={ACTIVE} /></View>}>
       <NavigationContainer
         theme={{

@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Chords (wrong tabs + UI back):** Fix You и др. — отсечены ASCII/tab-дампы (`isTabArchiveDumpLyrics`), strict verified match (`findVerifiedCatalogMatch`), без fallback `C G Am F`; практика скрыта под модалкой списка, back → чистый список. D8. См. [docs/features/2026-07-26-chords-wrong-tabs-ui-back.md](./features/2026-07-26-chords-wrong-tabs-ui-back.md).
 - **Chords (D22, phone + офлайн pesni):** bundled **1113** verified ChordPro (было 300), ~**1145** офлайн full tabs; фоновый импорт pesni-архива (не блокирует init), ingest `npm run ingest-pesni-chords` (resume → target 1200), meta `version:count`; прогресс/честные ошибки auto-fetch на телефоне. D8 без stubs. См. [docs/features/2026-07-20-chords-phone-scale.md](./features/2026-07-20-chords-phone-scale.md).
 - **Media / live monitor:** режим «Микрофон → колонки» в Recorder — passthrough mic→выход через WebView + audio-сессия expo-av (playAndRecord); BT/AUX по системному маршруту (D14), честные лимиты латентности и Expo Go. См. [docs/features/2026-07-20-mic-live-monitor-bt.md](./features/2026-07-20-mic-live-monitor-bt.md).
 - **Media / live monitor (эхо, латентность):** monitor — WebRTC AEC/NS, gain 0.55, VU off output path; подсказки про наушники. BT по-прежнему ~200+ ms. См. [docs/features/2026-07-20-mic-monitor-echo-latency.md](./features/2026-07-20-mic-monitor-echo-latency.md).

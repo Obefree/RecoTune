@@ -272,9 +272,25 @@ function lineIsChordOnly(line: string): boolean {
   });
 }
 
+/** ASCII/OLGA guitar-tab archive headers — not ChordPro practice content (D8). */
+export function isTabArchiveDumpLyrics(text?: string | null): boolean {
+  if (!text?.trim()) return false;
+  const head = text.slice(0, 900);
+  if (/^\s*(Date|From|Subject|Newsgroups|To|Reply-To|Message-ID)\s*:/im.test(head)) return true;
+  if (/PLEASE\s+NOTE|author'?s\s+own\s+work|This\s+file\s+is\s+the|Usenet|OLGA|Guitar\s*Pro/i.test(head)) {
+    return true;
+  }
+  if (/^#\s*-{3,}/m.test(head) && /interpreta/i.test(head)) return true;
+  if (/^\s*Band\s*:/im.test(head) && /^\s*Song\s*:/im.test(head)) return true;
+  return false;
+}
+
 /** Human-readable reason when lyrics fail verified ChordPro checks (for fetch errors). */
 export function chordProRejectionReason(text?: string | null): string | null {
   if (!text?.trim()) return 'Пустой текст таба.';
+  if (isTabArchiveDumpLyrics(text)) {
+    return 'Это ASCII/tab-архив, а не ChordPro с текстом — нужен другой источник.';
+  }
   const lines = text
     .replace(/\r\n/g, '\n')
     .split('\n')
@@ -305,6 +321,7 @@ export function chordProRejectionReason(text?: string | null): string | null {
 /** Multi-line ChordPro with inline [Am] markers (AmDm parser / builtin seed). */
 export function isVerifiedChordProLyrics(text?: string | null): boolean {
   if (!text?.trim()) return false;
+  if (isTabArchiveDumpLyrics(text)) return false;
   const lines = text
     .replace(/\r\n/g, '\n')
     .split('\n')
