@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { SONGS, type SongEntry } from '../data/songDatabase';
 import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent';
 import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
+import { combinedArtistTitle } from '../utils/searchNormalize';
 import { importPesniChordProArchive } from './pesniArchiveImport';
 
 const DB_NAME = 'recotune_song_library.db';
@@ -466,12 +467,38 @@ export async function setSchemaMeta(key: string, value: string): Promise<void> {
   await setMeta(database, key, value);
 }
 
+/**
+ * The legacy seed (`sNNN`) and the bundled pesni.ru archive (`pesni_ru_*`) are
+ * imported into `songs` under different ids, so the same artist+title (e.g.
+ * "Blowin' in the Wind" — Bob Dylan) can land in the table twice. Collapse
+ * those to one row per song so "База песен" doesn't show duplicates
+ * (user report: «повторы аккордов»); prefer the curated non-pesni row when
+ * both exist, keep title-sorted order otherwise.
+ */
+function dedupeSongRows(rows: SongRow[]): SongRow[] {
+  const byKey = new Map<string, SongRow>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const key = combinedArtistTitle(row.artist, row.title);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, row);
+      order.push(key);
+      continue;
+    }
+    if (existing.id.startsWith('pesni_ru_') && !row.id.startsWith('pesni_ru_')) {
+      byKey.set(key, row);
+    }
+  }
+  return order.map(key => byKey.get(key)!);
+}
+
 export async function listSongs(): Promise<SongEntry[]> {
   const database = await ensureDb();
   const rows = await database.getAllAsync<SongRow>(
     'SELECT * FROM songs ORDER BY title COLLATE NOCASE ASC',
   );
-  return rows.map(r => bundleBuiltinEntry(rowToEntry(r)));
+  return dedupeSongRows(rows).map(r => bundleBuiltinEntry(rowToEntry(r)));
 }
 
 export async function getSongById(id: string): Promise<SongEntry | null> {

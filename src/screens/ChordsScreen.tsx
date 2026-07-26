@@ -3549,6 +3549,14 @@ export default function ChordsScreen() {
               ) : null}
             </Pressable>
             <View style={styles.libHeaderActions}>
+              <TouchableOpacity
+                onPress={() => { setShowLibrary(false); setShowBasicChordsModal(true); }}
+                style={styles.libHeaderIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Справочник аккордов"
+              >
+                <Ionicons name="grid-outline" size={18} color="#ff9800" />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => { void importChordProFile(true); }} style={styles.libHeaderImportBtn}>
                 <Ionicons name="document-text-outline" size={15} color="#00e676" />
                 <Text style={{ color: '#00e676', fontSize: 10, fontWeight: '700' }}>ИМПОРТ</Text>

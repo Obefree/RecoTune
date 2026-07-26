@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-07-26 | Chords: дубли в списке песен (dedupe), доступ к справочнику базовых аккордов из шапки | [2026-07-26-song-list-dedupe-basic-chords-access.md](./2026-07-26-song-list-dedupe-basic-chords-access.md) |
 | 2026-07-26 | Chords: wrong tabs (Fix You), UI back/layering, tab-dump gate | [2026-07-26-chords-wrong-tabs-ui-back.md](./2026-07-26-chords-wrong-tabs-ui-back.md) |
 | 2026-07-20 | Chords D22: **1113** офлайн pesni, фоновый import, UX auto-fetch | [2026-07-20-chords-phone-scale.md](./2026-07-20-chords-phone-scale.md) |
 | 2026-07-20 | Media: микрофон → колонки — AEC, gain, латентность | [2026-07-20-mic-monitor-echo-latency.md](./2026-07-20-mic-monitor-echo-latency.md) |
