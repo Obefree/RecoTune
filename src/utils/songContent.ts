@@ -28,6 +28,7 @@ export function isChordProVerified(song: SongEntry): boolean {
   if (BUILTIN_VERIFIED_IDS.has(song.id)) return true;
   if (song.id.startsWith('custom_amdm_')) return true;
   if (song.id.startsWith('pesni_ru_')) return true;
+  if (song.id.startsWith('parsed_')) return true;
   if (song.id.startsWith('custom_pesni_')) return true;
   if (song.id.startsWith('custom_chordpro_')) return true;
   if (song.id.startsWith('custom_github_')) return true;

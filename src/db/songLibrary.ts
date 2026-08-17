@@ -308,10 +308,10 @@ async function purgeStaleBuiltinRows(database: SQLite.SQLiteDatabase): Promise<v
   const keepIds = SONGS.map(s => s.id);
   if (keepIds.length === 0) return;
   const placeholders = keepIds.map(() => '?').join(',');
-  // Keep pesni.ru verified-tab bundle rows (id `pesni_ru_*`) — they are seeded by
+  // Keep bundled verified tabs (pesni_ru_* / parsed_*) — seeded by
   // importPesniChordProArchive, not part of SONGS, and must not be purged.
   await database.runAsync(
-    `DELETE FROM songs WHERE source = 'builtin' AND id NOT IN (${placeholders}) AND id NOT LIKE 'pesni_ru_%'`,
+    `DELETE FROM songs WHERE source = 'builtin' AND id NOT IN (${placeholders}) AND id NOT LIKE 'pesni_ru_%' AND id NOT LIKE 'parsed_%'`,
     ...keepIds,
   );
 }

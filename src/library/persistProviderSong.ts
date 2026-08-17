@@ -26,6 +26,7 @@ export async function ensureSongInUserLibrary(
     provider === 'github' ||
     song.id.startsWith('custom_amdm_') ||
     song.id.startsWith('pesni_ru_') ||
+    song.id.startsWith('parsed_') ||
     song.id.startsWith('custom_pesni_') ||
     song.id.startsWith('custom_ug_') ||
     song.id.startsWith('custom_github_') ||

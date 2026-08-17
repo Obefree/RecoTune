@@ -1,13 +1,14 @@
 import type * as SQLite from 'expo-sqlite';
 import type { SongEntry } from '../data/songDatabase';
 import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
+import { extractChordSequence } from '../utils/chordProgression';
+import { combinedArtistTitle } from '../utils/searchNormalize';
 
 /**
- * Offline bundle of REAL verified ChordPro tabs harvested from pesni.ru
- * (tools/ingest-pesni-chordpro.mjs). Every entry already passed the same
- * chord-over-lyric verification as the runtime pesni.ru fetch — no stubs,
- * no progression-only glue (D8). Imported into the library so the tabs work
- * offline / phone-only without the PC proxy.
+ * Offline bundle of REAL verified ChordPro tabs: pesni.ru harvest plus the
+ * published AmDm/UG overlay (`proxy-parsed-chords.json`). Same verification
+ * gate as runtime fetch — no stubs (D8). Lands in SQLite so the APK has tabs
+ * without the PC proxy.
  */
 type PesniArchiveFile = {
   version: number;
@@ -15,13 +16,25 @@ type PesniArchiveFile = {
   songs: (SongEntry & { lyrics: string })[];
 };
 
+type OverlayArchiveFile = {
+  version?: number;
+  count?: number;
+  songs?: { artist?: string; title?: string; chordPro?: string; provider?: string }[];
+};
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PESNI_ARCHIVE = require('../../assets/archive/pesni-chordpro.json') as PesniArchiveFile;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const OVERLAY_ARCHIVE = require('../../assets/archive/proxy-parsed-chords.json') as OverlayArchiveFile;
 
-/** Bundled verified ChordPro tabs (offline, no proxy). */
-export const PESNI_OFFLINE_TAB_COUNT = PESNI_ARCHIVE?.count ?? PESNI_ARCHIVE?.songs?.length ?? 0;
+const PESNI_SONG_COUNT = PESNI_ARCHIVE?.count ?? PESNI_ARCHIVE?.songs?.length ?? 0;
+const OVERLAY_SONG_COUNT = OVERLAY_ARCHIVE?.count ?? OVERLAY_ARCHIVE?.songs?.length ?? 0;
+
+/** Bundled verified ChordPro tabs in the APK (pesni + AmDm/UG overlay). */
+export const PESNI_OFFLINE_TAB_COUNT = PESNI_SONG_COUNT + OVERLAY_SONG_COUNT;
 
 const META_PESNI_ARCHIVE_VERSION = 'pesni_archive_version';
+const META_PARSED_OVERLAY_VERSION = 'parsed_overlay_version';
 
 const IMPORT_BATCH = 48;
 
@@ -45,28 +58,52 @@ async function setMeta(database: SQLite.SQLiteDatabase, key: string, value: stri
   );
 }
 
-/** Seed pesni.ru verified ChordPro tabs into the library (once per bundle version+count). */
-export async function importPesniChordProArchive(
-  database: SQLite.SQLiteDatabase,
-): Promise<{ imported: number }> {
-  const songs = PESNI_ARCHIVE?.songs ?? [];
-  const bundleVersion = PESNI_ARCHIVE?.version ?? 0;
-  const wantMeta = archiveImportMetaValue(bundleVersion, songs.length);
-  if (songs.length === 0) return { imported: 0 };
-  if ((await getMeta(database, META_PESNI_ARCHIVE_VERSION)) === wantMeta) {
-    return { imported: 0 };
-  }
+function overlaySongId(artist: string, title: string, provider: string): string {
+  const key = combinedArtistTitle(artist, title)
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  const src = provider.replace(/[^a-z0-9]+/gi, '').slice(0, 12) || 'store';
+  return `parsed_${src}_${key || 'song'}`;
+}
 
+function overlayEntries(pesniSongs: (SongEntry & { lyrics: string })[]): SongEntry[] {
+  const seen = new Set(
+    pesniSongs.map(s => combinedArtistTitle(s.artist, s.title).toLowerCase()),
+  );
+  const out: SongEntry[] = [];
+  for (const raw of OVERLAY_ARCHIVE?.songs ?? []) {
+    const artist = String(raw.artist ?? '').trim();
+    const title = String(raw.title ?? '').trim();
+    const lyrics = String(raw.chordPro ?? '').trim();
+    if (!artist || !title || !lyrics || !isVerifiedChordProLyrics(lyrics)) continue;
+    const dup = combinedArtistTitle(artist, title).toLowerCase();
+    if (seen.has(dup)) continue;
+    seen.add(dup);
+    const chords = extractChordSequence(lyrics).slice(0, 12).join(' ');
+    out.push({
+      id: overlaySongId(artist, title, String(raw.provider ?? 'store')),
+      title,
+      artist,
+      chords,
+      difficulty: chords.split(/\s+/).filter(Boolean).length > 5 ? 3 : 2,
+      genre: 'parsed',
+      lyrics,
+      chordProVerified: true,
+    });
+  }
+  return out;
+}
+
+async function insertVerifiedSongs(
+  database: SQLite.SQLiteDatabase,
+  songs: SongEntry[],
+): Promise<number> {
   const ts = new Date().toISOString();
   let imported = 0;
-
-  const verified = songs.filter(s => {
-    const lyrics = s.lyrics?.trim();
-    return lyrics && isVerifiedChordProLyrics(lyrics);
-  });
-
-  for (let i = 0; i < verified.length; i += IMPORT_BATCH) {
-    const batch = verified.slice(i, i + IMPORT_BATCH);
+  for (let i = 0; i < songs.length; i += IMPORT_BATCH) {
+    const batch = songs.slice(i, i + IMPORT_BATCH);
     await database.withTransactionAsync(async () => {
       for (const song of batch) {
         const lyrics = song.lyrics!.trim();
@@ -108,7 +145,36 @@ export async function importPesniChordProArchive(
     });
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
+  return imported;
+}
 
-  await setMeta(database, META_PESNI_ARCHIVE_VERSION, wantMeta);
+/** Seed pesni.ru + published overlay into the library (once per bundle version+count). */
+export async function importPesniChordProArchive(
+  database: SQLite.SQLiteDatabase,
+): Promise<{ imported: number }> {
+  const pesniSongs = PESNI_ARCHIVE?.songs ?? [];
+  const overlaySongs = overlayEntries(pesniSongs);
+  const bundleVersion = PESNI_ARCHIVE?.version ?? 0;
+  const pesniMeta = archiveImportMetaValue(bundleVersion, pesniSongs.length);
+  const overlayMeta = archiveImportMetaValue(OVERLAY_ARCHIVE?.version ?? 1, overlaySongs.length);
+  if (pesniSongs.length === 0 && overlaySongs.length === 0) return { imported: 0 };
+
+  const pesniDone = (await getMeta(database, META_PESNI_ARCHIVE_VERSION)) === pesniMeta;
+  const overlayDone = (await getMeta(database, META_PARSED_OVERLAY_VERSION)) === overlayMeta;
+  if (pesniDone && overlayDone) return { imported: 0 };
+
+  let imported = 0;
+  if (!pesniDone && pesniSongs.length > 0) {
+    const verified = pesniSongs.filter(s => {
+      const lyrics = s.lyrics?.trim();
+      return lyrics && isVerifiedChordProLyrics(lyrics);
+    });
+    imported += await insertVerifiedSongs(database, verified);
+    await setMeta(database, META_PESNI_ARCHIVE_VERSION, pesniMeta);
+  }
+  if (!overlayDone && overlaySongs.length > 0) {
+    imported += await insertVerifiedSongs(database, overlaySongs);
+    await setMeta(database, META_PARSED_OVERLAY_VERSION, overlayMeta);
+  }
   return { imported };
 }
