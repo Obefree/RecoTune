@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-08-17 | Expo Cloud Environment: environment.json, tunnel, expo:url | [2026-08-17-expo-cloud-environment.md](./2026-08-17-expo-cloud-environment.md) |
 | 2026-08-17 | Media: антифон мегафона (петля колонка→mic) | [2026-08-17-mic-monitor-noise-gate.md](./2026-08-17-mic-monitor-noise-gate.md) |
 | 2026-08-17 | Chords: parsed DB на ПК и Vercel | [2026-08-17-parsed-chord-db.md](./2026-08-17-parsed-chord-db.md) |
 | 2026-08-17 | APK: URL прокси (LAN или HTTPS) | [2026-08-17-apk-proxy-url.md](./2026-08-17-apk-proxy-url.md) |

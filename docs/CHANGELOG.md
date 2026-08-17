@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Expo Cloud Environment:** `.cursor/environment.json` — `npm ci` при старте агента, Metro на 8081 в терминале; `start:tunnel` + `@expo/ngrok` для подключения с телефона; `expo:url` хелпер. См. [docs/features/2026-08-17-expo-cloud-environment.md](./features/2026-08-17-expo-cloud-environment.md).
 - **Media (megaphone anti-howl):** петля колонка→mic→колонка — сдвиг частоты ~6 Гц + AEC + гейт на паузах. См. [docs/features/2026-08-17-mic-monitor-noise-gate.md](./features/2026-08-17-mic-monitor-noise-gate.md).
 - **Chords (parsed DB):** прокси/Vercel сначала отдают pesni + кэш парсов с ПК. Pesni + overlay snapshot едут **в APK** (офлайн SQLite). Расширение: `npm run ingest-pesni-chords` (target 5000), `npm run chord-db:ingest-amdm`, `npm run chord-db:ingest-ug` (**только Chords**, строгий match). `npm run chord-db:publish` → snapshot. Прод: `https://recotune-chords.vercel.app/api/fetch-chords`. См. [docs/features/2026-08-17-parsed-chord-db.md](./features/2026-08-17-parsed-chord-db.md).
 - **Media (phone library):** диктофон после Stop и студия после Merge→WAV копируются в альбом RecoTune на телефоне (переживают uninstall). SAVE ALL — для уже записанных. См. [docs/features/2026-08-17-save-recordings-share.md](./features/2026-08-17-save-recordings-share.md).
