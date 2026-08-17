@@ -6,8 +6,9 @@ import {
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
-import { assertPlaybackFileExists } from '../utils/playbackUri';
+import { assertPlaybackFileExists, saveAudioToPhoneLibrary } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -457,6 +458,13 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
           name: `Recording ${new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
           createdAt: ts,
         }, ...prev]);
+        const saved = await saveAudioToPhoneLibrary(dst);
+        if (!saved.ok) {
+          Alert.alert(
+            'Запись в приложении',
+            `${saved.error ?? 'Не удалось скопировать в память телефона'}. Файл есть в RecoTune; разрешите доступ к аудио, чтобы копия переживала удаление приложения.`,
+          );
+        }
       }
     } catch (e) {
       setIsRecording(false);
@@ -466,6 +474,58 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
       stoppingRecRef.current = false;
     }
   };
+
+  /* ─── Share (copy out of app sandbox) ─── */
+  const shareRecording = useCallback(async (rec: Recording) => {
+    try {
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert('Sharing not available on this device');
+        return;
+      }
+      const mime = rec.uri.toLowerCase().endsWith('.wav') ? 'audio/wav' : 'audio/mp4';
+      await Sharing.shareAsync(rec.uri, {
+        mimeType: mime,
+        dialogTitle: rec.name,
+        UTI: 'public.audio',
+      });
+    } catch (e) {
+      Alert.alert('Export error', String(e));
+    }
+  }, []);
+
+  const shareAllRecordings = useCallback(() => {
+    const list = recordingsRef.current;
+    if (!list.length) return;
+    Alert.alert(
+      'Save copies',
+      `Copy ${list.length} recordings into the RecoTune album on this phone? They stay after uninstall.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save to phone',
+          onPress: async () => {
+            let ok = 0;
+            let fail = 0;
+            for (const rec of recordingsRef.current) {
+              const r = await saveAudioToPhoneLibrary(rec.uri);
+              if (r.ok) ok += 1;
+              else fail += 1;
+            }
+            Alert.alert('Saved', `${ok} in RecoTune album` + (fail ? `, ${fail} failed` : ''));
+          },
+        },
+        {
+          text: 'Share sheets',
+          onPress: async () => {
+            for (const rec of recordingsRef.current) {
+              await shareRecording(rec);
+            }
+          },
+        },
+      ],
+    );
+  }, [shareRecording]);
 
   /* ─── Delete / Rename ─── */
   const applyRename = useCallback(() => {
@@ -478,6 +538,7 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
 
   const onLongPress = (rec: Recording) => {
     Alert.alert(rec.name, undefined, [
+      { text: 'Share / save copy', onPress: () => { void shareRecording(rec); } },
       {
         text: 'Rename', onPress: () => {
           setRenameRec(rec);
@@ -551,6 +612,13 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
           )}
         </View>
 
+        <TouchableOpacity
+          onPress={() => { void shareRecording(item); }}
+          style={styles.deleteBtn}
+          accessibilityLabel="Share recording"
+        >
+          <Ionicons name="share-outline" size={20} color="#888" />
+        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => {
             if (playingId === item.id) killSound();
@@ -639,9 +707,17 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
 
       {/* List */}
       <View style={styles.listWrap}>
-        <Text style={styles.listTitle}>
-          {recordings.length > 0 ? `RECORDINGS (${recordings.length})` : 'NO RECORDINGS YET'}
-        </Text>
+        <View style={styles.listTitleRow}>
+          <Text style={styles.listTitle}>
+            {recordings.length > 0 ? `RECORDINGS (${recordings.length})` : 'NO RECORDINGS YET'}
+          </Text>
+          {recordings.length > 0 ? (
+            <TouchableOpacity onPress={shareAllRecordings} style={styles.shareAllBtn} accessibilityLabel="Share all recordings">
+              <Ionicons name="share-outline" size={16} color="#ffeb3b" />
+              <Text style={styles.shareAllText}>SAVE ALL</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
         {loading
           ? null
           : (
@@ -814,7 +890,10 @@ const styles = StyleSheet.create({
   hint: { color: '#444', fontSize: 12, marginTop: 10, letterSpacing: 1 },
 
   listWrap: { flex: 1, paddingHorizontal: 16 },
-  listTitle: { color: '#444', fontSize: 11, letterSpacing: 2, fontWeight: '600', marginBottom: 12 },
+  listTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 },
+  listTitle: { color: '#444', fontSize: 11, letterSpacing: 2, fontWeight: '600', flex: 1 },
+  shareAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 4, paddingHorizontal: 8 },
+  shareAllText: { color: '#ffeb3b', fontSize: 11, fontWeight: '700', letterSpacing: 1 },
   emptyText: { color: '#333', fontSize: 14, textAlign: 'center', marginTop: 32 },
 
   recItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111118', borderRadius: 14, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#1e1e28', gap: 10 },

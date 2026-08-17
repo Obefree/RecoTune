@@ -71,8 +71,9 @@
         "expo-media-library",
         {
           "photosPermission": "RecoTune needs access to your media library.",
-          "savePhotosPermission": "Allow RecoTune to save files.",
-          "isAccessMediaLocationEnabled": true
+          "savePhotosPermission": "Allow RecoTune to save recordings to the phone library.",
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": ["audio", "photo"]
         }
       ],
       "expo-sqlite"

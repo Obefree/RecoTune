@@ -23,10 +23,12 @@ export async function ensureSongInUserLibrary(
     provider === 'amdm' ||
     provider === 'pesni_ru' ||
     provider === 'ultimate_guitar' ||
+    provider === 'github' ||
     song.id.startsWith('custom_amdm_') ||
     song.id.startsWith('pesni_ru_') ||
     song.id.startsWith('custom_pesni_') ||
     song.id.startsWith('custom_ug_') ||
+    song.id.startsWith('custom_github_') ||
     song.id.startsWith('remote_amdm_') ||
     song.id.startsWith('remote_ug_');
 
@@ -45,7 +47,9 @@ export async function ensureSongInUserLibrary(
             ? 'fetch-ug'
             : provider === 'pesni_ru'
               ? 'fetch-pesni-ru'
-              : 'ChordPro',
+              : provider === 'github'
+                ? 'fetch-github'
+                : 'ChordPro',
   };
   await upsertUserSong(persisted);
   return persisted;

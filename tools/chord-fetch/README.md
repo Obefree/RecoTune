@@ -4,6 +4,10 @@
 
 Офлайн-утилиты для **одной** песни за запуск. Не для массового каталога и не для коммита scraped bulk в публичный репозиторий.
 
+**База на ПК:** прокси сначала отдаёт уже спарсенные табы (~1113 pesni + новые AmDm/UG в `tools/chord-fetch/data/parsed-chords.local.json`). На Vercel — тот же lookup (pesni в репо + `assets/archive/proxy-parsed-chords.json` после `npm run chord-db:publish`).
+
+## Зачем
+
 
 
 ## Зачем
@@ -106,6 +110,8 @@ curl -s -X POST http://127.0.0.1:8787/fetch -H "Content-Type: application/json" 
 
 | `ultimate_guitar` | Поиск в `ugFetch.mjs`, таб через [ultimate-api](../ultimate-api/README.md) (`ULTIMATE_API_URL`, по умолчанию `:5000`) |
 
+| `github` | Публичные ChordPro (`.cho`/`.chopro`) через GitHub code search → raw.githubusercontent. `GITHUB_TOKEN` на прокси поднимает лимиты; без токена search часто 401 — честный 404. |
+
 
 
 Если amdm.ru недоступен или таб не распознан — **HTTP 404** и `{ error, stub: true }` (без ChordPro в теле). Приложение не показывает это как таб (`chordFetchProxy` / `isChordProStubBody`).
@@ -124,9 +130,9 @@ curl -s -X POST http://127.0.0.1:8787/fetch -H "Content-Type: application/json" 
 
 |------|------------|
 
-| `fetch-one-amdm.mjs` | CLI: placeholder JSON для ручного импорта |
+| `fetch-one-amdm.mjs` | CLI: тот же парсер, что прокси (`fetchAmdmChordPro`) |
 
-| `fetch-one-ug.mjs` | CLI: placeholder для UG |
+| `fetch-one-ug.mjs` | CLI: UG через `ugFetch.mjs` |
 
 | `dev-proxy-server.mjs` | HTTP POST `/fetch` для приложения |
 

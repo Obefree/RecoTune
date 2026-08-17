@@ -51,12 +51,14 @@ function parseArgs(argv) {
     limitArtists: 0,
     perArtist: 8,
     resume: false,
+    fromStart: false,
     dryRun: false,
     searchLimit: 25,
   };
   for (const a of argv) {
     let m;
     if (a === '--resume') o.resume = true;
+    else if (a === '--from-start') o.fromStart = true;
     else if (a === '--dry-run') o.dryRun = true;
     else if ((m = a.match(/^--target=(\d+)$/))) o.target = Number(m[1]);
     else if ((m = a.match(/^--limit-artists=(\d+)$/))) o.limitArtists = Number(m[1]);
@@ -211,6 +213,7 @@ async function main() {
   if (!cp) {
     cp = { artistIndex: 0, songs: [], seenSlugs: [], seenKeys: [], doneArtists: [] };
   }
+  if (opts.fromStart) cp.artistIndex = 0;
   const seenSlugs = new Set(cp.seenSlugs);
   const seenKeys = new Set(cp.seenKeys);
   const doneArtists = new Set(cp.doneArtists ?? []);
@@ -302,7 +305,10 @@ async function main() {
     cp.seenSlugs = [...seenSlugs];
     cp.seenKeys = [...seenKeys];
     cp.doneArtists = [...doneArtists];
-    if (!opts.dryRun) saveCheckpoint(cp);
+    if (!opts.dryRun) {
+      saveCheckpoint(cp);
+      writeBundle(songs);
+    }
     console.log(
       `[${ai + 1}/${artists.length}] ${resolved.name}: +${kept} verified (total ${songs.length}/${opts.target})`,
     );

@@ -6,7 +6,7 @@ import React, { forwardRef, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
 import WebView, { WebViewMessageEvent } from 'react-native-webview';
 
-import { MIC_MONITOR_DEFAULT_GAIN } from '../utils/micLiveMonitor';
+import { MIC_MONITOR_ANTIHOWL_SHIFT_HZ, MIC_MONITOR_DEFAULT_GAIN, MIC_MONITOR_GATE } from '../utils/micLiveMonitor';
 
 export interface PitchMessage {
   type: 'ready' | 'pitch' | 'signal' | 'silent' | 'error';
@@ -65,7 +65,11 @@ const ENGINE_PROFILES = {
 } as const;
 
 const buildMonitorHTML = () => {
-  const monitorCfg = JSON.stringify({ defaultGain: MIC_MONITOR_DEFAULT_GAIN });
+  const monitorCfg = JSON.stringify({
+    defaultGain: MIC_MONITOR_DEFAULT_GAIN,
+    gate: MIC_MONITOR_GATE,
+    shiftHz: MIC_MONITOR_ANTIHOWL_SHIFT_HZ,
+  });
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
@@ -77,7 +81,85 @@ const buildMonitorHTML = () => {
   function post(obj) {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj));
   }
-  var ctx, stream, gainNode, analyser, buf, active = false, meterId = null;
+  var ctx, stream, gainNode, shifter, analyser, buf, spec, active = false, meterId = null;
+  var userGain = MONITOR.defaultGain;
+  var gatedOpen = false;
+  var holdUntil = 0;
+  var noiseFloor = 0.008;
+  var howlCount = 0;
+  var howlDuckUntil = 0;
+
+  function makeShifter(ac, shiftHz) {
+    var proc;
+    try {
+      proc = ac.createScriptProcessor(512, 1, 1);
+    } catch (_) {
+      return null;
+    }
+    var hist = new Float32Array(64);
+    var hi = 0;
+    var phase = 0;
+    var dPhase = 2 * Math.PI * shiftHz / ac.sampleRate;
+    var h = new Float32Array(31);
+    for (var n = 0; n < 31; n++) {
+      var k = n - 15;
+      if (k !== 0 && (k % 2)) h[n] = 2 / (k * Math.PI);
+    }
+    proc.onaudioprocess = function(ev) {
+      var inn = ev.inputBuffer.getChannelData(0);
+      var out = ev.outputBuffer.getChannelData(0);
+      for (var i = 0; i < inn.length; i++) {
+        hist[hi & 63] = inn[i];
+        var im = 0;
+        for (var t = 0; t < 31; t++) im += h[t] * hist[(hi - t) & 63];
+        var re = hist[(hi - 15) & 63];
+        out[i] = re * Math.cos(phase) - im * Math.sin(phase);
+        phase += dPhase;
+        if (phase > 6.283185307179586) phase -= 6.283185307179586;
+        hi++;
+      }
+    };
+    return proc;
+  }
+
+  function applyGate(rms) {
+    var g = MONITOR.gate;
+    if (!gatedOpen) {
+      noiseFloor = noiseFloor * 0.9 + rms * 0.1;
+    } else {
+      noiseFloor = noiseFloor * 0.997 + Math.min(rms, 0.05) * 0.003;
+    }
+    var openTh = Math.max(g.open, noiseFloor * g.openMul + g.openBias);
+    var closeTh = Math.max(g.close, noiseFloor * g.closeMul + g.closeBias);
+    var nowMs = Date.now();
+    if (rms >= openTh) {
+      gatedOpen = true;
+      holdUntil = nowMs + g.holdMs;
+    } else if (gatedOpen && rms < closeTh && nowMs > holdUntil) {
+      gatedOpen = false;
+    }
+    if (spec && analyser) {
+      analyser.getFloatFrequencyData(spec);
+      var maxV = -200, sum = 0, n = spec.length;
+      for (var i = 2; i < n; i++) {
+        sum += spec[i];
+        if (spec[i] > maxV) maxV = spec[i];
+      }
+      var mean = sum / n;
+      if (gatedOpen && maxV - mean > 16) howlCount++;
+      else howlCount = Math.max(0, howlCount - 1);
+      if (howlCount >= 5) {
+        howlDuckUntil = nowMs + 800;
+        howlCount = 0;
+      }
+    }
+    if (!gainNode) return;
+    var duck = nowMs < howlDuckUntil ? 0.1 : 1;
+    var target = gatedOpen ? userGain * duck : 0;
+    var cur = gainNode.gain.value;
+    var mix = gatedOpen ? 0.5 : 0.22;
+    gainNode.gain.value = cur + (target - cur) * mix;
+  }
 
   function meterLoop() {
     if (!active || !analyser) return;
@@ -85,32 +167,55 @@ const buildMonitorHTML = () => {
     var rms = 0;
     for (var i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
     rms = Math.sqrt(rms / buf.length);
+    applyGate(rms);
     post({ type: 'signal', signal: Math.min(1, rms * 10), sourceMode: 'monitor' });
     meterId = setTimeout(meterLoop, METER_MS);
   }
 
   async function startMonitor() {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false,
-          channelCount: { ideal: 1 },
-        },
-        video: false
-      });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false,
+            channelCount: { ideal: 1 },
+            googEchoCancellation: true,
+            googNoiseSuppression: true,
+            googAutoGainControl: false,
+          },
+          video: false
+        });
+      } catch (_) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false,
+            channelCount: { ideal: 1 },
+          },
+          video: false
+        });
+      }
       var AC = window.AudioContext || window.webkitAudioContext;
       ctx = new AC({ latencyHint: 'interactive' });
       gainNode = ctx.createGain();
-      gainNode.gain.value = MONITOR.defaultGain;
+      gainNode.gain.value = 0;
       analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0;
       buf = new Float32Array(analyser.fftSize);
+      spec = new Float32Array(analyser.frequencyBinCount);
       var src = ctx.createMediaStreamSource(stream);
       src.connect(gainNode);
-      gainNode.connect(ctx.destination);
+      shifter = makeShifter(ctx, MONITOR.shiftHz || 6);
+      if (shifter) {
+        gainNode.connect(shifter);
+        shifter.connect(ctx.destination);
+      } else {
+        gainNode.connect(ctx.destination);
+      }
       src.connect(analyser);
       if (ctx.state === 'suspended') await ctx.resume();
       active = true;
@@ -128,6 +233,10 @@ const buildMonitorHTML = () => {
       if (stream) stream.getTracks().forEach(function(t) { t.stop(); });
     } catch (_) {}
     stream = null;
+    try {
+      if (shifter) shifter.disconnect();
+    } catch (_) {}
+    shifter = null;
     if (ctx) ctx.close();
     ctx = null;
   };
@@ -136,7 +245,10 @@ const buildMonitorHTML = () => {
     if (e.data === 'stop') window.stopTuner();
     try {
       var msg = typeof e.data === 'string' ? JSON.parse(e.data) : null;
-      if (msg && msg.type === 'gain' && gainNode) gainNode.gain.value = Math.max(0, Math.min(2, msg.value));
+      if (msg && msg.type === 'gain') {
+        userGain = Math.max(0, Math.min(2, msg.value));
+        if (gatedOpen && gainNode) gainNode.gain.value = userGain;
+      }
     } catch (_) {}
   });
 

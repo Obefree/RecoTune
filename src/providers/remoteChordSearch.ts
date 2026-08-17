@@ -16,9 +16,7 @@ export type RemoteCatalogHit = {
   sourceUrl?: string;
 };
 
-export function isRemoteTabSearchId(id: string): boolean {
-  return id.startsWith('remote_amdm_') || id.startsWith('remote_ug_');
-}
+export { isRemoteTabSearchId } from '../utils/songContent';
 
 function stableRemoteId(provider: ProviderId, artist: string, title: string): string {
   const key = combinedArtistTitle(artist, title)

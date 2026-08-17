@@ -89,6 +89,8 @@ const tests = [
   ['H chord line', hmLine.includes('[Hm]Много')],
   ['H in chord row', /\[A\].*\[G\].*\[Hm\].*\[D\]/.test(hRow.split('\n')[0])],
   ['H tab verifies', hVerified === true],
+  ['[Chorus] is not a chord marker', !isVerifiedChordProLyrics('[Chorus] hello there\n[Verse] more words here')],
+  ['real chords still verify', isVerifiedChordProLyrics('[Am]hello there friend\n[G]more lyric words')],
   ['tab dump PLEASE NOTE rejected', !isVerifiedChordProLyrics('#----------------PLEASE NOTE----------------\nBand: X\nSong: [A] Y\nLine one\nLine two')],
   ['tab dump Band:/Song: rejected', !isVerifiedChordProLyrics('Band: Coldplay\nSong: Ghost\n[A] one two\n[B] three four')],
   ['isTabArchiveDumpLyrics', isTabArchiveDumpLyrics('#---PLEASE NOTE---\ninterpretation') === true],

@@ -181,12 +181,15 @@ export function resolveChordFetchUrlDetailed(): ResolvedChordFetchUrl {
   const auto = resolveChordFetchUrlForAutoFillDetailed();
   if (auto.url) return auto;
 
-  const fromExtra = Constants.expoConfig?.extra?.chordFetchApiUrl;
-  if (typeof fromExtra === 'string' && fromExtra.trim()) {
+  const extra = Constants.expoConfig?.extra as
+    | { chordFetchApiUrl?: string; chordFetchUrl?: string }
+    | undefined;
+  const fromExtra = (extra?.chordFetchApiUrl || extra?.chordFetchUrl || '').trim();
+  if (fromExtra) {
     return {
-      url: normalizeChordFetchUrl(fromExtra.trim()),
+      url: normalizeChordFetchUrl(fromExtra),
       source: 'app_extra',
-      sourceLabel: 'app.json (опционально)',
+      sourceLabel: 'сборка APK (EXPO_PUBLIC_CHORD_FETCH_URL)',
     };
   }
 
@@ -243,8 +246,9 @@ export function readExpoDebuggerHost(): string | null {
 export function chordFetchSetupHint(): string {
   return (
     'Табы подгружаются автоматически при выборе песни.\n' +
-    'AmDm и Ultimate Guitar — через прокси на ПК (npm start поднимет его сам).\n' +
-    'Без ПК — тихий fallback на pesni.ru с телефона.'
+    'AmDm / UG / GitHub — прокси: RecoTune.bat на ПК (окно можно свернуть, ПК не выключать) или HTTPS URL удалённого сервера в ⚙.\n' +
+    'APK ≠ Expo Go: вставьте URL вручную (http://IP-ПК:8787/fetch или https://…/api/fetch-chords).\n' +
+    'Без прокси — pesni.ru с телефона.'
   );
 }
 

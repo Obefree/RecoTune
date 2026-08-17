@@ -39,6 +39,7 @@ const DEFAULTS: ProviderSettings = {
     amdm: true,
     pesni_ru: false,
     ultimate_guitar: true,
+    github: true,
   },
   onDemandChordSource: 'auto',
   chordProUrl: '',

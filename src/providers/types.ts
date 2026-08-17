@@ -18,10 +18,11 @@ export type ProviderId =
 
   | 'pesni_ru'
 
-  | 'ultimate_guitar';
+  | 'ultimate_guitar'
+  | 'github';
 
 /** On-demand chord fetch (explicit user tap; pesni.ru direct or AmDm via proxy). */
-export type OnDemandChordProviderId = 'amdm' | 'pesni_ru' | 'ultimate_guitar';
+export type OnDemandChordProviderId = 'amdm' | 'pesni_ru' | 'ultimate_guitar' | 'github';
 
 
 
@@ -110,6 +111,7 @@ export const PROVIDER_BADGE_COLORS: Record<ProviderId, string> = {
   pesni_ru: '#26a69a',
 
   ultimate_guitar: '#ef5350',
+  github: '#90caf9',
 
 };
 
@@ -132,6 +134,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   pesni_ru: 'Табы с pesni.ru',
 
   ultimate_guitar: 'Ultimate Guitar',
+  github: 'GitHub ChordPro',
 
 };
 

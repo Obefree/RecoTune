@@ -131,6 +131,7 @@ import FrequencyChart, { type HistoryPoint, type PitchSegmentOverlay } from '../
 import { useLocale } from '../context/LocaleContext';
 import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch, findBuiltinVerifiedMatch, findVerifiedCatalogMatch } from '../utils/songMatch';
+import { extractChordSequence } from '../utils/chordProgression';
 import { fetchLyricsForTrack } from '../utils/lyricsApi';
 import {
   formatHintCandidateLabel,
@@ -180,7 +181,8 @@ function parseChordTones(chordName: string): string[] {
   if (rootIdx < 0) return [];
   const rootName = chordName.slice(0, rootIdx >= 0 && NOTE_NAMES_FLAT[rootIdx].length > 1 ? 2 : 1);
   const suffix   = chordName.slice(rootName.length);
-  const intervals = CHORD_INTERVALS[suffix] ?? CHORD_INTERVALS[''];
+  const intervals = CHORD_INTERVALS[suffix];
+  if (!intervals) return [];
   return intervals.map(iv => NOTE_NAMES_FLAT[(rootIdx + iv) % 12]);
 }
 
@@ -1907,16 +1909,18 @@ export default function ChordsScreen() {
     try {
       const result = await enrichSongForPractice(initial);
       setPracticeSong(result.song);
-      const chordLine = result.song.chords?.trim() || '';
+      const chordLine = result.lyrics ? (result.song.chords?.trim() || '') : '';
       setPracticeInput(chordLine);
       parsePracticeInput(chordLine);
       setPracticeChordIdx(0);
       if (result.lyrics) {
         setPracticeLyrics(result.lyrics);
         setPracticeContentHint(null);
-      } else if (result.stillNeedsFetch) {
+      } else {
         setPracticeLyrics('');
-        setPracticeContentHint(PROGRESSION_ONLY_HINT);
+        if (result.stillNeedsFetch) {
+          setPracticeContentHint(PROGRESSION_ONLY_HINT);
+        }
       }
       setPracticeFetchHint(result.hint);
     } finally {
@@ -1951,10 +1955,10 @@ export default function ChordsScreen() {
 
   async function saveIdentifyToLibrary() {
     if (!songResult) return;
-    const chordFromLyrics = [...new Set((lyrics?.match(/\[([A-G][^\]]*)\]/g) ?? []).map(c => c.replace(/[\[\]]/g, '')))];
+    const chordFromLyrics = extractChordSequence(identifyChordedLyrics || lyrics);
     const chords =
-      libraryMatch?.chords ??
-      (chordFromLyrics.length ? chordFromLyrics.slice(0, 8).join(' ') : 'C G Am F');
+      (libraryMatch && hasVerifiedPracticeLyrics(libraryMatch) && libraryMatch.chords?.trim())
+      || (chordFromLyrics.length ? chordFromLyrics.slice(0, 8).join(' ') : '');
     const song: SongEntry = {
       id: `custom_${Date.now()}`,
       title: songResult.title.trim() || 'Без названия',
@@ -2112,12 +2116,14 @@ export default function ChordsScreen() {
     setPracticeContentHint(null);
     setPracticeFetchHint(null);
     setAutoChordFetchDone(false);
-    setPracticeInput(resolved.chords?.trim() || '');
-    parsePracticeInput(resolved.chords?.trim() || '');
+    const verifiedLyrics = hasVerifiedPracticeLyrics(resolved);
+    const chordLine = verifiedLyrics ? (resolved.chords?.trim() || '') : '';
+    setPracticeInput(chordLine);
+    parsePracticeInput(chordLine);
     setPracticeChordIdx(0);
     setLyricsEditMode(false);
     setShowLibrary(false);
-    if (hasVerifiedPracticeLyrics(resolved)) {
+    if (verifiedLyrics) {
       setPracticeLyrics(resolved.lyrics!);
       setAutoChordFetchDone(true);
     } else if (needsOnDemandChordFetch(resolved)) {
@@ -2182,11 +2188,9 @@ export default function ChordsScreen() {
   }
 
   function parsePracticeInput(text: string) {
-    const chords = text.trim().split(/[\s,|/]+/).filter(Boolean);
-    if (chords.length > 0) {
-      setPracticeChords(chords);
-      setPracticeChordIdx(0);
-    }
+    const chords = extractChordSequence(text);
+    setPracticeChords(chords);
+    setPracticeChordIdx(0);
   }
 
   function practiceNext() {
@@ -2269,8 +2273,11 @@ export default function ChordsScreen() {
       return true;
     }
     if (showLibrary) {
-      setShowLibrary(false);
-      return true;
+      if (practiceSong) {
+        setShowLibrary(false);
+        return true;
+      }
+      return false;
     }
     if (lyricsEditMode) {
       setLyricsEditMode(false);
@@ -3526,9 +3533,9 @@ export default function ChordsScreen() {
         </View>
       )}
 
-      {/* ── Song Library Modal ── */}
-      <Modal visible={showLibrary} animationType="slide" onRequestClose={() => setShowLibrary(false)}>
-        <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
+      {/* ── Song Library (in-tree overlay — Android Modal is a smaller window) ── */}
+      {showLibrary ? (
+        <View style={[styles.libOverlay, { paddingTop: 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.libModalChrome}>
           {/* Header */}
           <View style={styles.libHeader}>
@@ -3550,7 +3557,7 @@ export default function ChordsScreen() {
             </Pressable>
             <View style={styles.libHeaderActions}>
               <TouchableOpacity
-                onPress={() => { setShowLibrary(false); setShowBasicChordsModal(true); }}
+                onPress={() => { setShowBasicChordsModal(true); }}
                 style={styles.libHeaderIconBtn}
                 accessibilityRole="button"
                 accessibilityLabel="Справочник аккордов"
@@ -3569,9 +3576,11 @@ export default function ChordsScreen() {
                 <Text style={{ color: '#7c4dff', fontSize: 11, fontWeight: '700' }}>ДОБАВИТЬ</Text>
               </TouchableOpacity>
             </View>
+            {practiceSong ? (
             <TouchableOpacity onPress={() => setShowLibrary(false)} style={styles.libClose}>
               <Ionicons name="close" size={24} color="#888" />
             </TouchableOpacity>
+            ) : null}
           </View>
 
           {/* Search */}
@@ -3717,7 +3726,7 @@ export default function ChordsScreen() {
             }}
           />
         </View>
-      </Modal>
+      ) : null}
 
       {/* ── Provider settings ── */}
       <Modal visible={showProviderSettings} animationType="fade" transparent onRequestClose={() => setShowProviderSettings(false)}>
@@ -3784,13 +3793,35 @@ export default function ChordsScreen() {
                         Прокси на ПК
                       </Text>
                       <Text style={{ color: '#888', fontSize: 11, lineHeight: 16, marginBottom: 6 }}>
-                        На ПК: <Text style={{ color: '#9cf' }}>{CHORD_FETCH_DEV_PROXY_CMD}</Text> или{' '}
-                        <Text style={{ color: '#9cf' }}>npm start</Text> (поднимет сам). Expo Go — та же Wi‑Fi.
+                        ПК: <Text style={{ color: '#9cf' }}>{CHORD_FETCH_DEV_PROXY_CMD}</Text> / RecoTune.bat — не закрывать ПК, прокси :8787. Та же Wi‑Fi.
+                        {'\n'}APK: вставьте URL ниже и Сохранить. Удалённо: HTTPS (Vercel/VPS) …/api/fetch-chords — ПК не нужен.
                       </Text>
                       <Text style={{ color: '#555', fontSize: 10, marginBottom: 8 }}>
                         Сейчас: {effectiveChordFetchUrl(providerSettings) || 'не задан'} ·{' '}
                         {resolveChordFetchUrlForAutoFillDetailed().sourceLabel}
                       </Text>
+                      <TextInput
+                        style={[styles.urlInput, { marginBottom: 8 }]}
+                        placeholder="http://192.168.x.x:8787/fetch"
+                        placeholderTextColor="#333"
+                        value={providerSettings.chordFetchProxyUrl}
+                        onChangeText={v => {
+                          setChordFetchProbeStatus(null);
+                          setProviderSettings(s =>
+                            s ? { ...s, chordFetchProxyUrl: v } : s,
+                          );
+                        }}
+                        onEndEditing={() => {
+                          if (!providerSettings) return;
+                          void persistProviderSettings({
+                            ...providerSettings,
+                            chordFetchProxyUrl: normalizeChordFetchUrl(providerSettings.chordFetchProxyUrl),
+                            chordFetchProxyUserSet: !!providerSettings.chordFetchProxyUrl.trim(),
+                          });
+                        }}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
                       <View style={{ flexDirection: 'row', gap: 8 }}>
                         <TouchableOpacity
                           style={[styles.identBtnBig, { flex: 1, backgroundColor: '#1565c044' }]}
@@ -3803,7 +3834,7 @@ export default function ChordsScreen() {
                             const next: ProviderSettings = {
                               ...providerSettings,
                               chordFetchProxyUrl: detected,
-                              chordFetchProxyUserSet: false,
+                              chordFetchProxyUserSet: true,
                               devProxyUrlHintDismissed: true,
                             };
                             void persistProviderSettings(next);
@@ -3932,6 +3963,23 @@ export default function ChordsScreen() {
                       <Text style={{ color: '#ddd', marginLeft: 10 }}>Отключить AmDm в цепочке</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, marginBottom: 10, borderBottomWidth: 1, borderBottomColor: '#1e1e28' }}
+                      onPress={() => {
+                        const next = {
+                          ...providerSettings,
+                          enabled: { ...providerSettings.enabled, github: !providerSettings.enabled.github },
+                        };
+                        void persistProviderSettings(next);
+                      }}
+                    >
+                      <Ionicons
+                        name={providerSettings.enabled.github !== false ? 'checkbox' : 'square-outline'}
+                        size={20}
+                        color={PROVIDER_BADGE_COLORS.github}
+                      />
+                      <Text style={{ color: '#ddd', marginLeft: 10 }}>GitHub ChordPro (открытые .cho)</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
                       onPress={() => setShowAdvancedChordFetchUrl(v => !v)}
                       style={{ marginBottom: 6 }}
                     >
@@ -3960,15 +4008,11 @@ export default function ChordsScreen() {
                       onEndEditing={() => {
                         if (!providerSettings) return;
                         const normalized = normalizeChordFetchUrl(providerSettings.chordFetchProxyUrl);
-                        setProviderSettings(s =>
-                          s
-                            ? {
-                                ...s,
-                                chordFetchProxyUrl: normalized,
-                                chordFetchProxyUserSet: !!normalized.trim(),
-                              }
-                            : s,
-                        );
+                        void persistProviderSettings({
+                          ...providerSettings,
+                          chordFetchProxyUrl: normalized,
+                          chordFetchProxyUserSet: !!normalized.trim(),
+                        });
                       }}
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -4137,7 +4181,7 @@ export default function ChordsScreen() {
       </Modal>
 
       {/* ── Add / Edit Song Modal ── */}
-      <Modal visible={showAddSong} animationType="slide" onRequestClose={() => setShowAddSong(false)}>
+      <Modal visible={showAddSong} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setShowAddSong(false)}>
         <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.libHeader}>
             <Text style={[styles.libTitle, { flex: 1, minWidth: 0 }]}>{editingSong ? 'РЕДАКТИРОВАТЬ' : 'ДОБАВИТЬ ПЕСНЮ'}</Text>
@@ -4277,7 +4321,7 @@ export default function ChordsScreen() {
         </View>
       </Modal>
 
-      <Modal visible={showBasicChordsModal} animationType="slide" onRequestClose={() => setShowBasicChordsModal(false)}>
+      <Modal visible={showBasicChordsModal} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setShowBasicChordsModal(false)}>
         <View style={[styles.libModal, { paddingTop: insets.top + 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
           <View style={styles.libHeader}>
             <View style={styles.libHeaderTitleBlock}>
@@ -5056,7 +5100,13 @@ const styles = StyleSheet.create({
   libBtn:      { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#7c4dff22', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: '#7c4dff44' },
   libBtnText:  { color: '#7c4dff', fontSize: 9, fontWeight: '800' },
 
-  /* Song Library Modal */
+  /* Song Library — full-screen overlay (not RN Modal) */
+  libOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    elevation: 40,
+    backgroundColor: '#0a0a0f',
+  },
   libModal:    { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f' },
   libModalChrome: { flexShrink: 0 },
   libHeader:   {

@@ -20,6 +20,10 @@ module.exports = {
       /** VPS stem server base URL (Demucs/basic-pitch); set EXPO_PUBLIC_STEM_SERVER_URL at build time. */
       stemServerUrl: process.env.EXPO_PUBLIC_STEM_SERVER_URL?.trim() || '',
       chordFetchUrl: process.env.EXPO_PUBLIC_CHORD_FETCH_URL?.trim() || '',
+      /** Same URL — app reads extra.chordFetchApiUrl (legacy key). */
+      chordFetchApiUrl:
+        process.env.EXPO_PUBLIC_CHORD_FETCH_URL?.trim()
+        || (typeof base.extra?.chordFetchApiUrl === 'string' ? base.extra.chordFetchApiUrl : ''),
     },
     plugins: [
       ...(base.plugins ?? []),

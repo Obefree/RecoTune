@@ -9,11 +9,11 @@
 
 const ROOT = '[A-H](?:#|b|♯|♭)?';
 const CHORD_SUFFIX =
-  '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|°|Ø|\\d+)?';
+  '(?:maj9|maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|m9|7|9|11|13|6|2|4|5|°|Ø)?';
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
-const CHORD_MARKER_RE = /\[[A-H][#b♯♭\d]*(?:\/[A-H][#b♯♭\d]*)?[^\]]*\]/i;
+const CHORD_MARKER_RE = new RegExp(`\\[${CHORD_TOKEN}\\]`, 'i');
 const BRACKET_CHORD_RE = new RegExp(`\\[(${CHORD_TOKEN})\\]`, 'gi');
 const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
 const LYRIC_PRONOUN_TOKENS = new Set(['I']);

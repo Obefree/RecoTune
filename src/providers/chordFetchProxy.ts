@@ -139,7 +139,12 @@ export function isChordProStubBody(body: string): boolean {
 }
 
 function stableOnDemandUserId(provider: OnDemandChordProviderId, title: string, artist: string): string {
-  const prefix = provider === 'amdm' ? 'custom_amdm_' : 'custom_ug_';
+  const prefix =
+    provider === 'amdm'
+      ? 'custom_amdm_'
+      : provider === 'github'
+        ? 'custom_github_'
+        : 'custom_ug_';
   const key = combinedArtistTitle(artist, title)
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
@@ -265,7 +270,12 @@ function proxyResponseToPayload(
     bpm: parsed.bpm,
     difficulty: parsed.difficulty,
     sourceUrl: raw.sourceUrl,
-    lyricsSource: provider === 'ultimate_guitar' ? 'fetch-ug' : 'fetch-amdm',
+    lyricsSource:
+      provider === 'ultimate_guitar'
+        ? 'fetch-ug'
+        : provider === 'github'
+          ? 'fetch-github'
+          : 'fetch-amdm',
   };
 }
 
@@ -283,12 +293,7 @@ function artistTitleFetchVariants(artist: string, title: string): { artist: stri
     variants.push({ artist: x.artist.trim(), title: x.title.trim() });
   };
   add({ artist: a, title: t });
-  if (a && t) add({ artist: t, title: a });
-  if (t) add({ artist: a || t, title: t });
-  const firstWord = t.match(/^[\p{L}\p{N}]+/u)?.[0];
-  if (firstWord && firstWord.length >= 3 && firstWord !== t) {
-    add({ artist: a, title: firstWord });
-  }
+  if (a && t && a.toLowerCase() !== t.toLowerCase()) add({ artist: t, title: a });
   return variants;
 }
 
@@ -358,28 +363,16 @@ export async function fetchOnDemandChordSheet(
     });
   };
 
-  try {
-    return await Promise.any(
-      variants.map(v =>
-        tryVariant(v).catch(e => {
-          if (e instanceof ChordFetchError) throw e;
-          throw new ChordFetchError('Подгрузка таба не удалась.');
-        }),
-      ),
-    );
-  } catch (e) {
-    if (e instanceof AggregateError) {
-      const chordErr = e.errors.find(err => err instanceof ChordFetchError) as
-        | ChordFetchError
-        | undefined;
-      throw (
-        chordErr ??
-        new ChordFetchError(
-          `Таб не найден. Проверьте написание и ${chordFetchDevProxyErrorSuffix()}.`,
-        )
-      );
+  let lastErr: unknown;
+  for (const v of variants) {
+    try {
+      return await tryVariant(v);
+    } catch (e) {
+      lastErr = e;
     }
-    if (e instanceof ChordFetchError) throw e;
-    throw new ChordFetchError('Подгрузка таба не удалась.');
   }
+  if (lastErr instanceof ChordFetchError) throw lastErr;
+  throw new ChordFetchError(
+    `Таб не найден. Проверьте написание и ${chordFetchDevProxyErrorSuffix()}.`,
+  );
 }

@@ -2,6 +2,7 @@ import { ensureAutoChordProxySettings } from './autoChordProxy';
 import { fetchAmdmChordSheet } from './amdmProvider';
 import {
   ChordFetchError,
+  fetchOnDemandChordSheet,
   isChordFetchProxyReachable,
   type ChordFetchStage,
 } from './chordFetchProxy';
@@ -15,11 +16,12 @@ import {
 } from './pesniRuProvider';
 import { getProviderSettings, type ProviderSettings } from './providerSettings';
 import { fetchUltimateGuitarChordSheet } from './ultimateGuitarProvider';
-import type { OnDemandChordProviderId, SongDetail } from './types';
+import type { OnDemandChordProviderId, ProviderAttribution, SongDetail } from './types';
 
 export type OnDemandAutoProgress =
   | { source: 'ultimate_guitar'; stage: ChordFetchStage }
   | { source: 'amdm'; stage: ChordFetchStage }
+  | { source: 'github'; stage: ChordFetchStage }
   | { source: 'pesni_ru'; stage: PesniFetchStage };
 
 export type OnDemandChainAttempt = {
@@ -56,7 +58,9 @@ export function formatAutoChainFailureMessage(attempts: OnDemandChainAttempt[]):
     return pesniTry.error.length <= 100 ? pesniTry.error : 'На pesni.ru нет verified-таба';
   }
   const proxySkipped = attempts.filter(
-    a => (a.source === 'amdm' || a.source === 'ultimate_guitar') && a.skipped,
+    a =>
+      (a.source === 'amdm' || a.source === 'ultimate_guitar' || a.source === 'github') &&
+      a.skipped,
   );
   const pesniFailed = attempts.find(a => a.source === 'pesni_ru' && !a.skipped);
   if (
@@ -64,7 +68,7 @@ export function formatAutoChainFailureMessage(attempts: OnDemandChainAttempt[]):
     pesniFailed &&
     (pesniFailed.error === 'Не найдено' || !pesniFailed.error)
   ) {
-    return 'AmDm/UG — только с ПК (npm start). На pesni.ru таб не найден.';
+    return 'AmDm/UG/GitHub — только с ПК (npm start). На pesni.ru таб не найден.';
   }
   if (pesniFailed?.error) return pesniFailed.error;
   return 'Не найдено';
@@ -74,7 +78,7 @@ function resolveChainOrder(settings: ProviderSettings): OnDemandChordProviderId[
   if (settings.onDemandChordSource === 'ultimate_guitar') return ['ultimate_guitar'];
   if (settings.onDemandChordSource === 'amdm') return ['amdm'];
   if (settings.onDemandChordSource === 'pesni_ru') return ['pesni_ru'];
-  return ['amdm', 'ultimate_guitar', 'pesni_ru'];
+  return ['amdm', 'ultimate_guitar', 'github', 'pesni_ru'];
 }
 
 function isAutoMode(settings: ProviderSettings): boolean {
@@ -96,6 +100,10 @@ function canTrySource(
     if (settings.enabled.ultimate_guitar === false) return false;
     return !!proxyUrl && proxyReachable;
   }
+  if (source === 'github') {
+    if (settings.enabled.github === false) return false;
+    return !!proxyUrl && proxyReachable;
+  }
   if (settings.enabled.amdm === false) return false;
   return !!proxyUrl && proxyReachable;
 }
@@ -114,18 +122,28 @@ function skipReasonFor(
   if (source === 'ultimate_guitar' && settings.enabled.ultimate_guitar === false) {
     return 'отключено';
   }
+  if (source === 'github' && settings.enabled.github === false) return 'отключено';
   if (source === 'amdm' && settings.enabled.amdm === false) return 'отключено';
-  if ((source === 'amdm' || source === 'ultimate_guitar') && !proxyUrl) {
+  if ((source === 'amdm' || source === 'ultimate_guitar' || source === 'github') && !proxyUrl) {
     return 'нет прокси';
   }
-  if ((source === 'amdm' || source === 'ultimate_guitar') && !proxyReachable) {
+  if ((source === 'amdm' || source === 'ultimate_guitar' || source === 'github') && !proxyReachable) {
     return 'прокси недоступен';
   }
   return 'недоступен';
 }
 
+function githubAttribution(): ProviderAttribution {
+  return {
+    label: 'GitHub ChordPro',
+    url: 'https://github.com/search?type=code&q=chordpro',
+    licenseNote:
+      'Публичные ChordPro (.cho/.chopro) через GitHub Search. Прокси на ПК; GITHUB_TOKEN на прокси ускоряет поиск.',
+  };
+}
+
 /**
- * Auto on-demand tab: AmDm → Ultimate Guitar (proxy) → pesni.ru (silent phone fallback).
+ * Auto on-demand tab: AmDm → Ultimate Guitar → GitHub ChordPro (proxy) → pesni.ru (phone fallback).
  */
 export async function fetchOnDemandChordSheetAuto(
   artist: string,
@@ -170,6 +188,17 @@ export async function fetchOnDemandChordSheetAuto(
             ? await fetchUltimateGuitarChordSheet(artist, title, (stage: ChordFetchStage) => {
                 options?.onProgress?.({ source: 'ultimate_guitar', stage });
               }, { quiet: true })
+            : source === 'github'
+              ? await fetchOnDemandChordSheet(
+                  'github',
+                  artist,
+                  title,
+                  githubAttribution,
+                  (stage: ChordFetchStage) => {
+                    options?.onProgress?.({ source: 'github', stage });
+                  },
+                  { quiet: true },
+                )
             : await fetchAmdmChordSheet(artist, title, (stage: ChordFetchStage) => {
                 options?.onProgress?.({ source: 'amdm', stage });
               }, { quiet: true });

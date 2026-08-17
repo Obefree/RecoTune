@@ -5,6 +5,7 @@ import {
   isVerifiedChordProLyrics,
   normalizeLyricsChords,
 } from './chordLyricsNormalize';
+import { extractChordSequence } from './chordProgression';
 
 export type ChordProParseResult = {
   title: string;
@@ -39,8 +40,7 @@ export function parseChordProText(raw: string, fallbackTitle = 'Без назв�
     lyricsLines.push(line);
   }
 
-  const chordMatches = raw.match(/\[([A-G][^\]]*)\]/g) ?? [];
-  const uniqueChords = [...new Set(chordMatches.map(c => c.replace(/[\[\]]/g, '')))];
+  const uniqueChords = [...new Set(extractChordSequence(raw))];
 
   const body = lyricsLines.join('\n');
   const lyrics = hasChordLineAboveLyricFormat(body)
@@ -52,7 +52,7 @@ export function parseChordProText(raw: string, fallbackTitle = 'Без назв�
     artist,
     key: key || undefined,
     bpm,
-    chords: uniqueChords.slice(0, 12).join(' ') || 'C G Am F',
+    chords: uniqueChords.slice(0, 12).join(' '),
     lyrics,
     difficulty: uniqueChords.length <= 3 ? 1 : uniqueChords.length <= 5 ? 2 : 3,
   };

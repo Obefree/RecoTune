@@ -43,7 +43,9 @@ node tools/chord-fetch/test-endpoint.mjs http://127.0.0.1:8787/fetch
 
 ## Опционально: свой сервер (Vercel)
 
-Если нужен таб **без ПК в сети**, можно развернуть `api/fetch-chords.mjs` — см. [deploy-chord-api-vercel.md](./deploy-chord-api-vercel.md). Это **не** обязательно для разработки.
+Если нужен таб **без ПК в сети**, разверните API на Vercel (`api/fetch-chords.mjs`). Прокси и Vercel сначала отдают **уже спарсенную базу** (pesni ~1113 + overlay с ПК). Live AmDm — только если песни нет в базе.
+
+См. [deploy-chord-api-vercel.md](./deploy-chord-api-vercel.md). Overlay на Vercel: на ПК `npm run chord-db:publish`, затем деплой.
 
 ## См. также
 

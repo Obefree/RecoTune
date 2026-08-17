@@ -1,9 +1,7 @@
 /**
- * Vercel serverless: POST { artist, title, provider?: 'amdm' } → ChordPro JSON or plain text.
- * Deploy this repo to your own Vercel project; set EXPO_PUBLIC_CHORD_FETCH_URL in the app.
+ * Vercel Node serverless: POST { artist, title, provider?: 'amdm' } → ChordPro JSON.
+ * Use res.status/json (Node). Returning Web Response leaves the lambda hanging.
  */
-import { handleChordFetchRequest } from '../tools/chord-fetch/amdmFetch.mjs';
-
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -15,10 +13,16 @@ const rateByIp = new Map();
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 40;
 
+function applyCors(res) {
+  for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
+}
+
 function clientIp(req) {
-  const xf = req.headers.get('x-forwarded-for');
-  if (xf) return xf.split(',')[0].trim();
-  return req.headers.get('x-real-ip') ?? 'unknown';
+  const xf = req.headers['x-forwarded-for'];
+  if (typeof xf === 'string' && xf) return xf.split(',')[0].trim();
+  const real = req.headers['x-real-ip'];
+  if (typeof real === 'string' && real) return real;
+  return req.socket?.remoteAddress ?? 'unknown';
 }
 
 function rateLimit(ip) {
@@ -33,62 +37,89 @@ function rateLimit(ip) {
   return true;
 }
 
-function jsonResponse(status, body, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      ...CORS,
-      ...extraHeaders,
-    },
+function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    return Promise.resolve(req.body);
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8').trim();
+      if (!raw) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on('error', reject);
   });
 }
 
-export default async function handler(req) {
+export default async function handler(req, res) {
+  applyCors(res);
+
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS });
+    res.status(204).end();
+    return;
   }
 
   if (req.method === 'GET') {
-    return jsonResponse(200, {
-      ok: true,
-      hint: 'POST JSON { artist, title, provider?: "amdm" }',
-    });
+    try {
+      const { parsedStoreStats } = await import('../tools/chord-fetch/parsedChordStore.mjs');
+      res.status(200).json({
+        ok: true,
+        hint: 'POST JSON { artist, title, provider?: "amdm" }',
+        parsed: parsedStoreStats(),
+      });
+    } catch (e) {
+      res.status(200).json({
+        ok: true,
+        hint: 'POST JSON { artist, title, provider?: "amdm" }',
+        parsed: { error: e?.message },
+      });
+    }
+    return;
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse(405, { error: 'Используйте POST' });
+    res.status(405).json({ error: 'Используйте POST' });
+    return;
   }
 
   const ip = clientIp(req);
   if (!rateLimit(ip)) {
-    return jsonResponse(429, { error: 'Слишком много запросов. Повторите позже.' });
+    res.status(429).json({ error: 'Слишком много запросов. Повторите позже.' });
+    return;
   }
 
   let body = {};
   try {
-    body = await req.json();
+    body = await readJsonBody(req);
   } catch {
-    return jsonResponse(400, { error: 'Тело запроса должно быть JSON' });
+    res.status(400).json({ error: 'Тело запроса должно быть JSON' });
+    return;
   }
 
   try {
+    const { handleChordFetchRequest } = await import('../tools/chord-fetch/amdmFetch.mjs');
     const { status, payload } = await handleChordFetchRequest(body);
     if (payload.chordPro && !payload.error) {
-      const accept = req.headers.get('accept') ?? '';
+      const accept = String(req.headers.accept ?? '');
       if (!accept.includes('application/json')) {
-        return new Response(payload.chordPro, {
-          status,
-          headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'X-Source-Url': payload.sourceUrl ?? '',
-            ...CORS,
-          },
-        });
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        if (payload.sourceUrl) res.setHeader('X-Source-Url', payload.sourceUrl);
+        res.status(status).send(payload.chordPro);
+        return;
       }
     }
-    return jsonResponse(status, payload, payload.sourceUrl ? { 'X-Source-Url': payload.sourceUrl } : {});
+    if (payload.sourceUrl) res.setHeader('X-Source-Url', payload.sourceUrl);
+    res.status(status).json(payload);
   } catch (e) {
-    return jsonResponse(500, { error: e?.message ?? 'Internal error' });
+    res.status(500).json({ error: e?.message ?? 'Internal error' });
   }
 }

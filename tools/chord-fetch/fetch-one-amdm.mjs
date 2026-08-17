@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * Stub: one-song AmDm fetch on PC (wire your parser here).
+ * One-song AmDm fetch on PC (same parser as the dev proxy).
  * Usage: node fetch-one-amdm.mjs "Artist" "Title"
- * Output: import-chord-song.json (not committed by default — add to .gitignore if needed)
  */
-
 import { writeFileSync } from 'fs';
+import { fetchAmdmChordPro } from './amdmFetch.mjs';
 
 const artist = process.argv[2] ?? '';
 const title = process.argv[3] ?? '';
@@ -14,18 +13,20 @@ if (!artist || !title) {
   process.exit(1);
 }
 
-const searchUrl = `https://amdm.ru/search/?q=${encodeURIComponent(`${artist} ${title}`)}`;
-console.log('Search URL (open manually or implement fetch):', searchUrl);
+const result = await fetchAmdmChordPro(artist, title);
+if (result.stub || !result.chordPro?.trim()) {
+  console.error(result.error ?? 'Tab not found');
+  process.exit(1);
+}
 
 const out = {
-  title,
-  artist,
-  chords: 'C G Am F',
-  lyrics: '',
+  title: result.title ?? title,
+  artist: result.artist ?? artist,
+  chords: '',
+  lyrics: result.chordPro,
   genre: 'AmDm',
-  difficulty: 1,
-  _note: 'Replace with ChordPro from your parser; do not commit scraped bulk.',
+  sourceUrl: result.sourceUrl,
 };
 
 writeFileSync('import-chord-song.json', JSON.stringify(out, null, 2), 'utf8');
-console.log('Wrote import-chord-song.json (placeholder). Implement HTML→ChordPro in this script or external repo.');
+console.log('OK', result.sourceUrl ?? '');

@@ -12,7 +12,6 @@
 
 // [A-H]: H is German/Russian notation for B (used widely on AmDm / pesni.ru);
 // must match the server parser tools/chord-fetch/chordLayout.mjs so H/Hm tabs verify.
-const CHORD_MARKER_RE = /\[[A-H][#b♯♭\d]*(?:\/[A-H][#b♯♭\d]*)?[^\]]*\]/i;
 
 /** Guitar/bass tab row — must stay one line in practice UI (no word-wrap). */
 export function isTablatureLine(line: string): boolean {
@@ -27,11 +26,13 @@ export function isTablatureLine(line: string): boolean {
 
 const ROOT = '[A-H](?:#|b|♯|♭)?';
 const CHORD_SUFFIX =
-  '(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|7|9|11|13|6|°|Ø|\\d+)?';
+  '(?:maj9|maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|m9|7|9|11|13|6|2|4|5|°|Ø)?';
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
 /** Whole-token chord: G, Am, C#m7, F/A — never a letter inside a word. */
 const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
+/** Real chord in brackets — not [Chorus]/[And]/[Give]. */
+const CHORD_MARKER_RE = new RegExp(`\\[${CHORD_TOKEN}\\]`, 'i');
 
 /** Lowercase articles in lyric prose — never bracket as chords. */
 const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
@@ -61,7 +62,7 @@ function normalizeLyricApostrophes(text: string): string {
 
 function lastWordHasInlineChord(line: string): boolean {
   const last = line.trim().split(/\s+/).pop() ?? '';
-  return /\[[A-H][^\]]*\]/i.test(last);
+  return CHORD_MARKER_RE.test(last);
 }
 
 function firstWordCore(line: string): string {

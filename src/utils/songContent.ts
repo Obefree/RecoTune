@@ -30,6 +30,7 @@ export function isChordProVerified(song: SongEntry): boolean {
   if (song.id.startsWith('pesni_ru_')) return true;
   if (song.id.startsWith('custom_pesni_')) return true;
   if (song.id.startsWith('custom_chordpro_')) return true;
+  if (song.id.startsWith('custom_github_')) return true;
   return false;
 }
 
@@ -134,7 +135,7 @@ export function bundledOfflineVerifiedTabCount(): number {
 }
 
 export const PROGRESSION_ONLY_HINT =
-  `Эта песня — только метаданные или прогрессия. С телефона: авто-подгрузка с pesni.ru (кэш 7 дней). AmDm/UG — только ПК (npm start, :8787). Фильтр «ТАБЫ» — ~${bundledOfflineVerifiedTabCount()} офлайн-песен с аккордами.`;
+  `Эта песня — только метаданные или прогрессия. С телефона: авто-подгрузка с pesni.ru (кэш 7 дней). AmDm/UG/GitHub ChordPro — ПК (npm start, :8787). Фильтр «ТАБЫ» — ~${bundledOfflineVerifiedTabCount()} офлайн-песен с аккордами.`;
 
 export function contentQualityScore(song: SongEntry): number {
   if (hasVerifiedPracticeLyrics(song)) {

@@ -57,6 +57,7 @@ export async function ensureAutoChordProxySettings(): Promise<AutoChordProxyResu
           ...settings.enabled,
           amdm: true,
           ultimate_guitar: true,
+          github: true,
           lyrics: true,
           chordpro_url: true,
         },

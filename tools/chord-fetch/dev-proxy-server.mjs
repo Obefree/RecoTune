@@ -7,9 +7,10 @@
 import http from 'node:http';
 import { handleChordFetchRequest } from './amdmFetch.mjs';
 import { handleChordSearchRequest } from './chordSearch.mjs';
+import { parsedStoreStats } from './parsedChordStore.mjs';
 
 /** Bump when parser/proxy behavior changes — compare with GET /health in app settings. */
-export const CHORD_FETCH_PROXY_VERSION = '2026-06-24-aligned-parser';
+export const CHORD_FETCH_PROXY_VERSION = '2026-08-17-parsed-db';
 
 const PORT = Number(process.env.CHORD_FETCH_PORT || 8787);
 
@@ -48,9 +49,10 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, {
       ok: true,
       version: CHORD_FETCH_PROXY_VERSION,
-      hint: 'POST /fetch { provider, artist, title } · POST /search { q }',
+      hint: 'POST /fetch { provider: amdm|ultimate_guitar|github, artist, title } · POST /search { q }',
       port: PORT,
       ultimateApi: process.env.ULTIMATE_API_URL ?? 'http://127.0.0.1:5000',
+      parsed: parsedStoreStats(),
     });
     return;
   }

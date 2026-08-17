@@ -1,8 +1,16 @@
 {
-  "version": 2,
+  "framework": null,
+  "installCommand": "npm install --prefix tools/chord-fetch --omit=dev",
+  "buildCommand": "echo skip",
+  "outputDirectory": "public",
   "functions": {
     "api/fetch-chords.mjs": {
-      "maxDuration": 30
+      "maxDuration": 30,
+      "includeFiles": "assets/archive/*.json"
+    },
+    "api/search-chords.mjs": {
+      "maxDuration": 20,
+      "includeFiles": "assets/archive/*.json"
     }
   }
 }

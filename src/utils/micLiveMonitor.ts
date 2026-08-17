@@ -11,6 +11,24 @@ export const MIC_MONITOR_LATENCY_BT_MS = 200;
 /** Passthrough gain (WebView). Lower default reduces speaker→mic feedback; not a full IEM chain. */
 export const MIC_MONITOR_DEFAULT_GAIN = 0.55;
 
+/**
+ * Anti-howl: small frequency shift so speaker→mic energy cannot stack
+ * on the same tone (classic PA loop break). Voice stays intelligible.
+ */
+export const MIC_MONITOR_ANTIHOWL_SHIFT_HZ = 6;
+export const MIC_MONITOR_GATE = {
+  /** Minimum RMS to open (close-mic speech). */
+  open: 0.026,
+  /** RMS to stay closed after hold (hysteresis). */
+  close: 0.012,
+  holdMs: 220,
+  /** Adaptive floor: open ≈ max(open, floor*mul + bias). */
+  openMul: 3.4,
+  closeMul: 1.9,
+  openBias: 0.01,
+  closeBias: 0.004,
+};
+
 export function playThroughEarpieceForRouting(routing: StudioAudioRouting): boolean {
   return routing.mode === 'manual' && routing.output === 'earpiece';
 }
@@ -44,7 +62,7 @@ export function micMonitorRouteHint(snapListen: string | undefined, routing: Stu
 export function micMonitorActiveHint(snapListen: string | undefined, routing: StudioAudioRouting): string {
   const route = micMonitorRouteHint(snapListen, routing);
   const echo =
-    'AEC включён для колонки/динамика; без эха надёжнее проводные наушники. Не держи mic у динамика — громкость монитора снижена.';
+    'Антифон: голос с колонки не должен снова усиливаться (петля). Сдвиг частоты + AEC + гейт на паузах. Говори в телефон, не в динамик.';
   return `${route} ${echo}`;
 }
 
@@ -61,7 +79,7 @@ export function micMonitorLimitationsText(): string {
     'Микрофон — захват WebView (обычно встроенный телефона). BT-мик через setPreferredDevice — только в Studio/Recorder при записи expo-av, не в режиме монитора.';
 
   const echo =
-    'Колонка/динамик: возможно эхо — лучше наушники; при мониторе включено подавление эха (WebRTC AEC).';
+    'Петля колонка→mic→колонка рвётся сдвигом частоты (антивой) и AEC; в паузах гейт глушит выход.';
 
   return `${lat} ${echo} ${micSrc} ${Platform.OS === 'android' ? expoGo : ''}`.trim();
 }

@@ -8,7 +8,7 @@ import {
   COVER_PATH_RE,
   COVER_TEXT_RE,
 } from './amdmFetch.mjs';
-import { searchUgByQuery } from './ugFetch.mjs';
+import { searchParsedStore } from './parsedChordStore.mjs';
 
 const MAX_PER_PROVIDER = 16;
 const AMDM_SEARCH_ATTEMPTS = 3;
@@ -167,6 +167,7 @@ export async function handleChordSearchRequest(body) {
   );
 
   const tasks = [];
+  tasks.push(Promise.resolve(searchParsedStore(q, limit)));
   if (want.has('amdm')) {
     tasks.push(
       searchAmdmByQuery(q).then(rows =>

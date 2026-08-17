@@ -11,7 +11,9 @@ export const UG_FETCH_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const MAX_SEARCH_RESULTS = 12;
-const MAX_TAB_ATTEMPTS = 4;
+const MAX_TAB_ATTEMPTS = 3;
+/** UG search.php type=300 is Chords (not tab/bass/ukulele). */
+const UG_SEARCH_CHORDS = 300;
 
 function decodeHtml(s) {
   return s
@@ -66,6 +68,34 @@ async function fetchHtml(url) {
   return { res, text };
 }
 
+function ugVotes(row) {
+  const n = Number(row.votes ?? row.rating_count ?? row.hitstotal ?? row.hits ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function ugRating(row) {
+  const n = Number(row.rating ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function isUgChordsType(row) {
+  const raw = row.type ?? row.type_name ?? '';
+  if (raw === UG_SEARCH_CHORDS || raw === String(UG_SEARCH_CHORDS)) return true;
+  const type = String(raw).toLowerCase();
+  if (!type) return false;
+  if (/ukulele|bass|drum|power|official|video/.test(type)) return false;
+  if (/\bpro\b/.test(type) && !type.includes('chord')) return false;
+  return type.includes('chord');
+}
+
+function isUgChordsUrl(url) {
+  const u = String(url ?? '').toLowerCase();
+  if (!u) return false;
+  if (/ukulele|bass-tab|drum-tab|power-tab|guitar-pro/.test(u)) return false;
+  return u.includes('-chords-') || u.includes('/chords/') || u.includes('type=300');
+}
+
+/** Identity first, then rating × popularity — one winner per song. */
 function scoreUgResult(row, artist, title) {
   const wantA = normalizeMatch(artist);
   const wantT = normalizeMatch(title);
@@ -76,10 +106,27 @@ function scoreUgResult(row, artist, title) {
   else if (wantT && (gotT.includes(wantT) || wantT.includes(gotT))) score += 45;
   if (wantA && gotA === wantA) score += 50;
   else if (wantA && (gotA.includes(wantA) || wantA.includes(gotA))) score += 30;
-  const type = String(row.type ?? row.type_name ?? '').toLowerCase();
-  if (type.includes('chord')) score += 25;
-  if (row.rating) score += Math.min(Number(row.rating) * 2, 10);
+  else if (wantA && gotA) score -= 120;
+  if (!isUgChordsType(row)) score -= 80;
+  else score += 20;
+  const rating = ugRating(row);
+  const votes = ugVotes(row);
+  score += rating * 8;
+  score += Math.min(Math.log10(1 + votes) * 12, 40);
   return score;
+}
+
+function namesAlign(want, got) {
+  if (!want || !got) return false;
+  if (want === got) return true;
+  if (want.length >= 5 && got.length >= 5 && (want.includes(got) || got.includes(want))) return true;
+  return false;
+}
+
+function compositionKey(row) {
+  const a = normalizeMatch(row.artist_name ?? row.artist ?? '');
+  const t = normalizeMatch(row.song_name ?? row.title ?? row.name ?? '');
+  return `${a}|${t}`;
 }
 
 function collectUgSearchRows(storeJson) {
@@ -113,8 +160,8 @@ function buildUgSearchQueries(artist, title) {
     if (s.length >= 2 && !out.includes(s)) out.push(s);
   };
   if (a && t) add(`${a} ${t}`);
-  if (t) add(t);
   if (a && t) add(`${t} ${a}`);
+  if (!a && t) add(t);
   return out;
 }
 
@@ -122,39 +169,48 @@ async function searchUgCandidates(artist, title) {
   const queries = buildUgSearchQueries(artist, title);
   const rows = [];
   for (const q of queries) {
-    const searchUrl = `https://www.ultimate-guitar.com/search.php?search_type=title&value=${encodeURIComponent(q)}`;
+    const searchUrl = `https://www.ultimate-guitar.com/search.php?search_type=title&type=${UG_SEARCH_CHORDS}&value=${encodeURIComponent(q)}`;
     let text;
     try {
       const { res, text: body } = await fetchHtml(searchUrl);
-      if (res.status === 403 || isCloudflareHtml(body)) {
+      if (res.status === 403 && !parseJsStore(body)) {
         return { blocked: true, rows: [], searchUrl };
       }
-      if (!res.ok) continue;
+      if (!res.ok && res.status !== 403) continue;
       text = body;
     } catch {
       continue;
     }
-    if (isCloudflareHtml(text)) {
-      return { blocked: true, rows: [], searchUrl };
-    }
     const store = parseJsStore(text);
-    if (!store) continue;
+    if (!store) {
+      if (isCloudflareHtml(text)) {
+        return { blocked: true, rows: [], searchUrl };
+      }
+      continue;
+    }
     rows.push(...collectUgSearchRows(store));
-    if (rows.length >= MAX_SEARCH_RESULTS) break;
+    if (rows.length >= 40) break;
   }
   const scored = rows
     .map(row => ({ row, score: scoreUgResult(row, artist, title), url: tabUrlFromRow(row) }))
-    .filter(x => x.url)
-    .sort((a, b) => b.score - a.score);
-  const uniq = [];
-  const seen = new Set();
+    .filter(x => {
+      if (!x.url || !isUgChordsType(x.row) || !isUgChordsUrl(x.url) || x.score < 100) return false;
+      const wantA = normalizeMatch(artist);
+      const wantT = normalizeMatch(title);
+      const gotA = normalizeMatch(x.row.artist_name ?? x.row.artist ?? '');
+      const gotT = normalizeMatch(x.row.song_name ?? x.row.title ?? x.row.name ?? '');
+      if (wantT && !namesAlign(wantT, gotT)) return false;
+      if (wantA && !namesAlign(wantA, gotA)) return false;
+      return true;
+    });
+  const bestBySong = new Map();
   for (const item of scored) {
-    if (seen.has(item.url)) continue;
-    seen.add(item.url);
-    uniq.push(item);
-    if (uniq.length >= MAX_SEARCH_RESULTS) break;
+    const key = compositionKey(item.row);
+    const prev = bestBySong.get(key);
+    if (!prev || item.score > prev.score) bestBySong.set(key, item);
   }
-  return { blocked: false, rows: uniq, searchUrl: null };
+  const uniq = [...bestBySong.values()].sort((a, b) => b.score - a.score);
+  return { blocked: false, rows: uniq.slice(0, MAX_SEARCH_RESULTS), searchUrl: null };
 }
 
 function scoreUgAgainstQuery(query, artist, title) {
@@ -194,6 +250,50 @@ export async function searchUgByQuery(query) {
     })
     .filter(Boolean)
     .slice(0, MAX_SEARCH_RESULTS);
+}
+
+function wikiContentToLines(raw) {
+  let text = decodeHtml(String(raw ?? ''));
+  text = text.replace(/\[(?:ch|tab)\]([^\[]+?)\[\/(?:ch|tab)\]/gi, '[$1]');
+  text = text.replace(/<\/?[^>]+>/g, '');
+  return text
+    .split('\n')
+    .map(l => l.replace(/\r/g, '').trimEnd())
+    .filter(l => l.trim());
+}
+
+async function fetchUgTabViaNode(url) {
+  let res;
+  let text;
+  try {
+    ({ res, text } = await fetchHtml(url));
+  } catch (e) {
+    return { ok: false, code: 'network', error: e?.message ?? 'network' };
+  }
+  const store = parseJsStore(text);
+  if (!store) {
+    if (res.status === 403 || isCloudflareHtml(text)) {
+      return { ok: false, code: 'blocked', error: 'Ultimate Guitar blocked the request (Cloudflare).' };
+    }
+    return { ok: false, code: 'no_tab', error: 'js-store not found on tab page' };
+  }
+  const data = store?.store?.page?.data ?? {};
+  const tabView = data.tab_view ?? {};
+  const wiki = tabView?.wiki_tab?.content ?? tabView?.wikiTab?.content;
+  const raw = wiki || tabView?.tab?.content;
+  const content_lines = wikiContentToLines(raw);
+  if (content_lines.length < 2) {
+    return { ok: false, code: 'no_tab', error: 'Tab content too short' };
+  }
+  const tabMeta = data.tab ?? {};
+  return {
+    ok: true,
+    tab: {
+      title: String(tabView.song_name ?? tabView.song?.name ?? tabMeta.song_name ?? '').trim(),
+      artist_name: String(tabView.artist_name ?? tabView.artist?.name ?? tabMeta.artist_name ?? '').trim(),
+      content_lines,
+    },
+  };
 }
 
 function parseUltimateApiTabPayload(tab, expectedArtist, expectedTitle, sourceUrl) {
@@ -259,10 +359,12 @@ export async function fetchUgChordPro(artist, title) {
   for (const { url, score } of search.rows.slice(0, MAX_TAB_ATTEMPTS)) {
     if (score < 20) continue;
 
-    const api = await fetchUltimateApiTab(url);
+    let api = await fetchUgTabViaNode(url);
+    if (!api.ok && (api.code === 'blocked' || api.code === 'network' || api.code === 'no_tab')) {
+      api = await fetchUltimateApiTab(url);
+    }
     if (!api.ok) {
       lastFail = { error: api.error, code: api.code, sourceUrl: url };
-      if (api.code === 'ultimate_api_down') break;
       continue;
     }
 

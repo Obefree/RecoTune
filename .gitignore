@@ -40,6 +40,11 @@ yarn-error.*
 tools/.mb-ingest-checkpoint.json
 tools/.metadata-ingest-checkpoint.json
 tools/.pesni-ingest-checkpoint.json
+tools/.amdm-store-ingest-checkpoint.json
+tools/.ug-store-ingest-checkpoint.json
+
+# Live-parsed chord overlay on the PC (publish with npm run chord-db:publish)
+tools/chord-fetch/data/parsed-chords.local.json
 
 # Local APK builds (use CI/release artifacts, not repo root)
 *.apk
@@ -48,3 +53,8 @@ build-apk-log.txt
 # generated native folders
 /ios
 /android
+
+.vercel
+
+.vercel
+.env*

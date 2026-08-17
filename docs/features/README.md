@@ -11,6 +11,11 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-08-17 | Media: антифон мегафона (петля колонка→mic) | [2026-08-17-mic-monitor-noise-gate.md](./2026-08-17-mic-monitor-noise-gate.md) |
+| 2026-08-17 | Chords: parsed DB на ПК и Vercel | [2026-08-17-parsed-chord-db.md](./2026-08-17-parsed-chord-db.md) |
+| 2026-08-17 | APK: URL прокси (LAN или HTTPS) | [2026-08-17-apk-proxy-url.md](./2026-08-17-apk-proxy-url.md) |
+| 2026-08-17 | Media: диктофон/микс в альбом RecoTune на телефоне | [2026-08-17-save-recordings-share.md](./2026-08-17-save-recordings-share.md) |
+| 2026-08-17 | Chords: fake C G Am F / [Chorus], Back overlay, GitHub ChordPro | [2026-08-17-chords-fake-back-github.md](./2026-08-17-chords-fake-back-github.md) |
 | 2026-07-26 | Chords: дубли в списке песен (dedupe), доступ к справочнику базовых аккордов из шапки | [2026-07-26-song-list-dedupe-basic-chords-access.md](./2026-07-26-song-list-dedupe-basic-chords-access.md) |
 | 2026-07-26 | Chords: wrong tabs (Fix You), UI back/layering, tab-dump gate | [2026-07-26-chords-wrong-tabs-ui-back.md](./2026-07-26-chords-wrong-tabs-ui-back.md) |
 | 2026-07-20 | Chords D22: **1113** офлайн pesni, фоновый import, UX auto-fetch | [2026-07-20-chords-phone-scale.md](./2026-07-20-chords-phone-scale.md) |

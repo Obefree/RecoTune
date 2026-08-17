@@ -4,6 +4,7 @@
 import * as cheerio from 'cheerio';
 import { preHtmlChordSignal, validateAmdmChordLines } from './amdmChordValidate.mjs';
 import { plainChordSheetToChordPro } from './chordLayout.mjs';
+import { lookupParsedChord, rememberParsedChord } from './parsedChordStore.mjs';
 
 export const AMDM_FETCH_UA = 'RecoTune-chord-fetch/1.0 (on-demand; single song per request)';
 
@@ -544,6 +545,38 @@ export async function handleChordFetchRequest(body) {
     return { status: 400, payload: { error: 'Нужны поля artist и title' } };
   }
 
+  const cached = lookupParsedChord(artist, title);
+  if (cached?.chordPro) {
+    return {
+      status: 200,
+      payload: {
+        chordPro: cached.chordPro,
+        sourceUrl: cached.sourceUrl || 'parsed-store',
+        artist: cached.artist,
+        title: cached.title,
+        fromStore: true,
+      },
+    };
+  }
+
+  if (provider === 'github') {
+    const { fetchGithubChordPro } = await import('./githubChordPro.mjs');
+    const result = await fetchGithubChordPro(artist, title);
+    if (result.stub || !result.chordPro?.trim()) {
+      return {
+        status: result.code === 'blocked' ? 503 : 404,
+        payload: {
+          error: result.error ?? 'Таб не найден на GitHub',
+          code: result.code,
+          stub: true,
+          sourceUrl: result.sourceUrl,
+        },
+      };
+    }
+    rememberParsedChord({ ...result, artist: result.artist || artist, title: result.title || title, provider: 'github' });
+    return { status: 200, payload: result };
+  }
+
   if (provider === 'ultimate_guitar') {
     const { fetchUgChordPro } = await import('./ugFetch.mjs');
     const result = await fetchUgChordPro(artist, title);
@@ -558,6 +591,7 @@ export async function handleChordFetchRequest(body) {
         },
       };
     }
+    rememberParsedChord({ ...result, artist: result.artist || artist, title: result.title || title, provider: 'ultimate_guitar' });
     return { status: 200, payload: result };
   }
 
@@ -577,5 +611,6 @@ export async function handleChordFetchRequest(body) {
       },
     };
   }
+  rememberParsedChord({ ...result, artist: result.artist || artist, title: result.title || title, provider: 'amdm' });
   return { status: 200, payload: result };
 }

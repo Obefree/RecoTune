@@ -7,7 +7,7 @@ import {
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { useRecordingBackground, warnExpoGoBackgroundRecording } from '../hooks/useRecordingBackground';
-import { assertPlaybackFileExists } from '../utils/playbackUri';
+import { assertPlaybackFileExists, saveAudioToPhoneLibrary } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
@@ -1267,7 +1267,26 @@ function normArr(arr){
         setMixHtml(null);
         setMixState('idle');
         setShowExport(false);
-        await Sharing.shareAsync(outPath, { mimeType: 'audio/wav', dialogTitle: `${cur?.name ?? 'Session'} — mix` });
+        const title = `${cur?.name ?? 'Session'} — mix`;
+        const saved = await saveAudioToPhoneLibrary(outPath);
+        if (saved.ok) {
+          Alert.alert(
+            'Микс в памяти телефона',
+            'Альбом RecoTune (Музыка). Файл останется после удаления приложения.',
+            [
+              { text: 'OK' },
+              {
+                text: 'Ещё поделиться',
+                onPress: () => {
+                  void Sharing.shareAsync(outPath, { mimeType: 'audio/wav', dialogTitle: title });
+                },
+              },
+            ],
+          );
+        } else {
+          Alert.alert('Не записалось в память телефона', saved.error ?? 'Share the WAV instead.');
+          await Sharing.shareAsync(outPath, { mimeType: 'audio/wav', dialogTitle: title });
+        }
       } else if (msg.type === 'mix_error') {
         setMixHtml(null);
         setMixState('error');
@@ -1685,7 +1704,7 @@ function normArr(arr){
               )}
 
               <Text style={[styles.exportHint, { marginTop: 10 }]}>
-                Or share individual tracks:
+                Merge → WAV is copied to the RecoTune album on the phone (survives uninstall). Or share tracks:
               </Text>
               {(activeSession?.tracks ?? []).length === 0 ? (
                 <Text style={styles.emptyText}>No tracks in this session</Text>

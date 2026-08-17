@@ -78,7 +78,7 @@ function pesniTrackToPayload(track: PesniRuTrackDetail, sourceUrl: string): Chor
       reason ?? 'На pesni.ru нет построчных аккордов для этой песни.',
     );
   }
-  const chords = [...new Set(extractChordSequence(lyrics))].slice(0, 12).join(' ') || 'C G Am F';
+  const chords = [...new Set(extractChordSequence(lyrics))].slice(0, 12).join(' ');
   const uniqueCount = extractChordSequence(lyrics).length;
   const difficulty: 1 | 2 | 3 =
     uniqueCount <= 3 ? 1 : uniqueCount <= 5 ? 2 : 3;
@@ -164,7 +164,8 @@ async function resolveBestTrackSlug(
     if (best && best.score >= 100) break;
   }
 
-  if (!best?.slug) {
+  const minScore = artist.trim() ? 100 : 80;
+  if (!best?.slug || best.score < minScore) {
     throw new PesniRuError('Песня не найдена на pesni.ru — проверьте исполнителя и название.');
   }
   return best.slug;
