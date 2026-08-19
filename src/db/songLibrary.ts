@@ -475,8 +475,8 @@ export async function setSchemaMeta(key: string, value: string): Promise<void> {
  * (user report: «повторы аккордов»); prefer the curated non-pesni row when
  * both exist, keep title-sorted order otherwise.
  */
-function dedupeSongRows(rows: SongRow[]): SongRow[] {
-  const byKey = new Map<string, SongRow>();
+function dedupeSongRows<T extends SongRow>(rows: T[]): T[] {
+  const byKey = new Map<string, T>();
   const order: string[] = [];
   for (const row of rows) {
     const key = combinedArtistTitle(row.artist, row.title);
@@ -493,12 +493,23 @@ function dedupeSongRows(rows: SongRow[]): SongRow[] {
   return order.map(key => byKey.get(key)!);
 }
 
+type CatalogListRow = SongRow & { has_tab: number };
+
+/** Catalog rows for lists/search — no lyrics blob. Practice still uses getSongById. */
 export async function listSongs(): Promise<SongEntry[]> {
   const database = await ensureDb();
-  const rows = await database.getAllAsync<SongRow>(
-    'SELECT * FROM songs ORDER BY title COLLATE NOCASE ASC',
+  const rows = await database.getAllAsync<CatalogListRow>(
+    `SELECT id, title, artist, chords, key, bpm, difficulty, genre, source,
+            created_at, updated_at,
+            NULL AS lyrics,
+            CASE WHEN lyrics IS NOT NULL AND length(lyrics) > 80 THEN 1 ELSE 0 END AS has_tab
+     FROM songs
+     ORDER BY artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC`,
   );
-  return dedupeSongRows(rows).map(r => bundleBuiltinEntry(rowToEntry(r)));
+  return dedupeSongRows(rows).map(r => ({
+    ...rowToEntry({ ...r, lyrics: null }),
+    chordProVerified: r.has_tab === 1,
+  }));
 }
 
 export async function getSongById(id: string): Promise<SongEntry | null> {

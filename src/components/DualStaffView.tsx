@@ -41,23 +41,42 @@ export function staffNoteCenterX(index: number): number {
   return STAFF_LEFT + index * NOTE_SLOT + NOTE_SLOT / 2;
 }
 
+/** X of each note from sung onsets (longer gaps = wider bars). Min gap so heads do not overlap. */
+export function layoutStaffNoteXs(timings: StaffNoteTiming[]): number[] {
+  if (timings.length === 0) return [];
+  const t0 = timings[0].startMs;
+  const xs: number[] = [];
+  for (let i = 0; i < timings.length; i++) {
+    const fromTime =
+      STAFF_LEFT
+      + NOTE_SLOT / 2
+      + Math.max(0, timings[i].startMs - t0) * (NOTE_SLOT / 250);
+    xs.push(i === 0 ? fromTime : Math.max(xs[i - 1] + 22, fromTime));
+  }
+  return xs;
+}
+
 export function playheadXFromTimings(
   elapsedMs: number,
   timings: StaffNoteTiming[],
   totalDurationMs: number,
+  xs?: number[],
 ): number {
   if (timings.length === 0) return STAFF_LEFT;
+  const centers = xs && xs.length === timings.length
+    ? xs
+    : timings.map((_, i) => staffNoteCenterX(i));
   const total = Math.max(totalDurationMs, 1);
 
   for (let i = 0; i < timings.length; i++) {
     const { startMs, durationMs } = timings[i];
     const endMs = startMs + durationMs;
-    const x0 = staffNoteCenterX(i);
+    const x0 = centers[i];
     if (elapsedMs < endMs || i === timings.length - 1) {
       if (elapsedMs <= startMs) return x0;
       const x1 =
         i < timings.length - 1
-          ? staffNoteCenterX(i + 1)
+          ? centers[i + 1]
           : x0 + NOTE_SLOT * 0.85;
       const span = Math.max(1, endMs - startMs);
       const t = Math.min(1, (elapsedMs - startMs) / span);
@@ -66,7 +85,7 @@ export function playheadXFromTimings(
   }
 
   const last = timings.length - 1;
-  return staffNoteCenterX(last) + NOTE_SLOT * Math.min(1, elapsedMs / total);
+  return centers[last] + NOTE_SLOT * Math.min(1, elapsedMs / total);
 }
 
 function midiToStaffY(midi: number, bottomLineMidi: number, staffTop: number): number {
@@ -213,10 +232,27 @@ export default function DualStaffView({
 
   const bassTop = TREBLE_TOP + (STAFF_LINES - 1) * LINE_SPACING + STAFF_GAP;
 
-  const staffWidth = useMemo(
-    () => STAFF_LEFT + Math.max(notes.length, 1) * NOTE_SLOT + 24,
-    [notes.length],
+  const timings = useMemo(
+    () =>
+      noteTimings ??
+      notes.map((_, i) => ({
+        startMs: i * 400,
+        durationMs: 400,
+      })),
+    [noteTimings, notes],
   );
+
+  const noteXs = useMemo(
+    () => (noteTimings && noteTimings.length === notes.length
+      ? layoutStaffNoteXs(noteTimings)
+      : notes.map((_, i) => staffNoteCenterX(i))),
+    [noteTimings, notes.length],
+  );
+
+  const staffWidth = useMemo(() => {
+    const last = noteXs[noteXs.length - 1] ?? STAFF_LEFT;
+    return last + NOTE_SLOT + 24;
+  }, [noteXs]);
 
   const canvasHeight = useMemo(() => {
     const trebleYs = notes
@@ -231,16 +267,6 @@ export default function DualStaffView({
     return maxY - minY + 16;
   }, [notes, bassTop]);
 
-  const timings = useMemo(
-    () =>
-      noteTimings ??
-      notes.map((_, i) => ({
-        startMs: i * 400,
-        durationMs: 400,
-      })),
-    [noteTimings, notes],
-  );
-
   const activeStaffSet = useMemo(() => {
     if (!isPlaying) return new Set<number>();
     if (activeStaffIndices?.length) return new Set(activeStaffIndices);
@@ -253,8 +279,8 @@ export default function DualStaffView({
     const total = totalDurationMs > 0
       ? totalDurationMs
       : timings.reduce((m, t) => Math.max(m, t.startMs + t.durationMs), 400);
-    return playheadXFromTimings(playbackPositionMs, timings, total);
-  }, [isPlaying, playbackPositionMs, timings, totalDurationMs]);
+    return playheadXFromTimings(playbackPositionMs, timings, total, noteXs);
+  }, [isPlaying, playbackPositionMs, timings, totalDurationMs, noteXs]);
 
   const yOffset = useMemo(() => {
     const trebleYs = notes.map(n =>
@@ -338,7 +364,7 @@ export default function DualStaffView({
           ) : null}
 
           {notes.map((n, idx) => {
-            const x = staffNoteCenterX(idx);
+            const x = noteXs[idx] ?? staffNoteCenterX(idx);
             const isTreble = n.midi >= MIDDLE_C_MIDI;
             const staffTop = isTreble ? TREBLE_TOP : bassTop;
             const bottomMidi = isTreble ? TREBLE_BOTTOM_MIDI : BASS_BOTTOM_MIDI;

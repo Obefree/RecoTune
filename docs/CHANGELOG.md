@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+- **Chords (поиск + списки):** поиск в базе был долгим (полные тексты + MusicBrainz + HTTP). Каталог без lyrics, сеть только при remote; пиллы Исполнители/Песни. См. [docs/features/2026-08-18-chords-library-browse.md](./features/2026-08-18-chords-library-browse.md).
+- **Studio (овердаб ~830 мс):** прогрев плеера больше не утекает в запись (rewind на offset), пресет BT 700→280, ручная калибровка дорожки становится пресетом для следующей. См. [docs/features/2026-08-18-studio-overdub-latency-rewind.md](./features/2026-08-18-studio-overdub-latency-rewind.md).
+- **Melody (распознавание):** кадры склеивались по времени RN, START не сбрасывал прошлый напев, медиана съедала короткие ноты. Движок ставит `t` сам, hop 32 мс, FFT 2048, STOP сразу в контур. См. [docs/features/2026-08-18-melody-recognition-contour.md](./features/2026-08-18-melody-recognition-contour.md).
+- **Melody (PLAY timing):** без пола 200 мс, BPM-складка восьмых. См. [docs/features/2026-08-18-melody-sung-timing.md](./features/2026-08-18-melody-sung-timing.md).
 - **Media (megaphone anti-howl):** петля колонка→mic→колонка — сдвиг частоты ~6 Гц + AEC + гейт на паузах. См. [docs/features/2026-08-17-mic-monitor-noise-gate.md](./features/2026-08-17-mic-monitor-noise-gate.md).
 - **Chords (parsed DB):** прокси/Vercel сначала отдают pesni + кэш парсов с ПК. Pesni + overlay snapshot едут **в APK** (офлайн SQLite). Расширение: `npm run ingest-pesni-chords` (target 5000), `npm run chord-db:ingest-amdm`, `npm run chord-db:ingest-ug` (**только Chords**, строгий match). `npm run chord-db:publish` → snapshot. Прод: `https://recotune-chords.vercel.app/api/fetch-chords`. См. [docs/features/2026-08-17-parsed-chord-db.md](./features/2026-08-17-parsed-chord-db.md).
 - **Media (phone library):** диктофон после Stop и студия после Merge→WAV копируются в альбом RecoTune на телефоне (переживают uninstall). SAVE ALL — для уже записанных. См. [docs/features/2026-08-17-save-recordings-share.md](./features/2026-08-17-save-recordings-share.md).

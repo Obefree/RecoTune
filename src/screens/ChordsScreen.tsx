@@ -23,7 +23,7 @@ import {
 } from '../services/initSongLibrary';
 import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
-  contentQualityScore,
+  hasCatalogTab,
   hasVerifiedPracticeLyrics,
   libraryListChordSnippet,
   needsOnDemandChordFetch,
@@ -146,6 +146,20 @@ function recognizeOutcomeMessage(outcome: RecognizeOutcome): string {
   if (outcome.status === 'match') return '';
   return outcome.message;
 }
+
+function artistCatalogKey(artist: string): string {
+  return (artist || '').trim().toLowerCase() || '\0unknown';
+}
+
+function artistCatalogLabel(artist: string): string {
+  const t = (artist || '').trim();
+  return t || 'Неизвестный';
+}
+
+type LibBrowseMode = 'artists' | 'songs';
+type LibListRow =
+  | { kind: 'artist'; id: string; name: string; count: number; tabCount: number }
+  | { kind: 'song'; id: string; song: SongEntry };
 
 /* ─── Types ─── */
 
@@ -1535,6 +1549,8 @@ export default function ChordsScreen() {
   const [providerSettings, setProviderSettings] = useState<ProviderSettings | null>(null);
   const [libFavOnly, setLibFavOnly]           = useState(false);
   const [libFullTabsOnly, setLibFullTabsOnly] = useState(false);
+  const [libBrowse, setLibBrowse]             = useState<LibBrowseMode>('artists');
+  const [libArtistFilter, setLibArtistFilter] = useState<string | null>(null);
   /** null = not probed yet; dev-only empty-search hint when false */
   const [libChordProxyReachable, setLibChordProxyReachable] = useState<boolean | null>(null);
 
@@ -1731,7 +1747,7 @@ export default function ChordsScreen() {
         if (!cancelled) setLibSearchBusy(false);
       }
     };
-    const t = setTimeout(() => { void run(); }, 90);
+    const t = setTimeout(() => { void run(); }, 280);
     return () => { cancelled = true; clearTimeout(t); };
   }, [libSearch, libraryInitError, applyLibSearchResults]);
 
@@ -1750,39 +1766,70 @@ export default function ChordsScreen() {
     };
   }, [showLibrary]);
 
-  const libResults = (() => {
+  const libSongList = (() => {
     const q = libSearch.trim();
     let list: SongEntry[];
     if (q) {
-      // Search entire catalog (builtin + user + metadata); rank map from searchProviders.
       list = libSearchHits;
     } else if (libFavOnly) {
       list = librarySongs.filter(s => favorites.has(s.id));
     } else {
       list = allSongs;
     }
-    if (libFullTabsOnly) list = list.filter(s => hasVerifiedPracticeLyrics(resolveSongEntry(s)));
+    if (libFullTabsOnly) list = list.filter(s => hasCatalogTab(s));
+    if (libArtistFilter) {
+      const key = artistCatalogKey(libArtistFilter);
+      list = list.filter(s => artistCatalogKey(s.artist) === key);
+    }
     if (q) {
       list = [...list].sort((a, b) => {
         const ra = libSearchRank.get(a.id) ?? 99999;
         const rb = libSearchRank.get(b.id) ?? 99999;
         if (ra !== rb) return ra - rb;
-        return a.title.localeCompare(b.title);
+        return a.title.localeCompare(b.title, 'ru');
       });
     } else {
-      list = [...list].sort((a, b) => a.title.localeCompare(b.title));
+      list = [...list].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
     }
     return list;
   })();
+
+  const showArtistIndex = !libSearch.trim() && libBrowse === 'artists' && !libArtistFilter;
+
+  const libArtistRows = (() => {
+    if (!showArtistIndex) return [];
+    const map = new Map<string, { name: string; count: number; tabCount: number }>();
+    for (const s of libSongList) {
+      const name = artistCatalogLabel(s.artist);
+      const key = artistCatalogKey(s.artist);
+      const prev = map.get(key) ?? { name, count: 0, tabCount: 0 };
+      prev.count += 1;
+      if (hasCatalogTab(s)) prev.tabCount += 1;
+      map.set(key, prev);
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  })();
+
+  const libListRows: LibListRow[] = showArtistIndex
+    ? libArtistRows.map(a => ({
+        kind: 'artist' as const,
+        id: `artist:${artistCatalogKey(a.name)}`,
+        name: a.name,
+        count: a.count,
+        tabCount: a.tabCount,
+      }))
+    : libSongList.map(s => ({ kind: 'song' as const, id: s.id, song: s }));
 
   const libCountLabel = (() => {
     const q = libSearch.trim();
     if (q) {
       const suffix = libSearchHasMore ? '+' : '';
-      return `${libResults.length}${suffix} найдено`;
+      return `${libSongList.length}${suffix} найдено`;
     }
-    if (libFavOnly) return `${libResults.length} избранных`;
-    return `${libResults.length} из ${allSongs.length}`;
+    if (showArtistIndex) return `${libArtistRows.length} исполнителей`;
+    if (libArtistFilter) return `${libSongList.length} · ${libArtistFilter}`;
+    if (libFavOnly) return `${libSongList.length} избранных`;
+    return `${libSongList.length} из ${allSongs.length}`;
   })();
 
   function providerForSong(item: SongEntry): ProviderId {
@@ -2273,6 +2320,14 @@ export default function ChordsScreen() {
       return true;
     }
     if (showLibrary) {
+      if (libSearch.trim()) {
+        setLibSearch('');
+        return true;
+      }
+      if (libArtistFilter) {
+        setLibArtistFilter(null);
+        return true;
+      }
       if (practiceSong) {
         setShowLibrary(false);
         return true;
@@ -2346,6 +2401,8 @@ export default function ChordsScreen() {
     showInstrumentModal,
     showLibrary,
     setShowLibrary,
+    libSearch,
+    libArtistFilter,
     lyricsEditMode,
     tabBarHidden,
     setTabBarHidden,
@@ -3588,7 +3645,7 @@ export default function ChordsScreen() {
             <Ionicons name="search" size={16} color="#444" style={{ marginLeft: 10 }} />
             <TextInput
               style={styles.libSearchInput}
-              placeholder="Название, исполнитель, аккорды..."
+              placeholder="Песня или исполнитель…"
               placeholderTextColor="#333"
               value={libSearch}
               onChangeText={setLibSearch}
@@ -3606,8 +3663,25 @@ export default function ChordsScreen() {
             ) : null}
           </View>
 
-          {/* Избранное / табы; без поиска — сортировка А→Я по умолчанию (без отдельного чипа) */}
+          {/* Исполнители / песни + избранное / табы */}
           <View style={styles.libFilterRow}>
+            <TouchableOpacity
+              onPress={() => { setLibBrowse('artists'); setLibArtistFilter(null); }}
+              style={[styles.libFilterPill, libBrowse === 'artists' && !libSearch.trim() && styles.libFilterPillBrowseActive]}
+            >
+              <Text style={[styles.libFilterPillText, libBrowse === 'artists' && !libSearch.trim() && styles.libFilterPillBrowseText]}>Исполнители</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setLibBrowse('songs'); setLibArtistFilter(null); }}
+              style={[styles.libFilterPill, libBrowse === 'songs' && !libSearch.trim() && !libArtistFilter && styles.libFilterPillBrowseActive]}
+            >
+              <Text style={[styles.libFilterPillText, libBrowse === 'songs' && !libSearch.trim() && !libArtistFilter && styles.libFilterPillBrowseText]}>Песни</Text>
+            </TouchableOpacity>
+            {libArtistFilter ? (
+              <TouchableOpacity onPress={() => setLibArtistFilter(null)} style={[styles.libFilterPill, styles.libFilterPillBrowseActive]}>
+                <Text style={[styles.libFilterPillText, styles.libFilterPillBrowseText]} numberOfLines={1}>← {libArtistFilter}</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
               style={[styles.libFilterPill, libFavOnly && styles.libFilterPillActive]}>
               <Text style={[styles.libFilterPillText, libFavOnly && styles.libFilterPillTextActive]}>⭐ Избранное</Text>
@@ -3623,13 +3697,14 @@ export default function ChordsScreen() {
           {/* Song list */}
           <FlatList
             style={styles.libList}
-            data={libResults}
+            data={libListRows}
+            extraData={`${libBrowse}|${libArtistFilter ?? ''}|${favorites.size}|${libFavOnly}|${libFullTabsOnly}`}
             keyExtractor={item => item.id}
             nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             onEndReached={() => {
-              if (libSearch.trim() && libSearchHasMore) void loadMoreLibrarySearch();
+              if (!showArtistIndex && libSearch.trim() && libSearchHasMore) void loadMoreLibrarySearch();
             }}
             onEndReachedThreshold={0.35}
             ListFooterComponent={
@@ -3637,7 +3712,7 @@ export default function ChordsScreen() {
                 <ActivityIndicator size="small" color="#7c4dff" style={{ marginVertical: 12 }} />
               ) : null
             }
-            contentContainerStyle={libResults.length === 0 ? styles.libListEmptyContent : styles.libListContent}
+            contentContainerStyle={libListRows.length === 0 ? styles.libListEmptyContent : styles.libListContent}
             ListEmptyComponent={
               libSearch.trim() ? (
                 <Text style={styles.identEmptyHint}>
@@ -3653,22 +3728,45 @@ export default function ChordsScreen() {
                       ? 'Каталог ещё загружается…'
                       : libraryFavoritesEmptyHint()}
                 </Text>
-              ) : null
+              ) : (
+                <Text style={styles.identEmptyHint}>
+                  {allSongs.length === 0 ? 'Каталог ещё загружается…' : 'Список пуст.'}
+                </Text>
+              )
             }
             renderItem={({ item }) => {
-              const diffColor = item.difficulty === 1 ? '#00e676' : item.difficulty === 2 ? '#ffeb3b' : '#ff5252';
-              const isFav = favorites.has(item.id);
-              const isCustom = item.id.startsWith('custom_');
-              const resolved = resolveSongEntry(item);
+              if (item.kind === 'artist') {
+                return (
+                  <TouchableOpacity
+                    style={styles.libItem}
+                    onPress={() => setLibArtistFilter(item.name)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.libItemDot, { backgroundColor: '#7c4dff' }]} />
+                    <View style={styles.libItemInfo}>
+                      <Text style={styles.libItemTitle}>{item.name}</Text>
+                      <Text style={styles.libItemArtist}>
+                        {item.count} песен{item.tabCount > 0 ? ` · ${item.tabCount} таб.` : ''}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color="#444" />
+                  </TouchableOpacity>
+                );
+              }
+              const song = item.song;
+              const diffColor = song.difficulty === 1 ? '#00e676' : song.difficulty === 2 ? '#ffeb3b' : '#ff5252';
+              const isFav = favorites.has(song.id);
+              const isCustom = song.id.startsWith('custom_');
+              const resolved = resolveSongEntry(song);
               return (
-                <TouchableOpacity style={styles.libItem} onPress={() => pickSong(item)} activeOpacity={0.7}>
+                <TouchableOpacity style={styles.libItem} onPress={() => pickSong(song)} activeOpacity={0.7}>
                   <View style={[styles.libItemDot, { backgroundColor: diffColor }]} />
                   <View style={styles.libItemInfo}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                      <Text style={styles.libItemTitle}>{item.title}</Text>
+                      <Text style={styles.libItemTitle}>{song.title}</Text>
                       {isCustom && <Text style={{ color: '#7c4dff', fontSize: 9, fontWeight: '800' }}>МОЯ</Text>}
                     </View>
-                    <Text style={styles.libItemArtist}>{item.artist}</Text>
+                    <Text style={styles.libItemArtist}>{song.artist}</Text>
                     {(() => {
                       const badge = songContentBadge(resolved);
                       const chordSnippet = libraryListChordSnippet(resolved);
@@ -3695,26 +3793,24 @@ export default function ChordsScreen() {
                     >
                       {songContentBadgeLabel(songContentBadge(resolved))}
                     </Text>
-                    <Text style={styles.libItemGenre}>{item.genre}</Text>
-                    {item.bpm ? <Text style={styles.libItemBpm}>{item.bpm} BPM</Text> : null}
-                    {item.key ? <Text style={styles.libItemKey}>{item.key}</Text> : null}
+                    <Text style={styles.libItemGenre}>{song.genre}</Text>
+                    {song.bpm ? <Text style={styles.libItemBpm}>{song.bpm} BPM</Text> : null}
+                    {song.key ? <Text style={styles.libItemKey}>{song.key}</Text> : null}
                   </View>
-                  {/* Favorite star */}
-                  <TouchableOpacity onPress={() => toggleFavorite(item.id)} style={{ padding: 6 }}
+                  <TouchableOpacity onPress={() => toggleFavorite(song.id)} style={{ padding: 6 }}
                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                     <Ionicons name={isFav ? 'star' : 'star-outline'} size={18}
                       color={isFav ? '#ff9800' : '#333'} />
                   </TouchableOpacity>
-                  {/* Edit/delete for custom songs */}
                   {isCustom && (
                     <View style={{ flexDirection: 'row', gap: 2 }}>
-                      <TouchableOpacity onPress={() => openAddSong(item)} style={{ padding: 6 }}
+                      <TouchableOpacity onPress={() => openAddSong(song)} style={{ padding: 6 }}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                         <Ionicons name="create-outline" size={16} color="#555" />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => Alert.alert('Удалить?', item.title, [
+                      <TouchableOpacity onPress={() => Alert.alert('Удалить?', song.title, [
                         { text: 'Отмена' },
-                        { text: 'Удалить', style: 'destructive', onPress: () => deleteCustomSong(item.id) },
+                        { text: 'Удалить', style: 'destructive', onPress: () => deleteCustomSong(song.id) },
                       ])} style={{ padding: 6 }}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                         <Ionicons name="trash-outline" size={16} color="#c0392b" />
@@ -5169,12 +5265,14 @@ const styles = StyleSheet.create({
   libGenrePill:  { paddingHorizontal: 12, paddingVertical: 5, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
   libGenrePillActive: { backgroundColor: '#7c4dff', borderColor: '#7c4dff' },
   libGenreText:  { color: '#555', fontSize: 11, fontWeight: '600' },
-  libFilterRow:  { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 6 },
+  libFilterRow:  { flexShrink: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 6 },
   libFilterPill: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#111118', borderRadius: 20, borderWidth: 1, borderColor: '#1e1e28' },
   libFilterPillActive: { backgroundColor: '#ff9800', borderColor: '#ff9800' },
   libFilterPillTabsActive: { borderColor: '#00e67655', backgroundColor: '#00e67612' },
+  libFilterPillBrowseActive: { borderColor: '#7c4dff55', backgroundColor: '#7c4dff18' },
   libFilterPillText: { color: '#555', fontSize: 11, fontWeight: '600' },
   libFilterPillTextActive: { color: '#0a0a0f', fontWeight: '800' },
+  libFilterPillBrowseText: { color: '#b388ff', fontWeight: '800' },
 
   libLegend:   { flexShrink: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 4 },
   libList:     { flex: 1, minHeight: 0 },

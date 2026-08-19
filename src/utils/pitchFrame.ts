@@ -11,8 +11,8 @@ export type PitchFrame = {
 };
 
 export const PITCH_FRAME_RING = {
-  /** ~12 s at the faster melody engine cadence. */
-  maxFrames: 220,
+  /** ~50 s at melody cadence (32 ms). */
+  maxFrames: 1600,
   /**
    * Melody transcription range (Hz). Must match the TunerEngine melody profile
    * (70–1200 Hz) — a narrower gate here silently drops pitches that already

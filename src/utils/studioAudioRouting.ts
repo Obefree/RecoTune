@@ -7,8 +7,8 @@ export const AUDIO_ROUTING_FILE = (FileSystem.documentDirectory ?? '') + 'studio
 
 /** Задержка для проводных / встроенных (дорожки 2+) */
 export const PREROLL_MS_WIRED = 150;
-/** Задержка при записи поверх Bluetooth-прослушивания */
-export const PREROLL_MS_BLUETOOTH = 700;
+/** Типичный A2DP round-trip. Не 700: старое значение складывалось с ожиданием старта плеера. */
+export const PREROLL_MS_BLUETOOTH = 280;
 
 export type AudioRouteMode = 'auto' | 'manual';
 export type AudioOutputRoute = 'system' | 'speaker' | 'earpiece' | 'bluetooth' | 'wired';

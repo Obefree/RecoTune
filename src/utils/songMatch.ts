@@ -1,6 +1,6 @@
 import type { SongEntry } from '../data/songDatabase';
 import { BUILTIN_SONGS_SEED } from '../data/builtinSongsSeed';
-import { hasVerifiedPracticeLyrics } from './songContent';
+import { hasCatalogTab, hasVerifiedPracticeLyrics } from './songContent';
 
 /** Нормализация для сопоставления названий */
 export function normalizeSongText(s: string): string {
@@ -78,7 +78,7 @@ export function findVerifiedCatalogMatch(
   songs: SongEntry[],
   minScore = 130,
 ): SongEntry | null {
-  const verified = songs.filter(s => hasVerifiedPracticeLyrics(s));
+  const verified = songs.filter(s => hasCatalogTab(s));
   const match = findBestSongMatch(artist, title, verified, minScore);
   if (!match) return null;
   const nt = normalizeSongText(title);

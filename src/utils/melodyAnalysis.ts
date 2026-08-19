@@ -114,6 +114,15 @@ export function medianInterOnsetMs(timestamps: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
+/** Median IOI is often 8ths/16ths; fold into a sung-beat BPM (~52–184). */
+export function foldIoIToBpm(rawBpm: number): number {
+  if (!Number.isFinite(rawBpm) || rawBpm <= 0) return rawBpm;
+  let bpm = rawBpm;
+  while (bpm > 184) bpm /= 2;
+  while (bpm < 52) bpm *= 2;
+  return Math.round(bpm);
+}
+
 export function estimateRhythm(events: RegisteredNoteEvent[]): RhythmEstimate | null {
   if (events.length < 2) return null;
   const gapsMs = interOnsetGapsMs(events.map(e => e.ts));
@@ -123,6 +132,6 @@ export function estimateRhythm(events: RegisteredNoteEvent[]): RhythmEstimate | 
   if (median >= 750) tempoLabel = 'slow';
   else if (median < 380) tempoLabel = 'fast';
 
-  const bpmApprox = median > 80 ? Math.round(60000 / median) : null;
+  const bpmApprox = median > 80 ? foldIoIToBpm(Math.round(60000 / median)) : null;
   return { tempoLabel, bpmApprox, gapsMs };
 }

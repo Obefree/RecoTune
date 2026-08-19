@@ -35,22 +35,24 @@ export type TranscriptionResult = {
 };
 
 const TRANSCRIPTION = {
-  minRms: 0.006,
-  maxYin: 0.21,
+  minRms: 0.005,
+  maxYin: 0.28,
   /** Chart trace only — keeps glide visible without phantom notes on strip. */
   chartMinRms: 0.004,
   chartMaxYin: 0.24,
   pitchJumpSemitones: 0.72,
+  /** Small vibrato hops still need 2 frames; leaps split on the first frame. */
   transitionConfirmFrames: 2,
-  /** Shorter so genuine fast notes survive (~2 frames at melody cadence). */
-  minSegmentMs: 110,
+  immediateLeapSemitones: 1.5,
+  /** Floor only for 1-frame leftovers — 2-frame 8ths (~110 ms) must survive. */
+  minSegmentMs: 70,
   silenceGapMs: 220,
   /** Bridge brief dropouts between two sung regions (portamento / breath). */
   voicedBridgeGapMs: 130,
-  mergeSameMidiGapMs: 130,
+  mergeSameMidiGapMs: 80,
   mergeSameMidiMaxCents: 55,
-  shortFragmentMs: 150,
-  shortFragmentFrames: 2,
+  shortFragmentMs: 90,
+  shortFragmentFrames: 1,
   shortFragmentMaxSemitones: 1.05,
   /**
    * Energy-onset split for repeated same-pitch notes (C-C-C).
@@ -158,7 +160,10 @@ function smoothVoicedFrames(voiced: PitchFrame[]): PitchFrame[] {
     const start = Math.max(0, i - 1);
     const end = Math.min(voiced.length, i + 2);
     const window = voiced.slice(start, end).map(f => f.midi!).filter(m => m != null);
-    return withSmoothedMidi(frame, median(window));
+    const med = median(window);
+    // Keep leaps: 3-frame median otherwise smears a 1–2 frame passing note into neighbors.
+    if (Math.abs(frame.midi! - med) >= TRANSCRIPTION.pitchJumpSemitones) return frame;
+    return withSmoothedMidi(frame, med);
   });
 }
 
@@ -172,6 +177,9 @@ function segmentMedianMidiFloat(frames: PitchFrame[]): number {
 }
 
 function isConfirmedPitchMove(voiced: PitchFrame[], index: number, currentMedian: number): boolean {
+  const leap = Math.abs((voiced[index].midi ?? currentMedian) - currentMedian);
+  if (leap >= TRANSCRIPTION.immediateLeapSemitones) return true;
+
   const frames: PitchFrame[] = [];
   for (let i = index; i < voiced.length && frames.length < TRANSCRIPTION.transitionConfirmFrames; i++) {
     if (i > index && voiced[i].t - voiced[i - 1].t >= TRANSCRIPTION.silenceGapMs) break;
@@ -382,8 +390,8 @@ function fitSegment(frames: PitchFrame[]): TranscribedNoteSegment | null {
 
   return {
     startMs,
-    endMs: Math.max(endMs, startMs + TRANSCRIPTION.minSegmentMs),
-    durationMs: Math.max(durationMs, TRANSCRIPTION.minSegmentMs),
+    endMs,
+    durationMs,
     midi,
     midiFloatMedian,
     freqMedian,

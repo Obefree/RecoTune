@@ -62,8 +62,8 @@ export const MELODY_PLAYBACK = {
   MIN_NOTES_WARNING: 3,
   /** Web Audio floor — engine only; payload may be shorter. */
   ENGINE_MIN_DURATION_MS: 40,
-  /** Contour PLAY: audible floor so short segments still sound. */
-  CONTOUR_MIN_DURATION_MS: 200,
+  /** Contour PLAY: do not stretch sung notes; engine floor is enough. */
+  CONTOUR_MIN_DURATION_MS: 40,
   ENGINE_MAX_DURATION_MS: 4000,
   /** Piano legato: release at this fraction of scheduled duration. */
   PIANO_LEGATO_RELEASE_RATIO: 0.92,
@@ -188,7 +188,7 @@ function durationFromSungTiming(
   return lastNoteDurationMs(medianGap, gapAfterLast);
 }
 
-/** Optional: snap durations toward nearest 16th at BPM; startMs unchanged. */
+/** Optional: snap start + duration to 16th grid at BPM. */
 function applyBpmDurationSnap(
   notes: MelodyPlayNote[],
   bpmApprox: number | null | undefined,
@@ -198,10 +198,12 @@ function applyBpmDurationSnap(
   if (sixteenthMs < 40) return notes;
 
   return notes.map(n => {
-    const snapped = Math.round(n.durationMs / sixteenthMs) * sixteenthMs;
+    const snappedDur = Math.round(n.durationMs / sixteenthMs) * sixteenthMs;
+    const snappedStart = Math.round(n.startMs / sixteenthMs) * sixteenthMs;
     return {
       ...n,
-      durationMs: Math.max(MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS, snapped),
+      startMs: Math.max(0, snappedStart),
+      durationMs: Math.max(MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS, snappedDur),
     };
   });
 }
@@ -303,23 +305,22 @@ export function buildMelodyPlaybackNotesFromSegments(
   if (segments.length === 0) return { notes: [], pitchSource: 'raw' };
 
   const t0 = segments[0].startMs;
-  const noteGapMs = options?.noteGapMs ?? MELODY_PLAYBACK.ARTICULATION_GAP_MS;
+  const noteGapMs = options?.noteGapMs ?? 12;
   const out: MelodyPlayNote[] = [];
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     const next = segments[i + 1];
-    const segmentEnd = next ? Math.min(seg.endMs, next.startMs) : seg.endMs;
-    const rawDur = Math.max(
-      MELODY_PLAYBACK.CONTOUR_MIN_DURATION_MS,
-      MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS,
-      segmentEnd - seg.startMs - (next ? noteGapMs : 0),
-    );
-    const samePitch = next != null && next.midi === seg.midi;
-    const dur =
-      samePitch && rawDur < MELODY_PLAYBACK.MIN_SAME_PITCH_MS
-        ? MELODY_PLAYBACK.MIN_SAME_PITCH_MS
-        : rawDur;
+    const hardEnd = next ? Math.min(seg.endMs, next.startMs) : seg.endMs;
+    const sungDur = hardEnd - seg.startMs - (next ? noteGapMs : 0);
+    let dur = Math.max(MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS, sungDur);
+    if (next) {
+      const maxDur = Math.max(
+        MELODY_PLAYBACK.ENGINE_MIN_DURATION_MS,
+        next.startMs - seg.startMs - noteGapMs,
+      );
+      dur = Math.min(dur, maxDur);
+    }
 
     out.push({
       midi: seg.midi,

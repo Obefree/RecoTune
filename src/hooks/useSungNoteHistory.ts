@@ -105,10 +105,16 @@ export function useSungNoteHistory() {
     lastChartPtMsRef.current = 0;
     chartOriginRef.current = null;
     setChartLayoutOriginTs(null);
+    pitchFrameRingRef.current = [];
+    setPitchFrames([]);
+    setNotes([]);
+    setPitchHistory([]);
+    setRegisteredEvents([]);
   }, []);
 
   const feed = useCallback((sample: SungNoteFeedSample) => {
-    const ts = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const ts = sample.ts
+      ?? (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const frameFreq = sample.frameFrequency ?? sample.frequency;
     const chartSource =
       sample.chartFrequency ?? sample.frameFrequency ?? sample.frequency;
@@ -150,6 +156,8 @@ export function useSungNoteHistory() {
     }
   }, []);
 
+  const getPitchFrames = useCallback(() => pitchFrameRingRef.current, []);
+
   return {
     notes,
     pitchHistory,
@@ -161,5 +169,6 @@ export function useSungNoteHistory() {
     beginRecording,
     endRecording,
     loadSnapshot,
+    getPitchFrames,
   };
 }

@@ -63,18 +63,17 @@ const SESSIONS_FILE = (FileSystem.documentDirectory ?? '') + 'studio_sessions.js
 const STUDIO_DIR    = (FileSystem.documentDirectory ?? '') + 'studio/';
 const LATENCY_FILE        = (FileSystem.documentDirectory ?? '') + 'studio_latency.json';
 
-// prerollMs = оценка задержки монитор→микрофон (~150 мс провод, ~700 мс BT).
-// ЕДИНСТВЕННЫЙ владелец компенсации: дорожки 2+ получают offsetMs = prerollMs, и
-// на воспроизведении/сведении дорожка сдвигается раньше ровно на эту величину.
-// Запись стартует только после того, как бэкинг реально зазвучал (waitForPlaybackStart),
-// чтобы микрофон не записал ещё и «холодный старт» плеера — раньше из-за него задержку
-// приходилось удваивать. Пресеты: провод 150, BT 700.
+// prerollMs = оценка задержки монитор→микрофон (провод ~150, BT ~280).
+// ЕДИНСТВЕННЫЙ владелец компенсации: дорожки 2+ получают offsetMs = prerollMs.
+// Прогрев плеера (waitForPlaybackStart) НЕ должен утекать в таймлайн записи:
+// после прогрева бэкинг возвращается на свои offset, и только потом стартует mic.
 const DEFAULT_PREROLL_MS = PREROLL_MS_WIRED;
 
 /**
  * Дождаться, пока только что запущенный бэкинг реально начнёт играть (позиция ушла
- * дальше предпозиционированного старта). Так овердаб пишется под слышимый бэкинг, а не
- * под тишину прогрева плеера. Ограничено по времени, чтобы никогда не подвесить запись.
+ * дальше предпозиционированного старта). Это только прогрев декодера — после него
+ * дорожки обязательно rewind на offset, иначе 20–500 мс ожидания окажутся в записи
+ * и калибровка «плывёт» от дубля к дублю.
  */
 async function waitForPlaybackStart(sound: Audio.Sound, startMs: number): Promise<void> {
   const deadline = Date.now() + 500;
@@ -87,6 +86,23 @@ async function waitForPlaybackStart(sound: Audio.Sound, startMs: number): Promis
     }
     await new Promise<void>(r => setTimeout(r, 16));
   }
+}
+
+/** Вернуть уже прогретый бэкинг на стартовые offset до старта микрофона. */
+async function rewindPlaybackToOffsets(
+  sounds: Audio.Sound[],
+  tracks: Track[],
+): Promise<void> {
+  await Promise.all(sounds.map(async (sound, i) => {
+    const off = Math.max(0, tracks[i]?.offsetMs ?? 0);
+    try {
+      await sound.setStatusAsync({ shouldPlay: false, positionMillis: off });
+    } catch {
+      try {
+        await sound.setPositionAsync(off);
+      } catch {}
+    }
+  }));
 }
 
 const TRACK_COLORS = [
@@ -833,23 +849,28 @@ export default function StudioScreen() {
         setInputApplyNote(null);
       }
 
-      // ── Старт записи под УЖЕ ЗВУЧАЩИЙ бэкинг ─────────────────────────
-      // Бэкинг пре-позиционирован по своим offset (как в Play all): дорожки с off≥0
-      // играют сразу, с off<0 — через |off| мс. Затем ждём, пока бэкинг реально
-      // зазвучит, и только потом стартуем микрофон. Иначе запись захватывала бы ещё
-      // и «холодный старт» плеера, и задержку записанной дорожки приходилось удваивать
-      // (baseline preroll стекался поверх латентности старта плеера). Компенсацию
-      // латентности владеет ОДНО место — offsetMs = prerollMs при сохранении.
+      // ── Прогрев плеера, затем rewind, затем mic+play вместе ─────────
+      // Иначе waitForPlaybackStart (20–500 мс, плавает) остаётся в файле овердаба,
+      // и на каждой новой дорожке приходится ставить другую ручную задержку (~830).
+      const warmupTimeouts: ReturnType<typeof setTimeout>[] = [];
       playbackSounds.forEach((s, i) => {
         const off = session.tracks[i]?.offsetMs ?? 0;
         if (off >= 0) s.playAsync().catch(() => {});
-        else setTimeout(() => { s.playAsync().catch(() => {}); }, Math.abs(off));
+        else warmupTimeouts.push(setTimeout(() => { s.playAsync().catch(() => {}); }, Math.abs(off)));
       });
       const refIdx = session.tracks.findIndex(t => (t.offsetMs ?? 0) >= 0);
       if (refIdx >= 0 && playbackSounds[refIdx]) {
         await waitForPlaybackStart(playbackSounds[refIdx], Math.max(0, session.tracks[refIdx].offsetMs ?? 0));
       }
+      warmupTimeouts.forEach(clearTimeout);
+      await rewindPlaybackToOffsets(playbackSounds, session.tracks);
+
       await rec.startAsync();
+      playbackSounds.forEach((s, i) => {
+        const off = session.tracks[i]?.offsetMs ?? 0;
+        if (off >= 0) s.playAsync().catch(() => {});
+        else setTimeout(() => { s.playAsync().catch(() => {}); }, Math.abs(off));
+      });
       recRef.current = rec;
       startRef.current = Date.now();
 
@@ -931,7 +952,10 @@ export default function StudioScreen() {
     setActiveSession(updated);
     await saveSessions(next);
     liveResyncTrackOffsets(updated);
-  }, [saveSessions, liveResyncTrackOffsets]);
+    // Ручная калибровка дорожки 2+ — это и есть пресет для следующей записи.
+    const idx = sess.tracks.findIndex(t => t.id === track.id);
+    if (idx > 0 && newOffset > 0) await savePreroll(newOffset);
+  }, [saveSessions, liveResyncTrackOffsets, savePreroll]);
 
   const updateTrackGain = useCallback(async (track: Track, delta: number) => {
     const sess = activeSessionRef.current;
@@ -1792,6 +1816,7 @@ function normArr(arr){
                 <Text style={styles.settingsSectionLabel}>② Задержка дорожек (мс)</Text>
                 <Text style={styles.settingsSectionHint}>
                   Дорожки 2+ сдвигаются на эту величину, чтобы попасть в минус.
+                  Одна цифра на все овердабы (не копится от дорожки к дорожке).
                   Запаздывает — увеличь, опережает — уменьши. Пресеты: провод {PREROLL_MS_WIRED}, BT {PREROLL_MS_BLUETOOTH}.
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16 }}>

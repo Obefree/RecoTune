@@ -24,6 +24,8 @@ export interface PitchMessage {
   signal?: number;
   /** YIN CMNDF minimum — lower is more confident */
   yinConfidence?: number;
+  /** Audio-clock ms from the engine loop (not RN receive time). */
+  t?: number;
   sourceMode?: TunerEngineMode;
   message?: string;
 }
@@ -55,12 +57,13 @@ const ENGINE_PROFILES = {
     name: 'melody',
     minHz: 70,
     maxHz: 1200,
-    rmsGate: 0.006,
-    maxYin: 0.2,
-    ring: 5,
+    rmsGate: 0.005,
+    maxYin: 0.26,
+    ring: 3,
     jumpRatio: 1.34,
     jumpBlendNew: 0.62,
-    frameMs: 55,
+    frameMs: 32,
+    fftSize: 2048,
   },
 } as const;
 
@@ -318,6 +321,14 @@ const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: numb
       if (Math.abs(dv) > 1e-10) bt = chosen + (s0 - s2) / (2 * dv);
     }
     var f = sr / bt;
+    // Humming often locks onto H2. If the octave-down lag is also a YIN dip, take it.
+    if (ENGINE.name === 'melody' && f > 520) {
+      var tauOct = Math.round(bt * 2);
+      if (tauOct < maxP && yin[tauOct] <= ENGINE.maxYin + 0.06) {
+        f = sr / tauOct;
+        chosen = tauOct;
+      }
+    }
     if (f < ENGINE.minHz || f > ENGINE.maxHz) return null;
     return { freq: f, yin: yin[chosen] };
   }
@@ -363,6 +374,10 @@ const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: numb
 
   var ctx, analyser, buf, rafId, active = false;
 
+  function engineT() {
+    return ctx ? Math.round(ctx.currentTime * 1000) : Date.now();
+  }
+
   function loop() {
     if (!active) return;
     analyser.getFloatTimeDomainData(buf);
@@ -380,6 +395,7 @@ const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: numb
         var n = freqToNote(fUse);
         post({
           type: 'pitch',
+          t: engineT(),
           frequency: fUse,
           rawFrequency: fRaw,
           stableFrequency: fUse,
@@ -395,12 +411,12 @@ const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: numb
       } else {
         freqRing.length = 0;
         lastStableF = null;
-        post({ type: 'signal', signal: signal });
+        post({ type: 'signal', t: engineT(), signal: signal });
       }
     } else {
       freqRing.length = 0;
       lastStableF = null;
-      post({ type: 'silent', signal: 0 });
+      post({ type: 'silent', t: engineT(), signal: 0 });
     }
     rafId = setTimeout(loop, ENGINE.frameMs);
   }
@@ -410,7 +426,7 @@ const buildHTML = (mode: 'tuner' | 'melody', range: { minHz: number; maxHz: numb
       var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false });
       ctx      = new (window.AudioContext || window.webkitAudioContext)();
       analyser = ctx.createAnalyser();
-      analyser.fftSize = 4096;
+      analyser.fftSize = ENGINE.fftSize || 4096;
       ctx.createMediaStreamSource(stream).connect(analyser);
       buf    = new Float32Array(analyser.fftSize);
       active = true;

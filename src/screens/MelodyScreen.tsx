@@ -131,6 +131,7 @@ export default function MelodyScreen() {
     beginRecording: beginChartRecording,
     endRecording: endChartRecording,
     loadSnapshot,
+    getPitchFrames,
   } = useSungNoteHistory();
 
   const transcription = useMemo(
@@ -273,15 +274,16 @@ export default function MelodyScreen() {
         cents: stableInfo.cents,
         frameCents: rawInfo.cents,
         yinConfidence: msg.yinConfidence,
+        ts: msg.t,
       });
     } else if (msg.type === 'signal') {
-      feedSungNote({ frequency: null, signal: msg.signal ?? 0 });
+      feedSungNote({ frequency: null, signal: msg.signal ?? 0, ts: msg.t });
       smoothedFreqRef.current = null;
       setNote(null);
       setFrequency(null);
       setSignalLevel(msg.signal ?? 0);
     } else if (msg.type === 'silent') {
-      feedSungNote({ frequency: null, signal: 0 });
+      feedSungNote({ frequency: null, signal: 0, ts: msg.t });
       smoothedFreqRef.current = null;
       setNote(null);
       setFrequency(null);
@@ -359,7 +361,11 @@ export default function MelodyScreen() {
     setNote(null);
     setFrequency(null);
     setSignalLevel(0);
-  }, [stopMelodyPlayback, endChartRecording]);
+    const result = transcribeFromPitchFrames(getPitchFrames());
+    if (result.segments.length > 0) {
+      applyHumTranscription(result, `Напев: ${result.segments.length} нот`);
+    }
+  }, [stopMelodyPlayback, endChartRecording, getPitchFrames, applyHumTranscription]);
 
   const handleImportFromFile = useCallback(async () => {
     if (fileImportBusy) return;

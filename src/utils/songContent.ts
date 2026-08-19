@@ -41,6 +41,11 @@ export function hasVerifiedPracticeLyrics(song: SongEntry): boolean {
   return isVerifiedChordProLyrics(song.lyrics);
 }
 
+/** List/filter: tab exists in SQLite even when the lyrics blob was not loaded. */
+export function hasCatalogTab(song: SongEntry): boolean {
+  return song.chordProVerified === true || hasVerifiedPracticeLyrics(song);
+}
+
 export function resolveLyricsText(
   song: SongEntry,
   opts?: NormalizeLyricsOptions,
@@ -94,11 +99,11 @@ export function songContentBadge(song: SongEntry): SongContentBadge {
   if (
     (isMetadataCatalogId(song.id) || isRemoteTabSearchId(song.id)) &&
     !song.chords?.trim() &&
-    !hasVerifiedPracticeLyrics(song)
+    !hasCatalogTab(song)
   ) {
     return 'metadata';
   }
-  if (hasVerifiedPracticeLyrics(song)) return 'chords';
+  if (hasCatalogTab(song)) return 'chords';
   if (song.chords?.trim()) return 'progression';
   return 'title';
 }
@@ -121,8 +126,14 @@ export function needsOnDemandChordFetch(song: SongEntry): boolean {
   const resolved = resolveSongEntry(song);
   if (hasVerifiedPracticeLyrics(resolved)) return false;
   if (isRemoteTabSearchId(resolved.id)) return true;
-  const badge = songContentBadge(resolved);
-  return badge === 'metadata' || badge === 'progression' || isMetadataOnlySong(resolved);
+  if (isMetadataOnlySong(resolved)) return true;
+  if (
+    (isMetadataCatalogId(resolved.id) || isRemoteTabSearchId(resolved.id)) &&
+    !resolved.chords?.trim()
+  ) {
+    return true;
+  }
+  return Boolean(resolved.chords?.trim());
 }
 
 /** Builtin bundle rows with verified ChordPro lines (for catalog upgrade toast / dev). */
@@ -140,8 +151,9 @@ export const PROGRESSION_ONLY_HINT =
 
 export function contentQualityScore(song: SongEntry): number {
   if (hasVerifiedPracticeLyrics(song)) {
-    return 100 + Math.min(song.lyrics!.length, 200);
+    return 100 + Math.min(song.lyrics?.length ?? 80, 200);
   }
+  if (song.chordProVerified === true) return 180;
   if (song.chords?.trim()) return 8;
   return 0;
 }

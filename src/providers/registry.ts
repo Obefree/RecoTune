@@ -135,6 +135,7 @@ export async function searchProviders(
 
     offset?: number;
 
+    /** When false, SQLite catalog only (library overlay). Skips MusicBrainz, remote chord catalog, pesni HTTP. */
     includeRemote?: boolean;
 
     /** pesni.ru hits — only on first page by default (low priority). */
@@ -190,30 +191,34 @@ export async function searchProviders(
     });
   }
 
-  await mergeMetadataHits(map, q, pageSize, offset);
+  const localOnly = options?.includeRemote === false;
 
-  if (offset === 0 && q.length >= 2) {
-    try {
-      const remoteHits = await searchRemoteChordCatalog(q, { limit: 28 });
-      for (const hit of remoteHits) {
-        merge(map, hit, metadataDedupeKey(hit.title, hit.artist));
+  if (!localOnly) {
+    await mergeMetadataHits(map, q, pageSize, offset);
+
+    if (offset === 0 && q.length >= 2) {
+      try {
+        const remoteHits = await searchRemoteChordCatalog(q, { limit: 28 });
+        for (const hit of remoteHits) {
+          merge(map, hit, metadataDedupeKey(hit.title, hit.artist));
+        }
+      } catch {
+        /* offline / proxy down — metadata-only */
       }
-    } catch {
-      /* offline / proxy down — metadata-only */
     }
-  }
 
-  const includePesni =
-    options?.includePesni !== false &&
-    offset === 0 &&
-    (await isProviderEnabled('pesni_ru'));
-  if (includePesni && q.length >= 2) {
-    try {
-      const pesniLimit = Math.min(pageSize, 50);
-      const hits = await pesniRuProvider.search(q, pesniLimit);
-      for (const hit of hits) merge(map, hit);
-    } catch {
-      /* skip failed pesni.ru */
+    const includePesni =
+      options?.includePesni !== false &&
+      offset === 0 &&
+      (await isProviderEnabled('pesni_ru'));
+    if (includePesni && q.length >= 2) {
+      try {
+        const pesniLimit = Math.min(pageSize, 50);
+        const hits = await pesniRuProvider.search(q, pesniLimit);
+        for (const hit of hits) merge(map, hit);
+      } catch {
+        /* skip failed pesni.ru */
+      }
     }
   }
 

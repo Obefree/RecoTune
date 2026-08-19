@@ -11,17 +11,18 @@
 
 const RING = { freqMin: 70, freqMax: 1200 };
 const T = {
-  minRms: 0.006,
-  maxYin: 0.21,
+  minRms: 0.005,
+  maxYin: 0.28,
   pitchJumpSemitones: 0.72,
   transitionConfirmFrames: 2,
-  minSegmentMs: 110,
+  immediateLeapSemitones: 1.5,
+  minSegmentMs: 70,
   silenceGapMs: 220,
   voicedBridgeGapMs: 130,
-  mergeSameMidiGapMs: 130,
+  mergeSameMidiGapMs: 80,
   mergeSameMidiMaxCents: 55,
-  shortFragmentMs: 150,
-  shortFragmentFrames: 2,
+  shortFragmentMs: 90,
+  shortFragmentFrames: 1,
   shortFragmentMaxSemitones: 1.05,
   onsetPeakDecay: 0.9,
   onsetReleaseRatio: 0.62,
@@ -66,11 +67,15 @@ function smooth(voiced) {
   if (voiced.length < 3) return voiced;
   return voiced.map((f, i) => {
     const win = voiced.slice(Math.max(0, i - 1), Math.min(voiced.length, i + 2)).map(x => x.midi);
-    return { ...f, midi: median(win) };
+    const med = median(win);
+    if (Math.abs(f.midi - med) >= T.pitchJumpSemitones) return f;
+    return { ...f, midi: med };
   });
 }
 
 function confirmedPitchMove(voiced, index, curMed) {
+  const leap = Math.abs(voiced[index].midi - curMed);
+  if (leap >= T.immediateLeapSemitones) return true;
   const frames = [];
   for (let i = index; i < voiced.length && frames.length < T.transitionConfirmFrames; i++) {
     if (i > index && voiced[i].t - voiced[i - 1].t >= T.silenceGapMs) break;
@@ -232,5 +237,28 @@ assert(
   `distinct short C5 between two A4 must survive, got ${JSON.stringify(sandwichNotes)}`,
 );
 assert(sandwichNotes.length === 3, `A4-C5-A4 should be 3 notes, got ${sandwichNotes.length}`);
+
+// 7) Fast 8th-note scale C4 D4 E4 F4 (2 frames each) — all four survive.
+const scale = [
+  ...held(0, 262, 2, 0.5),
+  ...held(110, 294, 2, 0.5),
+  ...held(220, 330, 2, 0.5),
+  ...held(330, 349, 2, 0.5),
+];
+const scaleNotes = transcribe(scale);
+assert(scaleNotes.length === 4, `C-D-E-F 8ths should be 4 notes, got ${scaleNotes.length}`);
+
+// 8) 2-frame passing note must survive 3-frame median (leap-preserving smooth).
+const passing = [
+  ...held(0, 262, 4, 0.5),
+  ...held(220, 330, 2, 0.5),
+  ...held(330, 392, 4, 0.5),
+];
+const passingNotes = transcribe(passing);
+assert(passingNotes.length === 3, `C-E-G with 2-frame E must stay 3 notes, got ${passingNotes.length}`);
+assert(
+  passingNotes.includes(Math.round(freqToMidi(330))),
+  `passing E4 must survive smoothing, got ${JSON.stringify(passingNotes)}`,
+);
 
 console.log('verify-melody-transcription: OK');

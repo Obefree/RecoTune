@@ -1,6 +1,6 @@
 import { listSongs } from './songLibrary';
 import type { SongEntry } from '../data/songDatabase';
-import { contentQualityScore, hasVerifiedPracticeLyrics } from '../utils/songContent';
+import { contentQualityScore } from '../utils/songContent';
 import {
   extractChordSequence,
   looksLikeChordQuery,
@@ -14,17 +14,10 @@ export type SmartSearchHit = SongEntry & {
   matchKind: MatchKind;
 };
 
-const LYRICS_SNIPPET_LEN = 480;
-
-function lyricsSnippet(song: SongEntry): string {
-  if (!hasVerifiedPracticeLyrics(song)) return '';
-  const raw = song.lyrics;
-  return raw ? raw.slice(0, LYRICS_SNIPPET_LEN) : '';
-}
-
 /**
- * Smart search over builtin+user SQLite (in-memory rank after load).
+ * Smart search over builtin+user SQLite (in-memory rank after catalog load).
  * Ranking: exact > prefix > contains > fuzzy (Levenshtein + token split).
+ * Title/artist/chords only — lyrics stay in getSongById for practice.
  */
 export async function searchSongsSmart(
   query: string,
@@ -48,7 +41,6 @@ export async function searchSongsSmart(
 
   const hits: SmartSearchHit[] = [];
   for (const song of songs) {
-    const lyrics = lyricsSnippet(song);
     const { score, kind } = scoreSongAgainstQuery(q, song.title, song.artist);
     // Query present: rank by text match; quality only breaks ties (not builtin-first).
     const qualityBoost = score > 0 ? Math.min(contentQualityScore(song) * 0.04, 8) : 0;
@@ -61,13 +53,13 @@ export async function searchSongsSmart(
       if (tokens.every(t => chordsNorm.includes(t))) finalScore = Math.max(finalScore, 20);
     }
 
-    const searchBlob = `${song.artist} ${song.title} ${song.genre} ${song.chords} ${lyrics}`;
+    const searchBlob = `${song.artist} ${song.title} ${song.genre} ${song.chords}`;
     if (blobMatchesQuery(searchBlob, qForms)) {
       finalScore = Math.max(finalScore, 95);
     }
 
     if (chordIntent) {
-      const targetChords = extractChordSequence(`${song.chords} ${lyrics}`);
+      const targetChords = extractChordSequence(song.chords);
       const chordScore = scoreChordSequence(queryChords, targetChords);
       if (chordScore > 0) {
         finalScore = Math.max(finalScore, 110 + chordScore);
@@ -96,7 +88,7 @@ export function filterSongsQuick(songs: SongEntry[], query: string): SongEntry[]
   return songs.filter(s => {
     const hay = `${s.title} ${s.artist} ${s.genre} ${s.chords}`.toLowerCase();
     if (hay.includes(q)) return true;
-    const blob = `${s.artist} ${s.title} ${s.genre} ${s.chords} ${lyricsSnippet(s)}`;
+    const blob = `${s.artist} ${s.title} ${s.genre} ${s.chords}`;
     return blobMatchesQuery(blob, forms);
   });
 }

@@ -24,6 +24,7 @@
     "verify-song-library-dedupe": "node tools/verify-song-library-dedupe.mjs",
     "verify-pitch-chart": "node tools/verify-pitch-chart-history.mjs",
     "verify-melody-transcription": "node tools/verify-melody-transcription.mjs",
+    "verify-melody-playback": "node tools/verify-melody-playback.mjs",
     "verify-tuner-display": "node tools/verify-tuner-display.mjs",
     "verify-tuner-chart": "node tools/verify-tuner-chart-window.mjs",
     "dev-proxy": "npm run dev-proxy --prefix tools/chord-fetch",
