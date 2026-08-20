@@ -9,6 +9,7 @@ import {
   COVER_TEXT_RE,
 } from './amdmFetch.mjs';
 import { searchParsedStore } from './parsedChordStore.mjs';
+import { searchUgByQuery } from './ugFetch.mjs';
 
 const MAX_PER_PROVIDER = 16;
 const AMDM_SEARCH_ATTEMPTS = 3;
