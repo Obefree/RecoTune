@@ -1,13 +1,20 @@
 /**
  * Annotated lyrics database — [Chord]word format (ChordPro compatible).
  *
- * Two lookup paths:
- *   1. LYRICS_DB     — keyed by song ID from songDatabase.ts (legacy).
- *   2. LYRICS_BY_KEY — keyed by normalized "artist|title" (preferred).
+ * Lookup: artist+title via LYRICS_BY_KEY (preferred). Legacy LYRICS_DB ids
+ * are a fallback only — catalogue ids (s014, c009, …) rarely match lyrics ids
+ * (sb01, sn02, …), so id-first lookup used to attach the wrong body or none.
  *
- * `findLyrics(artist, title, id?)` checks ID first, then artist+title.
- * Merged at runtime in ChordsScreen: this dictionary wins over inline song.lyrics.
+ * Merge policy (`resolvedLyrics`): keep existing [Chord] lyrics; fill gaps
+ * from this dictionary. Never overwrite a verified tab with another copy.
  */
+
+/** True when the body contains inline [Chord] markers (verified ChordPro-ish). */
+export const CHORD_MARKER_RE = /\[[A-G][^\]]{0,8}\]/;
+
+export function hasChordMarkers(text: string | undefined | null): boolean {
+  return !!text && text.search(CHORD_MARKER_RE) >= 0;
+}
 
 /** Normalize a string for matching: lowercase, strip accents, strip punctuation. */
 export function normalizeKey(s: string): string {
@@ -1495,13 +1502,31 @@ export const LYRICS_BY_KEY: Record<string, string> = (() => {
   return m;
 })();
 
-/** Look up annotated lyrics for a song by id and/or artist+title. */
+/** Look up annotated lyrics. Artist+title wins; id is legacy fallback only. */
 export function findLyrics(args: { id?: string; artist?: string; title?: string }): string | undefined {
   const { id, artist, title } = args;
-  if (id && LYRICS_DB[id]) return LYRICS_DB[id];
   if (artist && title) {
     const k = lyricsKey(artist, title);
     if (LYRICS_BY_KEY[k]) return LYRICS_BY_KEY[k];
   }
+  if (id && LYRICS_DB[id]) return LYRICS_DB[id];
   return undefined;
+}
+
+/**
+ * Single merge for catalogue songs: keep a verified tab if present,
+ * otherwise attach LYRICS_BY_KEY / legacy id. Does not invent chords.
+ */
+export function resolvedLyrics(song: {
+  id: string;
+  artist: string;
+  title: string;
+  lyrics?: string;
+}): string | undefined {
+  const existing = song.lyrics?.trim();
+  if (existing && hasChordMarkers(existing)) return existing;
+  const found = findLyrics({ id: song.id, artist: song.artist, title: song.title });
+  if (found && hasChordMarkers(found)) return found;
+  if (existing) return existing;
+  return found;
 }

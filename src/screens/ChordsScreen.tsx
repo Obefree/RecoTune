@@ -9,7 +9,7 @@ import WebView from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { SONGS, type SongEntry } from '../data/songDatabase';
-import { LYRICS_DB, findLyrics } from '../data/lyricsDatabase';
+import { findLyrics, hasChordMarkers, lyricsKey, resolvedLyrics } from '../data/lyricsDatabase';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
@@ -580,6 +580,7 @@ export default function ChordsScreen() {
   const [identSource, setIdentSource] = useState<'mic' | 'file' | 'yt' | 'manual'>('mic');
   const [lyrics, setLyrics]           = useState<string | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const lyricsFetchGenRef = useRef(0);
   const [manualArtist, setManualArtist] = useState('');
   const [manualTitle, setManualTitle]   = useState('');
 
@@ -795,53 +796,36 @@ export default function ChordsScreen() {
     try { await Audio.setAudioModeAsync({ allowsRecordingIOS: false }); } catch {}
   }
 
-  /**
-   * Overlay a chord progression onto plain lyrics.
-   * If the line already contains [Chord] markers, leave it untouched.
-   * Otherwise, prepend the next chord from the progression to the start of
-   * the line and rotate through the cycle.  Skips empty/short lines.
-   */
-  function annotateLyricsWithChords(lyrics: string, chordsCsv: string): string {
-    const chords = (chordsCsv || '').trim().split(/[\s,|/]+/).filter(Boolean);
-    if (chords.length === 0) return lyrics;
-    let idx = 0;
-    return lyrics
-      .split('\n')
-      .map(raw => {
-        const line = raw.replace(/\s+$/, '');
-        if (!line.trim()) return line;
-        if (/\[[A-G][^\]]{0,8}\]/.test(line)) return line;
-        const chord = chords[idx % chords.length];
-        idx += 1;
-        return `[${chord}]${line}`;
-      })
-      .join('\n');
-  }
-
-  async function fetchLyrics(artist: string, title: string, chordsCsv?: string) {
-    setLyrics(null); setLyricsLoading(true);
+  async function fetchLyrics(artist: string, title: string, dest: 'identify' | 'practice') {
+    const gen = ++lyricsFetchGenRef.current;
+    if (dest === 'identify') { setLyrics(null); setLyricsLoading(true); }
     try {
       const res  = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
       const data = await res.json();
+      if (gen !== lyricsFetchGenRef.current) return;
       if (!data.error && data.lyrics) {
-        // Normalize (Am) → [Am] so chords always render above text
-        let lyr = data.lyrics.trim()
+        // Keep (Am) → [Am] only when the source already had chord-like marks.
+        // Do NOT spray the catalogue progression onto plain lyrics.ovh text.
+        const lyr = data.lyrics.trim()
           .replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
-        // If the fetched lyrics have no chord annotations at all, overlay
-        // the song's chord progression so the user still gets chords + text.
-        if (chordsCsv && !/\[[A-G][^\]]{0,8}\]/.test(lyr)) {
-          lyr = annotateLyricsWithChords(lyr, chordsCsv);
-        }
-        setLyrics(lyr);
-        setPracticeLyrics(lyr);
+        if (dest === 'identify') setLyrics(lyr);
+        else setPracticeLyrics(lyr);
       }
     } catch {}
-    setLyricsLoading(false);
+    if (gen !== lyricsFetchGenRef.current) return;
+    if (dest === 'identify') setLyricsLoading(false);
   }
 
   function setResultAndFetch(r: AuddResult) {
     setSongResult(r);
-    fetchLyrics(r.artist, r.title);
+    const local = findLyrics({ artist: r.artist, title: r.title });
+    if (local) {
+      lyricsFetchGenRef.current += 1;
+      setLyrics(local);
+      setLyricsLoading(false);
+    } else {
+      fetchLyrics(r.artist, r.title, 'identify');
+    }
     setTimeout(() => scrollRef.current?.scrollTo({ y: 0, animated: true }), 200);
   }
 
@@ -917,12 +901,11 @@ export default function ChordsScreen() {
     loadJson<string[]>(FAVORITES_FILE, []).then(arr => setFavorites(new Set(arr)));
   }, []));
 
-  // Merge external lyrics into built-in songs. Lookup tries song id, then
-  // a normalized artist+title key. External entries win over inline lyrics.
+  // Fill missing tabs from LYRICS_BY_KEY. Do not overwrite a verified inline tab.
   const allSongs = [
     ...SONGS.map(s => {
-      const ext = findLyrics({ id: s.id, artist: s.artist, title: s.title });
-      return ext ? { ...s, lyrics: ext } : s;
+      const lyrics = resolvedLyrics(s);
+      return lyrics && lyrics !== s.lyrics ? { ...s, lyrics } : s;
     }),
     ...customSongs,
   ];
@@ -1076,13 +1059,15 @@ export default function ChordsScreen() {
     setPracticeInput(song.chords);
     parsePracticeInput(song.chords);
     setPracticeChordIdx(0);
+    if (song.bpm) setPracticeBpm(song.bpm);
     setLyricsEditMode(false); // always show view mode after picking
     setShowLibrary(false);
+    lyricsFetchGenRef.current += 1;
     if (song.lyrics) {
       setPracticeLyrics(song.lyrics);
     } else {
       setPracticeLyrics('');
-      fetchLyrics(song.artist, song.title, song.chords);
+      fetchLyrics(song.artist, song.title, 'practice');
     }
   }
 
@@ -1129,7 +1114,22 @@ export default function ChordsScreen() {
     }
   }
 
-  /* ── Practice: voice vs manually-selected chord ── */
+  function sendIdentifiedToPractice() {
+    if (!songResult) return;
+    const local = findLyrics({ artist: songResult.artist, title: songResult.title });
+    const text = (local && hasChordMarkers(local) ? local : null) || lyrics;
+    if (text) setPracticeLyrics(text);
+    const matchKey = lyricsKey(songResult.artist, songResult.title);
+    const song = allSongs.find(s => lyricsKey(s.artist, s.title) === matchKey);
+    if (song) {
+      setPracticeInput(song.chords);
+      parsePracticeInput(song.chords);
+      if (song.bpm) setPracticeBpm(song.bpm);
+    }
+    switchMode('practice');
+  }
+
+  const practiceHasChords = hasChordMarkers(practiceLyrics);
   const practiceCurrentChord = practiceChords[practiceChordIdx] ?? '—';
   const chordTones    = parseChordTones(practiceCurrentChord);
   const voiceNoteBase = voiceNote.replace(/\d/, '');
@@ -1422,11 +1422,16 @@ export default function ChordsScreen() {
           <View style={styles.lyricsPanelHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.lyricsPanelTitle}>
-                  {lyricsEditMode ? 'РЕДАКТИРОВАТЬ' : practiceLyrics ? 'ТЕКСТ + АККОРДЫ' : 'ТЕКСТ'}
+                  {lyricsEditMode ? 'РЕДАКТИРОВАТЬ' : practiceHasChords ? 'ТЕКСТ + АККОРДЫ' : practiceLyrics ? 'ТОЛЬКО ТЕКСТ' : 'ТЕКСТ'}
                 </Text>
                 {!practiceLyrics && !lyricsEditMode && (
                   <Text style={{ color: '#444', fontSize: 9, marginTop: 1 }}>
                     Выберите из БАЗЫ или нажмите ред.
+                  </Text>
+                )}
+                {!!practiceLyrics && !lyricsEditMode && !practiceHasChords && (
+                  <Text style={{ color: '#444', fontSize: 9, marginTop: 1 }}>
+                    Аккорды в шапке — это не таб
                   </Text>
                 )}
               </View>
@@ -1605,7 +1610,7 @@ export default function ChordsScreen() {
               {/* Action buttons */}
               <View style={styles.resultActions}>
                 <TouchableOpacity style={[styles.chordsBtn, { backgroundColor: '#ff980022', borderColor: '#ff980066' }]}
-                  onPress={() => switchMode('practice')}>
+                  onPress={sendIdentifiedToPractice}>
                   <Ionicons name="person" size={16} color="#ff9800" />
                   <Text style={[styles.chordsBtnText, { color: '#ff9800' }]}>В Практику</Text>
                 </TouchableOpacity>
@@ -1617,7 +1622,9 @@ export default function ChordsScreen() {
               {/* Lyrics — full, no truncation */}
               <View style={styles.resultLyricsHeader}>
                 <Ionicons name="document-text-outline" size={14} color="#555" />
-                <Text style={styles.lyricsLabel}>ТЕКСТ ПЕСНИ</Text>
+                <Text style={styles.lyricsLabel}>
+                  {lyrics && hasChordMarkers(lyrics) ? 'ТАБ' : 'ТОЛЬКО ТЕКСТ'}
+                </Text>
               </View>
               {lyricsLoading ? (
                 <ActivityIndicator color="#555" size="large" style={{ marginTop: 24 }} />
@@ -2114,7 +2121,6 @@ const styles = StyleSheet.create({
   lyricsPanel: { flexGrow: 1, flexShrink: 1, flexBasis: 0, backgroundColor: '#0a0a0f', borderTopWidth: 1, borderColor: '#1a1a24', overflow: 'hidden' },
   lyricsPanelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, borderBottomWidth: 1, borderColor: '#1a1a24', backgroundColor: '#0d0d14' },
   lyricsPanelTitle: { color: '#555', fontSize: 9, letterSpacing: 2, fontWeight: '700' },
-  lyricsEmpty: { flexGrow: 1, flexShrink: 1, flexBasis: 0, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
   lyricsEmptyText: { color: '#888', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   lyricsEmptyHint: { color: '#555', fontSize: 12, textAlign: 'center', lineHeight: 18 },
   lyricsEmptyBtn: { flexDirection: 'row', gap: 6, alignItems: 'center', backgroundColor: '#1e1e28', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9, marginTop: 6 },
