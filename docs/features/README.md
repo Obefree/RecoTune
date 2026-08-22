@@ -11,6 +11,7 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-08-22 | Dev/Cloud env: Expo туннель, environment.json, expo:url | [2026-08-22-expo-tunnel-env-setup.md](./2026-08-22-expo-tunnel-env-setup.md) |
 | 2026-08-18 | Chords: быстрый поиск, списки по исполнителям и песням | [2026-08-18-chords-library-browse.md](./2026-08-18-chords-library-browse.md) |
 | 2026-08-18 | Studio: rewind овердаба, BT 280, стабильная задержка | [2026-08-18-studio-overdub-latency-rewind.md](./2026-08-18-studio-overdub-latency-rewind.md) |
 | 2026-08-18 | Melody: распознавание контура (время кадров, hop, START reset) | [2026-08-18-melody-recognition-contour.md](./2026-08-18-melody-recognition-contour.md) |

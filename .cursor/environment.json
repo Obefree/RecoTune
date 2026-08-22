@@ -1,0 +1,15 @@
+{
+  "name": "RecoTune Expo",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "chord-proxy",
+      "command": "node tools/chord-fetch/dev-proxy-server.mjs"
+    },
+    {
+      "name": "expo",
+      "command": "EXPO_NO_TELEMETRY=1 npx expo start --port 8081"
+    }
+  ],
+  "ports": [8081, 8787]
+}
