@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Dev / Cloud env (Expo туннель + environment.json):** `.cursor/environment.json` зафиксирован в репо (npm ci, терминалы chord-proxy + expo на 8081). `start:tunnel` / `expo:url` скрипты + `@expo/ngrok`. `scripts/print-expo-go-url.mjs` — печатает актуальный `exp://` URL. См. [docs/features/2026-08-22-expo-tunnel-env-setup.md](./features/2026-08-22-expo-tunnel-env-setup.md).
 - **Chords (поиск + списки):** поиск в базе был долгим (полные тексты + MusicBrainz + HTTP). Каталог без lyrics, сеть только при remote; пиллы Исполнители/Песни. См. [docs/features/2026-08-18-chords-library-browse.md](./features/2026-08-18-chords-library-browse.md).
 - **Studio (овердаб ~830 мс):** прогрев плеера больше не утекает в запись (rewind на offset), пресет BT 700→280, ручная калибровка дорожки становится пресетом для следующей. См. [docs/features/2026-08-18-studio-overdub-latency-rewind.md](./features/2026-08-18-studio-overdub-latency-rewind.md).
 - **Melody (распознавание):** кадры склеивались по времени RN, START не сбрасывал прошлый напев, медиана съедала короткие ноты. Движок ставит `t` сам, hop 32 мс, FFT 2048, STOP сразу в контур. См. [docs/features/2026-08-18-melody-recognition-contour.md](./features/2026-08-18-melody-recognition-contour.md).
