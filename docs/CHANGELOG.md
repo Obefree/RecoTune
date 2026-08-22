@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- **Dev / Cloud env (чистая установка + поиск аккордов):** `npm install` падал из-за устаревшего патча `react-native-music-control` (первый hunk уже в опубликованном пакете) — патч перегенерирован, установка идемпотентна (exit 0). `POST /search` (прокси + Vercel) падал `searchUgByQuery is not defined` при дефолтных провайдерах — добавлен недостающий импорт из `ugFetch.mjs`. См. [docs/features/2026-08-20-cloud-env-search-import-patch.md](./features/2026-08-20-cloud-env-search-import-patch.md).
 - **Chords (поиск + списки):** поиск в базе был долгим (полные тексты + MusicBrainz + HTTP). Каталог без lyrics, сеть только при remote; пиллы Исполнители/Песни. См. [docs/features/2026-08-18-chords-library-browse.md](./features/2026-08-18-chords-library-browse.md).
 - **Studio (овердаб ~830 мс):** прогрев плеера больше не утекает в запись (rewind на offset), пресет BT 700→280, ручная калибровка дорожки становится пресетом для следующей. См. [docs/features/2026-08-18-studio-overdub-latency-rewind.md](./features/2026-08-18-studio-overdub-latency-rewind.md).
 - **Melody (распознавание):** кадры склеивались по времени RN, START не сбрасывал прошлый напев, медиана съедала короткие ноты. Движок ставит `t` сам, hop 32 мс, FFT 2048, STOP сразу в контур. См. [docs/features/2026-08-18-melody-recognition-contour.md](./features/2026-08-18-melody-recognition-contour.md).
