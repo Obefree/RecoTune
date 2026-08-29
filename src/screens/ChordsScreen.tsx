@@ -19,8 +19,9 @@ import {
   deleteUserSong,
   getFavoriteIds,
   setFavorite,
-  getPesniArchiveImportPromise,
+  filterSongsQuick,
 } from '../services/initSongLibrary';
+import { listOfflineCatalogSongs } from '../catalog/offlineCatalog';
 import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
   hasCatalogTab,
@@ -71,13 +72,6 @@ import {
   PESNI_FETCH_STAGE_LABEL,
 } from '../providers/pesniRuProvider';
 import type { ProviderAttribution } from '../providers/types';
-import {
-  LIBRARY_SEARCH_PAGE_SIZE,
-  searchProviders,
-  searchResultToSongEntry,
-} from '../providers/registry';
-import type { SongSearchResult } from '../providers/types';
-import { combinedArtistTitle } from '../utils/searchNormalize';
 import {
   Gesture,
   GestureDetector,
@@ -131,7 +125,8 @@ import FrequencyChart, { type HistoryPoint, type PitchSegmentOverlay } from '../
 import { useLocale } from '../context/LocaleContext';
 import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch, findBuiltinVerifiedMatch, findVerifiedCatalogMatch } from '../utils/songMatch';
-import { extractChordSequence } from '../utils/chordProgression';
+import { extractChordSequence, findNextBracketChord } from '../utils/chordProgression';
+import { canonicalizeArtist } from '../utils/artistName';
 import { fetchLyricsForTrack } from '../utils/lyricsApi';
 import {
   formatHintCandidateLabel,
@@ -148,12 +143,11 @@ function recognizeOutcomeMessage(outcome: RecognizeOutcome): string {
 }
 
 function artistCatalogKey(artist: string): string {
-  return (artist || '').trim().toLowerCase() || '\0unknown';
+  return canonicalizeArtist(artist).key;
 }
 
 function artistCatalogLabel(artist: string): string {
-  const t = (artist || '').trim();
-  return t || 'Неизвестный';
+  return canonicalizeArtist(artist).name;
 }
 
 type LibBrowseMode = 'artists' | 'songs';
@@ -570,8 +564,11 @@ function ChordDiagram({ name, diagramId, size = 'md' }: { name: string; diagramI
 // Normalise any chord-annotation format to [Chord] before parsing.
 // Handles: [Am]text  (Am)text  [Am] text  (Am) text
 function normalizeLine(raw: string): string {
-  // (Am)text or (Am) text → [Am]text
-  return raw.replace(/\(([A-G][^)]{0,6})\)\s*/g, '[$1]');
+  // (Am)text or (Hm7/5-) text → [Am]text
+  return raw.replace(/\(([A-H][^)]{0,10})\)\s*/g, (full, inner: string) => {
+    const hit = findNextBracketChord(`[${inner}]`);
+    return hit ? `[${hit.chord}]` : full;
+  });
 }
 
 // Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
@@ -658,33 +655,27 @@ function ChordLyricsLine({
   const normalized = normalizeLine(line);
   const segs: { chord?: string; text: string }[] = [];
   let remaining = normalized;
-  let chordPosInLine = 0;
   while (remaining.length > 0) {
-    const chordAt = remaining.search(/\[[A-G]/);
-    if (chordAt < 0) {
+    const hit = findNextBracketChord(remaining);
+    if (!hit) {
       if (remaining) segs.push({ text: remaining });
       break;
     }
-    if (chordAt > 0) {
-      segs.push({ text: remaining.slice(0, chordAt) });
-      remaining = remaining.slice(chordAt);
+    if (hit.index > 0) {
+      segs.push({ text: remaining.slice(0, hit.index) });
+      remaining = remaining.slice(hit.index);
       continue;
     }
-    const m = remaining.match(/^\[([A-G][^\]]*)\](.*)/s);
-    if (m) {
-      const afterChord = m[2];
-      const nextIdx = afterChord.search(/\[[A-G]/);
-      const word = nextIdx >= 0 ? afterChord.slice(0, nextIdx) : afterChord;
-      segs.push({ chord: m[1].trim(), text: word });
-      remaining = nextIdx >= 0 ? afterChord.slice(nextIdx) : '';
-    } else {
-      segs.push({ text: remaining });
-      remaining = '';
-    }
+    const afterChord = remaining.slice(hit.end);
+    const next = findNextBracketChord(afterChord);
+    const word = next ? afterChord.slice(0, next.index) : afterChord;
+    segs.push({ chord: hit.chord, text: word });
+    remaining = next ? afterChord.slice(next.index) : '';
   }
   if (segs.length === 0) return <View style={{ height: 8 }} />;
 
   const allChordsOnly = segs.every(s => s.chord && !s.text.trim());
+  const lyricOnly = segs.every(s => !s.chord);
 
   let posCounter = 0;
   const getChordStyle = (chord: string) => {
@@ -695,6 +686,25 @@ function ChordLyricsLine({
     if (isCurrent) return { color: '#ff9800', bg: '#ff980022' };
     return { color: '#7c4dff', bg: 'transparent' };
   };
+
+  if (lyricOnly) {
+    const text = segs.map(s => s.text).join('');
+    if (!text.trim()) return <View style={{ height: 8 }} />;
+    return (
+      <Text
+        pointerEvents="none"
+        style={{
+          color: '#ddd',
+          fontSize: lyricFs,
+          lineHeight: lyricLh,
+          marginBottom: 10,
+          width: '100%',
+        }}
+      >
+        {text}
+      </Text>
+    );
+  }
 
   if (allChordsOnly) {
     posCounter = 0;
@@ -745,6 +755,7 @@ function ChordLyricsLine({
               marginRight: 4,
               marginBottom: 4,
               maxWidth: '100%',
+              flexShrink: seg.chord ? 0 : 1,
             }}
           >
             <View pointerEvents="box-none" style={segmentChordSlot}>
@@ -759,7 +770,16 @@ function ChordLyricsLine({
                 </GestureTouchableOpacity>
               ) : null}
             </View>
-            <Text pointerEvents="none" style={{ color: '#ddd', fontSize: lyricFs, lineHeight: lyricLh }}>
+            <Text
+              pointerEvents="none"
+              style={{
+                color: '#ddd',
+                fontSize: lyricFs,
+                lineHeight: lyricLh,
+                flexShrink: 1,
+                maxWidth: '100%',
+              }}
+            >
               {seg.text || ' '}
             </Text>
           </View>
@@ -1022,9 +1042,17 @@ export default function ChordsScreen() {
     if (!practiceLyricsDisplay) return [];
     return practiceLyricsDisplay.split('\n').flatMap((rawLine, li) => {
       const normalized = normalizeLine(rawLine);
-      return [...normalized.matchAll(/\[([A-G][^\]]*)\]/g)].map((m, ci) => ({
-        lineIdx: li, posInLine: ci, chord: m[1].trim(),
-      }));
+      const found: { lineIdx: number; posInLine: number; chord: string }[] = [];
+      let rest = normalized;
+      let ci = 0;
+      while (rest.length > 0) {
+        const hit = findNextBracketChord(rest);
+        if (!hit) break;
+        found.push({ lineIdx: li, posInLine: ci, chord: hit.chord });
+        ci += 1;
+        rest = rest.slice(hit.end);
+      }
+      return found;
     });
   }, [practiceLyricsDisplay]);
 
@@ -1534,13 +1562,7 @@ export default function ChordsScreen() {
   const [showInstrumentModal, setShowInstrumentModal] = useState(false);
   const [showBasicChordsModal, setShowBasicChordsModal] = useState(false);
   const [libSearch, setLibSearch]             = useState('');
-  const [libSearchHits, setLibSearchHits]     = useState<SongEntry[]>([]);
   const [libProviderMeta, setLibProviderMeta] = useState<Map<string, ProviderId>>(new Map());
-  const [libSearchRank, setLibSearchRank] = useState<Map<string, number>>(new Map());
-  const [libSearchBusy, setLibSearchBusy]     = useState(false);
-  const [libSearchHasMore, setLibSearchHasMore] = useState(false);
-  const [libSearchLoadingMore, setLibSearchLoadingMore] = useState(false);
-  const libSearchOffsetRef = useRef(0);
   const [showProviderSettings, setShowProviderSettings] = useState(false);
   const [chordFetchProbeStatus, setChordFetchProbeStatus] = useState<string | null>(null);
   const [chordFetchProbeBusy, setChordFetchProbeBusy] = useState(false);
@@ -1555,7 +1577,8 @@ export default function ChordsScreen() {
   const [libChordProxyReachable, setLibChordProxyReachable] = useState<boolean | null>(null);
 
   /* ── Song library (SQLite) ── */
-  const [librarySongs, setLibrarySongs]       = useState<SongEntry[]>([]);
+  const [librarySongs, setLibrarySongs]       = useState<SongEntry[]>(() => listOfflineCatalogSongs());
+  const catalogReadyRef = useRef(false);
   const [libraryInitError, setLibraryInitError] = useState<string | null>(null);
   const [userSongCount, setUserSongCount]     = useState(0);
   const [favorites, setFavorites]             = useState<Set<string>>(new Set());
@@ -1570,18 +1593,7 @@ export default function ChordsScreen() {
     try {
       setLibraryInitError(null);
       const upgrade = await initSongLibrary();
-      const pesniPending = getPesniArchiveImportPromise();
-      if (pesniPending) {
-        setCatalogUpgradeToast('Импорт офлайн-табов pesni.ru…');
-        const pesni = await pesniPending;
-        if (pesni.imported > 0) {
-          const msg = `+${pesni.imported} офлайн-табов (pesni.ru). Фильтр «ТАБЫ» в базе.`;
-          setCatalogUpgradeToast(msg);
-          setTimeout(() => setCatalogUpgradeToast(null), 6000);
-        } else {
-          setCatalogUpgradeToast(null);
-        }
-      } else if (upgrade.upgraded) {
+      if (upgrade.upgraded) {
         const msg = `Каталог обновлён: ${upgrade.fullChordCount} с полными аккордами (из ${upgrade.totalBuiltin})`;
         setCatalogUpgradeToast(msg);
         setTimeout(() => setCatalogUpgradeToast(null), 6000);
@@ -1610,20 +1622,19 @@ export default function ChordsScreen() {
           }
         });
       }
+      catalogReadyRef.current = songs.length > 0;
       if (__DEV__) {
         console.log(`[RecoTune] song library: ${songs.length} songs (${userSongs.length} user), metadata: ${metaN}`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'ошибка инициализации БД';
       setLibraryInitError(msg);
-      setLibrarySongs([]);
-      setFavorites(new Set());
-      setUserSongCount(0);
       if (__DEV__) console.warn('[RecoTune] reloadLibrary failed', err);
     }
   }
 
   useFocusEffect(useCallback(() => {
+    if (catalogReadyRef.current) return;
     void reloadLibrary();
   }, []));
 
@@ -1638,119 +1649,6 @@ export default function ChordsScreen() {
   const allSongs = librarySongs;
   useEffect(() => { allSongsRef.current = allSongs; }, [allSongs]);
 
-  const applyLibSearchResults = useCallback(
-    (
-      results: SongSearchResult[],
-      opts?: { append?: boolean; prevHits?: SongEntry[]; prevMeta?: Map<string, ProviderId>; prevRank?: Map<string, number> },
-    ) => {
-      const meta = new Map<string, ProviderId>(
-        opts?.append && opts.prevMeta ? opts.prevMeta : [],
-      );
-      const rank = new Map<string, number>(
-        opts?.append && opts.prevRank ? opts.prevRank : [],
-      );
-      const songs: SongEntry[] = opts?.append && opts.prevHits ? [...opts.prevHits] : [];
-      const seen = new Set(songs.map(s => combinedArtistTitle(s.artist, s.title)));
-      for (const r of results) {
-        const song = searchResultToSongEntry(r);
-        if (!song) continue;
-        const key = combinedArtistTitle(song.artist, song.title);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        rank.set(song.id, songs.length);
-        songs.push(song);
-        meta.set(song.id, r.provider);
-      }
-      setLibSearchHits(songs);
-      setLibProviderMeta(meta);
-      setLibSearchRank(rank);
-      return songs.length;
-    },
-    [],
-  );
-
-  const loadMoreLibrarySearch = useCallback(async () => {
-    const q = libSearch.trim();
-    if (!q || libSearchBusy || libSearchLoadingMore || !libSearchHasMore) return;
-    setLibSearchLoadingMore(true);
-    try {
-      await initSongLibrary();
-      const offset = libSearchOffsetRef.current;
-      const results = await searchProviders(q, {
-        limit: LIBRARY_SEARCH_PAGE_SIZE,
-        offset,
-        includeRemote: false,
-      });
-      const prevLen = libSearchHits.length;
-      applyLibSearchResults(results, {
-        append: true,
-        prevHits: libSearchHits,
-        prevMeta: libProviderMeta,
-        prevRank: libSearchRank,
-      });
-      libSearchOffsetRef.current = offset + LIBRARY_SEARCH_PAGE_SIZE;
-      setLibSearchHasMore(results.length >= LIBRARY_SEARCH_PAGE_SIZE);
-      if (results.length === 0 && prevLen > 0) setLibSearchHasMore(false);
-    } catch (err) {
-      if (__DEV__) console.warn('[RecoTune] library search load-more failed', err);
-      setLibSearchHasMore(false);
-    } finally {
-      setLibSearchLoadingMore(false);
-    }
-  }, [
-    libSearch,
-    libSearchBusy,
-    libSearchLoadingMore,
-    libSearchHasMore,
-    libSearchHits,
-    libProviderMeta,
-    libSearchRank,
-    applyLibSearchResults,
-  ]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const q = libSearch.trim();
-    const run = async () => {
-      libSearchOffsetRef.current = 0;
-      setLibSearchHasMore(false);
-      if (libraryInitError) {
-        setLibSearchHits([]);
-        setLibProviderMeta(new Map());
-        setLibSearchRank(new Map());
-        setLibSearchBusy(false);
-        return;
-      }
-      if (!q) {
-        setLibSearchHits([]);
-        setLibProviderMeta(new Map());
-        setLibSearchRank(new Map());
-        setLibSearchBusy(false);
-        return;
-      }
-      setLibSearchBusy(true);
-      try {
-        await initSongLibrary();
-        const results = await searchProviders(q, {
-          limit: LIBRARY_SEARCH_PAGE_SIZE,
-          offset: 0,
-          includeRemote: false,
-        });
-        if (cancelled) return;
-        applyLibSearchResults(results);
-        libSearchOffsetRef.current = LIBRARY_SEARCH_PAGE_SIZE;
-        setLibSearchHasMore(results.length >= LIBRARY_SEARCH_PAGE_SIZE);
-      } catch (err) {
-        if (__DEV__) console.warn('[RecoTune] library search failed', err);
-        if (!cancelled) applyLibSearchResults([]);
-      } finally {
-        if (!cancelled) setLibSearchBusy(false);
-      }
-    };
-    const t = setTimeout(() => { void run(); }, 280);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [libSearch, libraryInitError, applyLibSearchResults]);
-
   useEffect(() => {
     if (!showLibrary) return;
     let cancelled = false;
@@ -1758,19 +1656,21 @@ export default function ChordsScreen() {
       await ensureAutoChordProxySettings();
       const s = await getProviderSettings();
       if (!cancelled) setProviderSettings(s);
-      const probe = await probeRemoteChordSearch(2500);
-      if (!cancelled) setLibChordProxyReachable(probe.reachable);
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        const probe = await probeRemoteChordSearch(2500);
+        if (!cancelled) setLibChordProxyReachable(probe.reachable);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [showLibrary]);
 
-  const libSongList = (() => {
+  const libSongList = useMemo(() => {
     const q = libSearch.trim();
     let list: SongEntry[];
     if (q) {
-      list = libSearchHits;
+      list = filterSongsQuick(allSongs, q);
     } else if (libFavOnly) {
       list = librarySongs.filter(s => favorites.has(s.id));
     } else {
@@ -1782,21 +1682,24 @@ export default function ChordsScreen() {
       list = list.filter(s => artistCatalogKey(s.artist) === key);
     }
     if (q) {
-      list = [...list].sort((a, b) => {
-        const ra = libSearchRank.get(a.id) ?? 99999;
-        const rb = libSearchRank.get(b.id) ?? 99999;
-        if (ra !== rb) return ra - rb;
-        return a.title.localeCompare(b.title, 'ru');
-      });
+      list = [...list].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
     } else {
       list = [...list].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
     }
     return list;
-  })();
+  }, [
+    libSearch,
+    libFavOnly,
+    libFullTabsOnly,
+    libArtistFilter,
+    librarySongs,
+    allSongs,
+    favorites,
+  ]);
 
   const showArtistIndex = !libSearch.trim() && libBrowse === 'artists' && !libArtistFilter;
 
-  const libArtistRows = (() => {
+  const libArtistRows = useMemo(() => {
     if (!showArtistIndex) return [];
     const map = new Map<string, { name: string; count: number; tabCount: number }>();
     for (const s of libSongList) {
@@ -1808,7 +1711,7 @@ export default function ChordsScreen() {
       map.set(key, prev);
     }
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  })();
+  }, [showArtistIndex, libSongList]);
 
   const libListRows: LibListRow[] = showArtistIndex
     ? libArtistRows.map(a => ({
@@ -1823,8 +1726,7 @@ export default function ChordsScreen() {
   const libCountLabel = (() => {
     const q = libSearch.trim();
     if (q) {
-      const suffix = libSearchHasMore ? '+' : '';
-      return `${libSongList.length}${suffix} найдено`;
+      return `${libSongList.length} найдено`;
     }
     if (showArtistIndex) return `${libArtistRows.length} исполнителей`;
     if (libArtistFilter) return `${libSongList.length} · ${libArtistFilter}`;
@@ -1987,17 +1889,6 @@ export default function ChordsScreen() {
     };
     await saveProviderSettings(toSave);
     setProviderSettings(toSave);
-    if (libSearch.trim()) {
-      libSearchOffsetRef.current = 0;
-      const results = await searchProviders(libSearch, {
-        limit: LIBRARY_SEARCH_PAGE_SIZE,
-        offset: 0,
-        includeRemote: false,
-      });
-      applyLibSearchResults(results);
-      libSearchOffsetRef.current = LIBRARY_SEARCH_PAGE_SIZE;
-      setLibSearchHasMore(results.length >= LIBRARY_SEARCH_PAGE_SIZE);
-    }
   }
 
   async function saveIdentifyToLibrary() {
@@ -2133,7 +2024,7 @@ export default function ChordsScreen() {
       chords: addForm.chords.trim(),
       lyrics: addForm.lyrics.trim() || undefined,
       chordProVerified: addForm.lyrics.trim()
-        ? /\[[A-G][#b\d]/i.test(addForm.lyrics)
+        ? /\[[A-H][#b\d]/i.test(addForm.lyrics)
         : undefined,
     };
     await saveCustomSong(song);
@@ -3593,7 +3484,8 @@ export default function ChordsScreen() {
       {/* ── Song Library (in-tree overlay — Android Modal is a smaller window) ── */}
       {showLibrary ? (
         <View style={[styles.libOverlay, { paddingTop: 8, paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <View style={styles.libModalChrome}>
+          <View style={styles.libModal}>
+          <View style={styles.libModalChrome} collapsable={false}>
           {/* Header */}
           <View style={styles.libHeader}>
             <Pressable
@@ -3653,34 +3545,49 @@ export default function ChordsScreen() {
               autoCapitalize="none"
               returnKeyType="search"
             />
-            {libSearchBusy ? (
-              <ActivityIndicator size="small" color="#7c4dff" style={{ marginRight: 8 }} />
-            ) : null}
             {libSearch ? (
-              <TouchableOpacity onPress={() => setLibSearch('')} style={{ padding: 8 }}>
+              <Pressable
+                onPress={() => {
+                  setLibSearch('');
+                }}
+                hitSlop={12}
+                style={{ padding: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Очистить поиск"
+              >
                 <Ionicons name="close-circle" size={16} color="#444" />
-              </TouchableOpacity>
+              </Pressable>
             ) : null}
           </View>
 
           {/* Исполнители / песни + избранное / табы */}
           <View style={styles.libFilterRow}>
-            <TouchableOpacity
-              onPress={() => { setLibBrowse('artists'); setLibArtistFilter(null); }}
+            <Pressable
+              onPress={() => {
+                setLibSearch('');
+                setLibBrowse('artists');
+                setLibArtistFilter(null);
+              }}
+              hitSlop={8}
               style={[styles.libFilterPill, libBrowse === 'artists' && !libSearch.trim() && styles.libFilterPillBrowseActive]}
             >
               <Text style={[styles.libFilterPillText, libBrowse === 'artists' && !libSearch.trim() && styles.libFilterPillBrowseText]}>Исполнители</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { setLibBrowse('songs'); setLibArtistFilter(null); }}
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setLibSearch('');
+                setLibBrowse('songs');
+                setLibArtistFilter(null);
+              }}
+              hitSlop={8}
               style={[styles.libFilterPill, libBrowse === 'songs' && !libSearch.trim() && !libArtistFilter && styles.libFilterPillBrowseActive]}
             >
               <Text style={[styles.libFilterPillText, libBrowse === 'songs' && !libSearch.trim() && !libArtistFilter && styles.libFilterPillBrowseText]}>Песни</Text>
-            </TouchableOpacity>
+            </Pressable>
             {libArtistFilter ? (
-              <TouchableOpacity onPress={() => setLibArtistFilter(null)} style={[styles.libFilterPill, styles.libFilterPillBrowseActive]}>
+              <Pressable onPress={() => setLibArtistFilter(null)} hitSlop={8} style={[styles.libFilterPill, styles.libFilterPillBrowseActive]}>
                 <Text style={[styles.libFilterPillText, styles.libFilterPillBrowseText]} numberOfLines={1}>← {libArtistFilter}</Text>
-              </TouchableOpacity>
+              </Pressable>
             ) : null}
             <TouchableOpacity onPress={() => setLibFavOnly(v => !v)}
               style={[styles.libFilterPill, libFavOnly && styles.libFilterPillActive]}>
@@ -3698,20 +3605,11 @@ export default function ChordsScreen() {
           <FlatList
             style={styles.libList}
             data={libListRows}
-            extraData={`${libBrowse}|${libArtistFilter ?? ''}|${favorites.size}|${libFavOnly}|${libFullTabsOnly}`}
+            extraData={`${libBrowse}|${libArtistFilter ?? ''}|${libSearch}|${favorites.size}|${libFavOnly}|${libFullTabsOnly}`}
             keyExtractor={item => item.id}
-            nestedScrollEnabled
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             keyboardDismissMode="on-drag"
-            onEndReached={() => {
-              if (!showArtistIndex && libSearch.trim() && libSearchHasMore) void loadMoreLibrarySearch();
-            }}
-            onEndReachedThreshold={0.35}
-            ListFooterComponent={
-              libSearchLoadingMore ? (
-                <ActivityIndicator size="small" color="#7c4dff" style={{ marginVertical: 12 }} />
-              ) : null
-            }
+            ListFooterComponent={null}
             contentContainerStyle={libListRows.length === 0 ? styles.libListEmptyContent : styles.libListContent}
             ListEmptyComponent={
               libSearch.trim() ? (
@@ -3821,6 +3719,7 @@ export default function ChordsScreen() {
               );
             }}
           />
+          </View>
         </View>
       ) : null}
 
@@ -5202,9 +5101,10 @@ const styles = StyleSheet.create({
     zIndex: 40,
     elevation: 40,
     backgroundColor: '#0a0a0f',
+    flexDirection: 'column',
   },
   libModal:    { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f' },
-  libModalChrome: { flexShrink: 0 },
+  libModalChrome: { flexShrink: 0, zIndex: 4, elevation: 12, backgroundColor: '#0a0a0f' },
   libHeader:   {
     flexDirection: 'row',
     flexWrap: 'wrap',

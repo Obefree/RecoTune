@@ -13,7 +13,7 @@ export { formatMetadataSyncError, isMetadataSyncRunning } from './metadataSyncLo
 
 import {
 
-  BUNDLED_METADATA_CHUNKS,
+  getBundledMetadataChunks,
 
   METADATA_BUNDLED_TOTAL_HINT,
 
@@ -70,9 +70,9 @@ export async function fetchMetadataBatchFromServer(
 
 function bundledBatchAt(index: number): MetadataBatchPayload | null {
 
-  if (index < 0 || index >= BUNDLED_METADATA_CHUNKS.length) return null;
+  if (index < 0 || index >= getBundledMetadataChunks().length) return null;
 
-  const chunk = BUNDLED_METADATA_CHUNKS[index];
+  const chunk = getBundledMetadataChunks()[index];
 
   return {
 
@@ -80,7 +80,7 @@ function bundledBatchAt(index: number): MetadataBatchPayload | null {
 
     cursor: index,
 
-    nextCursor: index + 1 < BUNDLED_METADATA_CHUNKS.length ? index + 1 : null,
+    nextCursor: index + 1 < getBundledMetadataChunks().length ? index + 1 : null,
 
     totalHint: chunk.totalHint ?? METADATA_BUNDLED_TOTAL_HINT,
 
@@ -226,7 +226,7 @@ export async function importMetadataBatch(cursor: number): Promise<{
 
     batch.nextCursor ??
 
-    (source === 'bundled' && cursor + 1 < BUNDLED_METADATA_CHUNKS.length ? cursor + 1 : null);
+    (source === 'bundled' && cursor + 1 < getBundledMetadataChunks().length ? cursor + 1 : null);
 
   if (next != null) await setMetadataSyncCursor(next);
 
@@ -300,7 +300,7 @@ async function syncAllMetadataInner(
 
   const useServer = Boolean(settings.metadataSyncBaseUrl?.trim());
 
-  const batchTotal = useServer ? 10 : BUNDLED_METADATA_CHUNKS.length;
+  const batchTotal = useServer ? 10 : getBundledMetadataChunks().length;
 
   let tracksImported = 0;
 
@@ -440,8 +440,8 @@ export function startBackgroundIndex(
       const count = await getMetadataTrackCount();
       onProgress?.({
         phase: 'done',
-        batchIndex: BUNDLED_METADATA_CHUNKS.length,
-        batchTotal: BUNDLED_METADATA_CHUNKS.length,
+        batchIndex: getBundledMetadataChunks().length,
+        batchTotal: getBundledMetadataChunks().length,
         tracksImported: count,
         message: `Офлайн-индекс: ${count} треков`,
       });
@@ -457,7 +457,7 @@ export function startBackgroundIndex(
         cursor = 0;
       }
 
-      const batchTotal = BUNDLED_METADATA_CHUNKS.length;
+      const batchTotal = getBundledMetadataChunks().length;
       let batchIndex = 0;
       let tracksImported = await getMetadataTrackCount();
 
@@ -502,7 +502,7 @@ export function startBackgroundIndex(
       onProgress?.({
         phase: 'error',
         batchIndex: 0,
-        batchTotal: BUNDLED_METADATA_CHUNKS.length,
+        batchTotal: getBundledMetadataChunks().length,
         tracksImported: await getMetadataTrackCount(),
         message: formatMetadataSyncError(e),
       });

@@ -1,7 +1,7 @@
 import type { SongEntry } from '../data/songDatabase';
 import { SONGS } from '../data/songDatabase';
 import { BUILTIN_SONGS_SEED } from '../data/builtinSongsSeed';
-import { PESNI_OFFLINE_TAB_COUNT } from '../db/pesniArchiveImport';
+import { getOfflineCatalogTabCount } from '../catalog/offlineCatalog';
 import {
   cleanupVerifiedChordPro,
   isVerifiedChordProLyrics,
@@ -10,7 +10,7 @@ import {
 } from './chordLyricsNormalize';
 import { extractChordSequence } from './chordProgression';
 
-const CHORD_MARKER_RE = /\[[A-G][#b\d]*(?:\/[A-G][#b\d]*)?[^\]]*\]/i;
+import { CHORD_MARKER_RE } from './chordToken';
 
 const BUILTIN_VERIFIED_IDS = new Set(
   BUILTIN_SONGS_SEED.filter(s => isVerifiedChordProLyrics(s.lyrics)).map(s => s.id),
@@ -143,7 +143,7 @@ export function countAnnotatedInEntries(songs: SongEntry[]): number {
 
 /** Approximate offline verified tabs: legacy seed + bundled pesni.ru archive. */
 export function bundledOfflineVerifiedTabCount(): number {
-  return countAnnotatedInEntries(SONGS) + PESNI_OFFLINE_TAB_COUNT;
+  return countAnnotatedInEntries(SONGS) + getOfflineCatalogTabCount();
 }
 
 export const PROGRESSION_ONLY_HINT =

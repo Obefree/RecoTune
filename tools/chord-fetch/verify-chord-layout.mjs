@@ -14,6 +14,7 @@ const t = (name, pass) => tests.push([name, pass]);
 // Chord row classification.
 t('chord row: C G Am', isChordRowLine('C       G        Am'));
 t('chord row: fret position Dm(V)', isChordRowLine('Dm(V) C(III) Bb(VI) A(V)'));
+t('chord row: Hm7/5-', isChordRowLine('Am      Hm7/5-     Dm'));
 t('not chord row: lyric', !isChordRowLine('Сколько лет прошло, провода'));
 t('not chord row: empty', !isChordRowLine('   '));
 
@@ -39,7 +40,7 @@ t('fret position chords inline', /\[Dm\]Я/.test(fret[0]) && /\[Bb\]/.test(fret[
 // Chord-only intro stays a chord-only line.
 const intro = plainChordSheetToChordPro('Am  C  G\n\nAm          F\nBut I am a creep');
 t('chord only intro', intro[0] === '[Am] [C] [G]');
-t('intro then lyric merged', intro.some(l => /\[Am\]But I am a c\[F\]reep/.test(l)));
+t('intro then lyric merged', intro.some(l => /\[Am\]But I am a \[F\]creep/.test(l)));
 
 let failed = 0;
 for (const [name, pass] of tests) {

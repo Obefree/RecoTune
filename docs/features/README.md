@@ -11,6 +11,10 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-08-26 | Chords: кнопки базы и зависание всего | [2026-08-26-chords-library-freeze-buttons.md](./2026-08-26-chords-library-freeze-buttons.md) |
+| 2026-08-26 | Chords: склейка аккордов с текстом, перенос строк без чипов | [2026-08-26-chords-lyric-merge-wrap.md](./2026-08-26-chords-lyric-merge-wrap.md) |
+| 2026-08-23 | Chords: H/Hm7/5- чипы, канон исполнителей | [2026-08-23-chords-h-parse-artists.md](./2026-08-23-chords-h-parse-artists.md) |
+| 2026-08-23 | Chords: индекс каталога, шард текстов, живые пиллы/поиск | [2026-08-23-chords-catalog-index.md](./2026-08-23-chords-catalog-index.md) |
 | 2026-08-18 | Chords: быстрый поиск, списки по исполнителям и песням | [2026-08-18-chords-library-browse.md](./2026-08-18-chords-library-browse.md) |
 | 2026-08-18 | Studio: rewind овердаба, BT 280, стабильная задержка | [2026-08-18-studio-overdub-latency-rewind.md](./2026-08-18-studio-overdub-latency-rewind.md) |
 | 2026-08-18 | Melody: распознавание контура (время кадров, hop, START reset) | [2026-08-18-melody-recognition-contour.md](./2026-08-18-melody-recognition-contour.md) |

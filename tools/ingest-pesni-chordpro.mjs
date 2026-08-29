@@ -1,6 +1,7 @@
 /**
  * Ingest REAL verified ChordPro tabs from pesni.ru (public API, no key, 60 req/min)
- * → assets/archive/pesni-chordpro.json (offline bundle imported into the library).
+ * → assets/archive/pesni-chordpro.json, then `npm run build-catalog`
+ * for the phone index + lyric shards.
  *
  * Only songs whose chord-above-lyric text passes the SAME verification as the app
  * (pesniRuTextToVerifiedLyrics → isVerifiedChordProLyrics) are kept — no stubs,

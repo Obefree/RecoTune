@@ -1,9 +1,4 @@
-// [A-H]: H = German/Russian B (AmDm / pesni.ru tabs); keep in sync with chordLyricsNormalize.
-const ROOT = '[A-H](?:#|b|\\u266f|\\u266d)?';
-const SUFFIX = '(?:maj9|maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|m9|7|9|11|13|6|2|4|5|\\u00b0|\\u00d8)?';
-const SLASH = `(?:/${ROOT})?`;
-const CHORD_TOKEN_RE = new RegExp(`^${ROOT}${SUFFIX}${SLASH}$`, 'i');
-const BRACKET_CHORD_RE = new RegExp(`\\[(${ROOT}${SUFFIX}${SLASH})\\]`, 'gi');
+import { CHORD_BRACKET_GLOBAL_RE, CHORD_TOKEN_RE } from './chordToken';
 
 function cleanChordToken(token: string): string {
   return token
@@ -12,7 +7,8 @@ function cleanChordToken(token: string): string {
     .replace(/^\[/, '')
     .replace(/\]$/, '')
     .replace(/\u266f/g, '#')
-    .replace(/\u266d/g, 'b');
+    .replace(/\u266d/g, 'b')
+    .replace(/\u2212/g, '-');
 }
 
 export function isChordToken(token: string): boolean {
@@ -23,11 +19,30 @@ export function isChordToken(token: string): boolean {
   return CHORD_TOKEN_RE.test(clean);
 }
 
+/** Next real [Am]/[H7]/[Hm7/5-] marker — skips [Chorus] and lyric brackets. */
+export function findNextBracketChord(
+  text: string,
+): { index: number; chord: string; end: number } | null {
+  let from = 0;
+  while (from < text.length) {
+    const start = text.indexOf('[', from);
+    if (start < 0) return null;
+    const close = text.indexOf(']', start + 1);
+    if (close < 0) return null;
+    const chord = cleanChordToken(text.slice(start + 1, close));
+    if (CHORD_TOKEN_RE.test(chord) && !/^I$/i.test(chord)) {
+      return { index: start, chord, end: close + 1 };
+    }
+    from = start + 1;
+  }
+  return null;
+}
+
 export function extractChordSequence(input?: string | null): string[] {
   if (!input?.trim()) return [];
-  const fromBrackets = [...input.matchAll(BRACKET_CHORD_RE)].map(m => cleanChordToken(m[1]));
+  const fromBrackets = [...input.matchAll(CHORD_BRACKET_GLOBAL_RE)].map(m => cleanChordToken(m[1]));
   const plain = input
-    .replace(BRACKET_CHORD_RE, ' ')
+    .replace(CHORD_BRACKET_GLOBAL_RE, ' ')
     .split(/[\s,;|]+/)
     .map(cleanChordToken)
     .filter(Boolean);

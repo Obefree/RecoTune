@@ -10,6 +10,8 @@
  * - "G\\nBut I'm a creep" / "But [G]I'm a creep" → chord on last word, not before I'm
  */
 
+import { CHORD_MARKER_RE, CHORD_TOKEN_RE, splitChordPunctuation } from './chordToken';
+
 // [A-H]: H is German/Russian notation for B (used widely on AmDm / pesni.ru);
 // must match the server parser tools/chord-fetch/chordLayout.mjs so H/Hm tabs verify.
 
@@ -23,16 +25,6 @@ export function isTablatureLine(line: string): boolean {
   if (/^[eEbBgGdDaA]\|/i.test(t) && /\d/.test(t)) return true;
   return false;
 }
-
-const ROOT = '[A-H](?:#|b|♯|♭)?';
-const CHORD_SUFFIX =
-  '(?:maj9|maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|m9|7|9|11|13|6|2|4|5|°|Ø)?';
-const CHORD_SLASH = `(?:\\/${ROOT})?`;
-/** Whole-token chord: G, Am, C#m7, F/A — never a letter inside a word. */
-const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
-const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
-/** Real chord in brackets — not [Chorus]/[And]/[Give]. */
-const CHORD_MARKER_RE = new RegExp(`\\[${CHORD_TOKEN}\\]`, 'i');
 
 /** Lowercase articles in lyric prose — never bracket as chords. */
 const LYRIC_ARTICLE_TOKENS = new Set(['a', 'i']);
@@ -84,7 +76,79 @@ function attachChordToLastWord(line: string, chord: string): string {
 }
 
 function isChordToken(token: string): boolean {
-  return VALID_CHORD_TOKEN_RE.test(token);
+  return CHORD_TOKEN_RE.test(token);
+}
+
+/** Bare symbol from `Am`, `[Am]`, `[Hm7/5-]`. */
+function chordBare(token: string): string {
+  const { core } = splitTokenPunctuation(token);
+  return core.replace(/^\[+|\]+$/g, '');
+}
+
+function lineHasLyricWords(line: string): boolean {
+  const prose = line.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ');
+  return /[a-zA-Zа-яА-ЯёЁ]{2,}/.test(prose);
+}
+
+function chordRowTokens(line: string): { chord: string; col: number }[] {
+  const out: { chord: string; col: number }[] = [];
+  const re = /\S+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    const bare = chordBare(m[0]);
+    if (bare && isChordToken(bare)) out.push({ chord: bare, col: m.index });
+  }
+  return out;
+}
+
+/** Monospace chord row (AmDm/pesni): insert [chord] at the lyric column. */
+function snapToWordStart(lyric: string, pos: number): number {
+  const len = lyric.length;
+  let p = Math.max(0, Math.min(pos, len));
+  while (p < len && /\s/.test(lyric[p])) p += 1;
+  while (p > 0 && !/\s/.test(lyric[p - 1])) p -= 1;
+  return p;
+}
+
+function mergeByColumns(lyric: string, tokens: { chord: string; col: number }[]): string {
+  if (!tokens.length) return lyric;
+  const lead = lyric.match(/^\s*/)?.[0].length ?? 0;
+  const body = lyric.slice(lead);
+  const len = body.length;
+  const sorted = tokens
+    .map(t => ({ chord: t.chord, col: Math.max(0, t.col - lead) }))
+    .sort((a, b) => a.col - b.col);
+  let result = '';
+  let cursor = 0;
+  for (const { chord, col } of sorted) {
+    let pos = snapToWordStart(body, col);
+    if (pos < cursor) pos = cursor;
+    if (pos > len) pos = len;
+    result += body.slice(cursor, pos);
+    result += `[${chord}]`;
+    cursor = pos;
+  }
+  result += body.slice(cursor);
+  return result;
+}
+
+/** Chord count ≠ word count, no column gaps: spread chips across words. */
+function spreadChordsOnWords(lyric: string, chords: string[]): string {
+  const words = lyric.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return chords.map(c => `[${c}]`).join(' ');
+  if (chords.length === 1) return `[${chords[0]}]${lyric.trim()}`;
+  const marks = words.map(() => '');
+  const last = Math.max(chords.length - 1, 1);
+  const used = new Set<number>();
+  for (let i = 0; i < chords.length; i += 1) {
+    let wi = Math.round((i * (words.length - 1)) / last);
+    wi = Math.max(0, Math.min(words.length - 1, wi));
+    while (used.has(wi) && wi < words.length - 1) wi += 1;
+    while (used.has(wi) && wi > 0) wi -= 1;
+    used.add(wi);
+    marks[wi] += `[${chords[i]}]`;
+  }
+  return words.map((w, i) => `${marks[i]}${w}`).join(' ');
 }
 
 type BareChordOpts = { /** Line is chord symbols only (ChordPro row above lyrics). */ chordLine?: boolean };
@@ -129,11 +193,7 @@ function splitTokenPunctuation(token: string): {
   core: string;
   trail: string;
 } {
-  const lead = token.match(/^[^\w[\]#♯♭/]+/)?.[0] ?? '';
-  const rest = token.slice(lead.length);
-  const trail = rest.match(/[^\w[\]#♯♭/]+$/)?.[0] ?? '';
-  const core = rest.slice(0, rest.length - trail.length);
-  return { lead, core, trail };
+  return splitChordPunctuation(token);
 }
 
 /** Parentheses chord markers: (Am) → [Am]; other parens unchanged. */
@@ -185,7 +245,7 @@ function repositionMisplacedInlineChords(line: string): string {
   return line;
 }
 
-/** Chord-only line (above lyrics in ChordPro) merged into next lyric line when counts align. */
+/** Chord-only line above lyrics → inline [chord] on the lyric (column, 1:1, or spread). */
 function mergeChordLineAboveLyric(lines: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -195,16 +255,15 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
       out.push(line);
       continue;
     }
-    const tokens = trimmed.split(/\s+/).filter(Boolean);
-    const allChords =
-      tokens.length > 0 && tokens.every(t => isChordToken(t));
-    if (allChords && i + 1 < lines.length && lines[i + 1].trim()) {
-      const next = lines[i + 1];
-      const words = next.trim().split(/\s+/);
-      if (tokens.length === 1) {
-        const chord = tokens[0];
+    const rowTokens = chordRowTokens(line);
+    const next = i + 1 < lines.length ? lines[i + 1] : '';
+    const allChords = rowTokens.length > 0 && lineIsChordOnly(line);
+    if (allChords && next.trim() && lineHasLyricWords(next) && !lineIsChordOnly(next)) {
+      const chords = rowTokens.map(t => t.chord);
+      const words = next.trim().split(/\s+/).filter(Boolean);
+      if (chords.length === 1) {
+        const chord = chords[0];
         const trimmedNext = next.trim();
-        const words = trimmedNext.split(/\s+/);
         if (words.length === 1) {
           out.push(`[${chord}]${trimmedNext}`);
         } else if (lineStartsWithConnector(trimmedNext)) {
@@ -220,26 +279,34 @@ function mergeChordLineAboveLyric(lines: string[]): string[] {
         i += 1;
         continue;
       }
-      if (tokens.length === words.length) {
-        const chords = tokens.map(c => `[${c}]`);
-        const merged = words
-          .map((w, wi) => `${chords[wi]}${w}`)
-          .join(' ')
-          .replace(/\[\]/g, '');
-        out.push(merged);
+      if (/\S\s{3,}\S/.test(line)) {
+        out.push(mergeByColumns(next, rowTokens));
         i += 1;
         continue;
       }
-      if (tokens.length > words.length && words.length > 0) {
-        const merged = words
-          .map((w, wi) => `${wi < tokens.length ? `[${tokens[wi]}]` : ''}${w}`)
-          .join(' ');
-        out.push(merged);
+      if (chords.length === words.length) {
+        out.push(words.map((w, wi) => `[${chords[wi]}]${w}`).join(' '));
         i += 1;
         continue;
       }
-      out.push(line);
-      continue;
+      if (chords.length > words.length && words.length > 0) {
+        out.push(
+          words
+            .map((w, wi) =>
+              wi < words.length - 1
+                ? `[${chords[wi]}]${w}`
+                : `${chords.slice(wi).map(c => `[${c}]`).join('')}${w}`,
+            )
+            .join(' '),
+        );
+        i += 1;
+        continue;
+      }
+      if (words.length > 0) {
+        out.push(spreadChordsOnWords(next, chords));
+        i += 1;
+        continue;
+      }
     }
     out.push(line);
   }
@@ -257,9 +324,7 @@ export function hasChordLineAboveLyricFormat(text: string): boolean {
   for (let i = 0; i < lines.length - 1; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
-    const tokens = trimmed.split(/\s+/).filter(Boolean);
-    const allChords = tokens.length > 0 && tokens.every(t => isChordToken(t));
-    if (allChords && lines[i + 1]?.trim()) return true;
+    if (lineIsChordOnly(trimmed) && lineHasLyricWords(lines[i + 1] ?? '')) return true;
   }
   return false;
 }
@@ -268,8 +333,8 @@ function lineIsChordOnly(line: string): boolean {
   const tokens = line.trim().split(/\s+/).filter(Boolean);
   if (!tokens.length) return false;
   return tokens.every(t => {
-    const bare = t.replace(/^\[|\]$/g, '');
-    return isChordToken(bare);
+    const bare = chordBare(t);
+    return Boolean(bare) && isChordToken(bare);
   });
 }
 
@@ -353,8 +418,7 @@ export function cleanupVerifiedChordPro(text: string): string {
   let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
-  normalized = normalized
-    .split('\n')
+  normalized = mergeChordLineAboveLyric(normalized.split('\n'))
     .map(line =>
       isTablatureLine(line)
         ? line

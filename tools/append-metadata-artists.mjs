@@ -249,9 +249,16 @@ import type { MetadataBatchPayload } from './types';
 export const METADATA_BUNDLED_VERSION = '${BUNDLED_VERSION}';
 export const METADATA_BUNDLED_TOTAL_HINT = ${tracks.length};
 
-export const BUNDLED_METADATA_CHUNKS: MetadataBatchPayload[] = [
+let cachedChunks: MetadataBatchPayload[] | null = null;
+
+export function getBundledMetadataChunks(): MetadataBatchPayload[] {
+  if (!cachedChunks) {
+    cachedChunks = [
 ${requires}
-];
+    ];
+  }
+  return cachedChunks;
+}
 `;
   writeFileSync(MANIFEST_TS, ts);
   console.log(`  manifest: ${MANIFEST_TS} (${paths.length} chunks, hint=${tracks.length})`);

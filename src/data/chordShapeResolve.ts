@@ -21,13 +21,20 @@ export type ResolvedChordShape = {
 };
 
 export function normalizeChordSymbol(raw: string): string {
-  return raw
+  let s = raw
     .trim()
     .replace(/♯/g, '#')
     .replace(/♭/g, 'b')
+    .replace(/\u2212/g, '-')
     .replace(/°/g, 'dim')
     .replace(/ø/gi, 'm7b5')
+    .replace(/m7\/5-/gi, 'm7b5')
+    .replace(/7\/5-/gi, '7b5')
+    .replace(/m7\/5\+/gi, 'm7#5')
+    .replace(/7\/5\+/gi, '7#5')
     .replace(/\s+/g, '');
+  if (/^H/i.test(s)) s = `B${s.slice(1)}`;
+  return s;
 }
 
 function stripBassNote(symbol: string): string {
@@ -69,6 +76,38 @@ function fallbackSymbols(symbol: string): string[] {
 
   if (/m7b5/i.test(s)) {
     push(s.replace(/m7b5/gi, 'dim'));
+  }
+  if (/7sus4/i.test(s)) {
+    const p = parseRoot(s);
+    if (p) {
+      push(p.root + 'sus4');
+      push(p.root + '7');
+    }
+  }
+  if (/6sus2/i.test(s)) {
+    const p = parseRoot(s);
+    if (p) {
+      push(p.root + 'sus2');
+      push(p.root + '6');
+    }
+  }
+  if (/m11|m13/i.test(s)) {
+    push(s.replace(/m1[13]/i, 'm7'));
+    push(s.replace(/m1[13]/i, 'm'));
+  }
+  if (/79$/i.test(s)) {
+    push(s.replace(/79$/i, '9'));
+    push(s.replace(/79$/i, '7'));
+  }
+  if (/7m$/i.test(s)) {
+    push(s.replace(/7m$/i, 'm7'));
+  }
+  if (/dim9/i.test(s)) {
+    push(s.replace(/dim9/i, 'dim'));
+  }
+  if (/sus9/i.test(s)) {
+    const p = parseRoot(s);
+    if (p) push(p.root + 'sus4');
   }
 
   if (/sus4/i.test(s)) {

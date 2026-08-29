@@ -4,8 +4,16 @@ import type { MetadataBatchPayload } from './types';
 export const METADATA_BUNDLED_VERSION = 'mb-5200-v2';
 export const METADATA_BUNDLED_TOTAL_HINT = 5200;
 
-export const BUNDLED_METADATA_CHUNKS: MetadataBatchPayload[] = [
-  require('../../assets/metadata/chunk-01.json'),
-  require('../../assets/metadata/chunk-02.json'),
-  require('../../assets/metadata/chunk-03.json')
-];
+let cachedChunks: MetadataBatchPayload[] | null = null;
+
+/** Parses chunk JSON on first use — not when Chords tab loads. */
+export function getBundledMetadataChunks(): MetadataBatchPayload[] {
+  if (!cachedChunks) {
+    cachedChunks = [
+      require('../../assets/metadata/chunk-01.json'),
+      require('../../assets/metadata/chunk-02.json'),
+      require('../../assets/metadata/chunk-03.json'),
+    ];
+  }
+  return cachedChunks;
+}

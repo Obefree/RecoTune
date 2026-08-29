@@ -4,14 +4,14 @@ import { SONGS, type SongEntry } from '../data/songDatabase';
 import { countAnnotatedInEntries, resolveLyricsText } from '../utils/songContent';
 import { isVerifiedChordProLyrics } from '../utils/chordLyricsNormalize';
 import { combinedArtistTitle } from '../utils/searchNormalize';
-import { importPesniChordProArchive } from './pesniArchiveImport';
+import { listOfflineCatalogSongs, loadOfflineCatalogSong } from '../catalog/offlineCatalog';
 
 const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
 export const BUILTIN_SEED_VERSION = '2026-05-24-verified-chordpro-only';
 /** Dev-only bundle marker; not shown in production Chords UI. */
-export const CHORD_LIBRARY_BUILD = 'chord-v5-pesni1113';
+export const CHORD_LIBRARY_BUILD = 'chord-v6-index-shards';
 
 let pesniArchiveImportPromise: Promise<{ imported: number }> | null = null;
 
@@ -423,17 +423,10 @@ export async function initSongLibrary(): Promise<BuiltinCatalogUpgradeResult> {
       const upgrade = await upgradeBuiltinCatalog(database);
       await repairBuiltinLyricsInDb(database);
       db = database;
-      pesniArchiveImportPromise = (async () => {
-        const pesni = await importPesniChordProArchive(database);
-        await purgeUnverifiedMergedLyrics(database);
-        await migrateLegacyJson(database);
-        return pesni;
-      })().finally(() => {
-        pesniArchiveImportPromise = null;
-      });
-      void pesniArchiveImportPromise.catch(err => {
+      pesniArchiveImportPromise = null;
+      void migrateLegacyJson(database).catch(err => {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.warn('[RecoTune] pesni archive import failed', err);
+          console.warn('[RecoTune] legacy json import failed', err);
         }
       });
       return { ...upgrade, pesniArchiveImported: 0 };
@@ -495,27 +488,58 @@ function dedupeSongRows<T extends SongRow>(rows: T[]): T[] {
 
 type CatalogListRow = SongRow & { has_tab: number };
 
-/** Catalog rows for lists/search — no lyrics blob. Practice still uses getSongById. */
+function dedupeSongEntries(songs: SongEntry[]): SongEntry[] {
+  const byKey = new Map<string, SongEntry>();
+  const order: string[] = [];
+  for (const song of songs) {
+    const key = combinedArtistTitle(song.artist, song.title);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, song);
+      order.push(key);
+      continue;
+    }
+    if (existing.id.startsWith('pesni_ru_') && !song.id.startsWith('pesni_ru_')) {
+      byKey.set(key, song);
+    }
+  }
+  return order.map(k => byKey.get(k)!);
+}
+
+/** Catalog rows for lists/search — index JSON + user/seed, no lyrics blob. */
 export async function listSongs(): Promise<SongEntry[]> {
   const database = await ensureDb();
+  const catalog = listOfflineCatalogSongs();
   const rows = await database.getAllAsync<CatalogListRow>(
     `SELECT id, title, artist, chords, key, bpm, difficulty, genre, source,
             created_at, updated_at,
             NULL AS lyrics,
             CASE WHEN lyrics IS NOT NULL AND length(lyrics) > 80 THEN 1 ELSE 0 END AS has_tab
      FROM songs
+     WHERE source = 'user'
+        OR (id NOT LIKE 'pesni_ru_%' AND id NOT LIKE 'parsed_%')
      ORDER BY artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC`,
   );
-  return dedupeSongRows(rows).map(r => ({
+  const local = rows.map(r => ({
     ...rowToEntry({ ...r, lyrics: null }),
     chordProVerified: r.has_tab === 1,
   }));
+  return dedupeSongEntries([...catalog, ...local]);
 }
 
 export async function getSongById(id: string): Promise<SongEntry | null> {
   const database = await ensureDb();
   const row = await database.getFirstAsync<SongRow>('SELECT * FROM songs WHERE id = ?', id);
-  return row ? bundleBuiltinEntry(rowToEntry(row)) : null;
+  if (row?.source === 'user') {
+    return bundleBuiltinEntry(rowToEntry(row));
+  }
+  const fromCatalog = loadOfflineCatalogSong(id);
+  if (fromCatalog?.lyrics?.trim()) return fromCatalog;
+  if (row) {
+    const entry = bundleBuiltinEntry(rowToEntry(row));
+    if (entry.lyrics?.trim()) return entry;
+  }
+  return fromCatalog ?? (row ? bundleBuiltinEntry(rowToEntry(row)) : null);
 }
 
 export async function listUserSongs(): Promise<SongEntry[]> {

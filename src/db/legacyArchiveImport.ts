@@ -12,8 +12,10 @@ type LegacyArchiveFile = {
   songs: SongEntry[];
 };
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const LEGACY_ARCHIVE = require('../../assets/archive/legacy-songs-536.json') as LegacyArchiveFile;
+function loadLegacyArchive(): LegacyArchiveFile {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('../../assets/archive/legacy-songs-536.json') as LegacyArchiveFile;
+}
 
 const META_LEGACY_IMPORTED = 'legacy_archive_imported';
 
@@ -24,7 +26,7 @@ export async function isLegacyArchiveImported(): Promise<boolean> {
 /** Optional restore of full ~536 builtin catalog from assets archive. */
 export async function importLegacyArchiveCatalog(): Promise<{ imported: number }> {
   const database = await getSongLibraryDb();
-  const songs = LEGACY_ARCHIVE.songs ?? [];
+  const songs = loadLegacyArchive().songs ?? [];
   const ts = new Date().toISOString();
   let imported = 0;
 

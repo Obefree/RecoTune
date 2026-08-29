@@ -2,7 +2,7 @@ import { getSongById } from '../db/songLibrary';
 import { normalizeSearchText } from '../utils/searchNormalize';
 import { compareSearchHits, scoreSongAgainstQuery } from '../utils/searchScore';
 
-import { BUNDLED_METADATA_CHUNKS, METADATA_BUNDLED_TOTAL_HINT } from './bundledChunks';
+import { getBundledMetadataChunks, METADATA_BUNDLED_TOTAL_HINT } from './bundledChunks';
 import { getMetadataTrackCount, type MetadataSearchHit } from './metadataDb';
 import { searchMetadataTracks } from './metadataDb';
 import { isBundledMetadataSeeded } from './metadataSync';
@@ -36,7 +36,7 @@ export async function searchBundledMetadata(
   const hits: MetadataSearchHit[] = [];
   const candidateCap = (offset + limit) * 4;
 
-  for (const chunk of BUNDLED_METADATA_CHUNKS) {
+  for (const chunk of getBundledMetadataChunks()) {
     const artistBoostIds = new Set<string>();
     for (const a of chunk.artists ?? []) {
       const { score, kind } = scoreSongAgainstQuery(q, '', a.name);

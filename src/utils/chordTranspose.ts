@@ -34,7 +34,7 @@ export function transposeChordSymbol(symbol: string, semitones: number): string 
   if (!raw) return symbol;
 
   const slash = raw.indexOf('/');
-  if (slash >= 0) {
+  if (slash >= 0 && !/^\d/.test(raw.slice(slash + 1).trim())) {
     const head = transposeChordSymbol(raw.slice(0, slash), semitones);
     const bass = transposeChordSymbol(raw.slice(slash + 1), semitones);
     return `${head}/${bass}`;

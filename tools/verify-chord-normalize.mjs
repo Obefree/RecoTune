@@ -86,9 +86,53 @@ const tests = [
     'feather article lowercase',
     !/\[a\]/i.test(normalizeLyricsChords('like a feather', { allowMerge: true })),
   ],
+  ['H7 stays a chord', normalizeLyricsChords('[H7]слово другое') === '[H7]слово другое'],
+  ['Hm7/5- stays a chord', normalizeLyricsChords('[Hm7/5-]слово другое') === '[Hm7/5-]слово другое'],
+  ['A7sus4 stays a chord', normalizeLyricsChords('[A7sus4]слово другое') === '[A7sus4]слово другое'],
+  ['D6sus2 stays a chord', normalizeLyricsChords('[D6sus2]слово другое') === '[D6sus2]слово другое'],
+  ['Dmadd9 stays a chord', normalizeLyricsChords('[Dmadd9]слово другое') === '[Dmadd9]слово другое'],
+  ['Em11 stays a chord', normalizeLyricsChords('[Em11]слово другое') === '[Em11]слово другое'],
+  ['Fdim9 stays a chord', normalizeLyricsChords('[Fdim9]слово другое') === '[Fdim9]слово другое'],
+  ['Dsus9 stays a chord', normalizeLyricsChords('[Dsus9]слово другое') === '[Dsus9]слово другое'],
+  ['E79 stays a chord', normalizeLyricsChords('[E79]слово другое') === '[E79]слово другое'],
+  ['Cmaj7 stays a chord', normalizeLyricsChords('[Cmaj7]слово другое') === '[Cmaj7]слово другое'],
+  ['Am/G stays a chord', normalizeLyricsChords('[Am/G]слово другое') === '[Am/G]слово другое'],
+  ['Dm(V) stays a chord', normalizeLyricsChords('[Dm(V)]слово другое') === '[Dm(V)]слово другое'],
+  ['G1 is not a chord', normalizeLyricsChords('[G1]слово другое') === 'G1слово другое'],
+  ['A320 is not a chord', normalizeLyricsChords('[A320]слово другое') === 'A320слово другое'],
   ['H chord line', hmLine.includes('[Hm]Много')],
   ['H in chord row', /\[A\].*\[G\].*\[Hm\].*\[D\]/.test(hRow.split('\n')[0])],
   ['H tab verifies', hVerified === true],
+  [
+    'column merge spaced pesni',
+    (() => {
+      const o = normalizeLyricsChords(
+        '[Am]                         [E]\nЯ буду сильным без ваших долбаных машин',
+      );
+      return (
+        /\[Am\]Я/.test(o) &&
+        /\[E\]/.test(o) &&
+        !o.split('\n').some(l => /^\s*\[Am\]\s+\[E\]\s*$/.test(l))
+      );
+    })(),
+  ],
+  [
+    'spread when fewer chords than words',
+    (() => {
+      const o = normalizeLyricsChords(
+        'Am E\nЯ буду сильным без ваших долбаных машин',
+        { allowMerge: true },
+      );
+      return /\[Am\]Я/.test(o) && /\[E\]машин/.test(o);
+    })(),
+  ],
+  [
+    'Hm7/5- chord row merges',
+    (() => {
+      const o = normalizeLyricsChords('Hm7/5- Am\nТёмная ночь и тишина', { allowMerge: true });
+      return /\[Hm7\/5-\]/.test(o) && /\[Am\]/.test(o) && o.split('\n').length === 1;
+    })(),
+  ],
   ['[Chorus] is not a chord marker', !isVerifiedChordProLyrics('[Chorus] hello there\n[Verse] more words here')],
   ['real chords still verify', isVerifiedChordProLyrics('[Am]hello there friend\n[G]more lyric words')],
   ['tab dump PLEASE NOTE rejected', !isVerifiedChordProLyrics('#----------------PLEASE NOTE----------------\nBand: X\nSong: [A] Y\nLine one\nLine two')],

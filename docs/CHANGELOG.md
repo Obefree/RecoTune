@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- **Chords (кнопки + зависание базы):** поиск в базе блокировал JS (smart-скор по 2569 песням) — пиллы и крестик «не жались». Локальный `filterSongsQuick`, metadata/шарды не грузятся при открытии вкладки. См. [docs/features/2026-08-26-chords-library-freeze-buttons.md](./features/2026-08-26-chords-library-freeze-buttons.md).
+- **Chords (текст без аккордов рвался):** строка `[Am]     [E]` не склеивалась с куплетом, если аккордов меньше, чем слов; практика ломала перенос. Merge по колонкам/spread + абзац для строк без чипов; пиллы базы снова жмутся. См. [docs/features/2026-08-26-chords-lyric-merge-wrap.md](./features/2026-08-26-chords-lyric-merge-wrap.md).
+
 - **Chords (поиск + списки):** поиск в базе был долгим (полные тексты + MusicBrainz + HTTP). Каталог без lyrics, сеть только при remote; пиллы Исполнители/Песни. См. [docs/features/2026-08-18-chords-library-browse.md](./features/2026-08-18-chords-library-browse.md).
 - **Studio (овердаб ~830 мс):** прогрев плеера больше не утекает в запись (rewind на offset), пресет BT 700→280, ручная калибровка дорожки становится пресетом для следующей. См. [docs/features/2026-08-18-studio-overdub-latency-rewind.md](./features/2026-08-18-studio-overdub-latency-rewind.md).
 - **Melody (распознавание):** кадры склеивались по времени RN, START не сбрасывал прошлый напев, медиана съедала короткие ноты. Движок ставит `t` сам, hop 32 мс, FFT 2048, STOP сразу в контур. См. [docs/features/2026-08-18-melody-recognition-contour.md](./features/2026-08-18-melody-recognition-contour.md).

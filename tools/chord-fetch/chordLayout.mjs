@@ -10,9 +10,17 @@
  * One module instead of duplicating the column-merge in amdmFetch + ugFetch.
  */
 
-/** Whole-token chord: G, Am, C#m7, Dsus2, F/A — aligned with app chordLyricsNormalize. */
-const CHORD_TOKEN_RE =
-  /^[A-H](?:#|b|♯|♭)?(?:maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\d+|m7|7|9|11|13|6|2|4|°|Ø)*(?:\/[A-H](?:#|b|♯|♭)?)?$/;
+/** Whole-token chord: G, Am, Hm7/5-, A7sus4, Dm(V) — keep in sync with src/utils/chordToken.ts */
+const ROOT = '[A-H](?:#|b|♯|♭)?';
+const CHORD_PIECE =
+  '(?:maj7|maj9|maj|min|dim7|dim|aug|sus4|sus2|sus|add\\d+|m7b5|m7-5|m11|m13|m7|m9|m6|m(?!aj)|6\\/9|7\\+|7-|9\\+|11|13|7|9|6|2|4|5|°|Ø|\\+)';
+const CHORD_ALTER = '(?:\\/(?:5[-+−]|9|11)|[-+−]5|b5|#5)?';
+const CHORD_SLASH = `(?:\\/${ROOT})?`;
+const CHORD_FRET = '(?:\\(\\s*(?:[IVXivx]+|\\d{1,2})\\s*\\))?';
+const CHORD_TOKEN_RE = new RegExp(
+  `^${ROOT}${CHORD_PIECE}*${CHORD_ALTER}${CHORD_SLASH}${CHORD_FRET}$`,
+  'i',
+);
 
 function stripBrackets(token) {
   return token
@@ -67,9 +75,8 @@ export function mergeChordRowIntoLyric(lyric, tokens) {
   let cursor = 0;
   for (const { chord, col } of sorted) {
     let pos = Math.max(0, Math.min(col, len));
-    // If the column lands on whitespace, snap forward to the next word so the
-    // chord chip sits above a syllable, not floating in a gap.
     while (pos < len && /\s/.test(lyric[pos])) pos++;
+    while (pos > 0 && !/\s/.test(lyric[pos - 1])) pos--;
     if (pos < cursor) pos = cursor;
     result += lyric.slice(cursor, pos);
     result += `[${chord}]`;

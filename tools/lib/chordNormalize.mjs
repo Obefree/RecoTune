@@ -8,10 +8,12 @@
  */
 
 const ROOT = '[A-H](?:#|b|♯|♭)?';
-const CHORD_SUFFIX =
-  '(?:maj9|maj7|maj|min|m(?!aj)|dim|aug|sus2|sus4|sus|add\\d+|m7|m9|7|9|11|13|6|2|4|5|°|Ø)?';
+const CHORD_PIECE =
+  '(?:maj7|maj9|maj|min|dim7|dim|aug|sus4|sus2|sus|add\\d+|m7b5|m7-5|m11|m13|m7|m9|m6|m(?!aj)|6\\/9|7\\+|7-|9\\+|11|13|7|9|6|2|4|5|°|Ø|\\+)';
+const CHORD_ALTER = '(?:\\/(?:5[-+−]|9|11)|[-+−]5|b5|#5)?';
 const CHORD_SLASH = `(?:\\/${ROOT})?`;
-const CHORD_TOKEN = `${ROOT}${CHORD_SUFFIX}${CHORD_SLASH}`;
+const CHORD_FRET = '(?:\\(\\s*(?:[IVXivx]+|\\d{1,2})\\s*\\))?';
+const CHORD_TOKEN = `${ROOT}${CHORD_PIECE}*${CHORD_ALTER}${CHORD_SLASH}${CHORD_FRET}`;
 const VALID_CHORD_TOKEN_RE = new RegExp(`^${CHORD_TOKEN}$`, 'i');
 const CHORD_MARKER_RE = new RegExp(`\\[${CHORD_TOKEN}\\]`, 'i');
 const BRACKET_CHORD_RE = new RegExp(`\\[(${CHORD_TOKEN})\\]`, 'gi');
@@ -20,6 +22,75 @@ const LYRIC_PRONOUN_TOKENS = new Set(['I']);
 
 export function isChordToken(token) {
   return VALID_CHORD_TOKEN_RE.test(token);
+}
+
+function chordBare(token) {
+  const { core } = splitTokenPunctuation(token);
+  return core.replace(/^\[+|\]+$/g, '');
+}
+
+function lineHasLyricWords(line) {
+  const prose = String(line ?? '').replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ');
+  return /[a-zA-Zа-яА-ЯёЁ]{2,}/.test(prose);
+}
+
+function chordRowTokens(line) {
+  const out = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    const bare = chordBare(m[0]);
+    if (bare && isChordToken(bare)) out.push({ chord: bare, col: m.index });
+  }
+  return out;
+}
+
+function snapToWordStart(lyric, pos) {
+  const len = lyric.length;
+  let p = Math.max(0, Math.min(pos, len));
+  while (p < len && /\s/.test(lyric[p])) p += 1;
+  while (p > 0 && !/\s/.test(lyric[p - 1])) p -= 1;
+  return p;
+}
+
+function mergeByColumns(lyric, tokens) {
+  if (!tokens.length) return lyric;
+  const lead = lyric.match(/^\s*/)?.[0].length ?? 0;
+  const body = lyric.slice(lead);
+  const len = body.length;
+  const sorted = tokens
+    .map(t => ({ chord: t.chord, col: Math.max(0, t.col - lead) }))
+    .sort((a, b) => a.col - b.col);
+  let result = '';
+  let cursor = 0;
+  for (const { chord, col } of sorted) {
+    let pos = snapToWordStart(body, col);
+    if (pos < cursor) pos = cursor;
+    if (pos > len) pos = len;
+    result += body.slice(cursor, pos);
+    result += `[${chord}]`;
+    cursor = pos;
+  }
+  result += body.slice(cursor);
+  return result;
+}
+
+function spreadChordsOnWords(lyric, chords) {
+  const words = lyric.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return chords.map(c => `[${c}]`).join(' ');
+  if (chords.length === 1) return `[${chords[0]}]${lyric.trim()}`;
+  const marks = words.map(() => '');
+  const last = Math.max(chords.length - 1, 1);
+  const used = new Set();
+  for (let i = 0; i < chords.length; i += 1) {
+    let wi = Math.round((i * (words.length - 1)) / last);
+    wi = Math.max(0, Math.min(words.length - 1, wi));
+    while (used.has(wi) && wi < words.length - 1) wi += 1;
+    while (used.has(wi) && wi > 0) wi -= 1;
+    used.add(wi);
+    marks[wi] += `[${chords[i]}]`;
+  }
+  return words.map((w, i) => `${marks[i]}${w}`).join(' ');
 }
 
 function isBareWordChordToken(token, opts) {
@@ -31,11 +102,16 @@ function isBareWordChordToken(token, opts) {
 }
 
 function splitTokenPunctuation(token) {
-  const lead = token.match(/^[^\w[\]#♯♭/]+/)?.[0] ?? '';
-  const rest = token.slice(lead.length);
-  const trail = rest.match(/[^\w[\]#♯♭/]+$/)?.[0] ?? '';
-  const core = rest.slice(0, rest.length - trail.length);
-  return { lead, core, trail };
+  const keep = /[A-Za-z0-9[\]#♯♭/+−-]/;
+  let start = 0;
+  while (start < token.length && !keep.test(token[start])) start += 1;
+  let end = token.length;
+  while (end > start && !keep.test(token[end - 1])) end -= 1;
+  return {
+    lead: token.slice(0, start),
+    core: token.slice(start, end),
+    trail: token.slice(end),
+  };
 }
 
 function lineIsBareChordLine(line) {
@@ -154,16 +230,16 @@ function mergeChordLineAboveLyric(lines) {
       out.push(line);
       continue;
     }
-    const tokens = trimmed.split(/\s+/).filter(Boolean);
-    const allChords = tokens.length > 0 && tokens.every(t => isChordToken(t));
-    if (allChords && i + 1 < lines.length && lines[i + 1].trim()) {
-      const next = lines[i + 1];
-      const words = next.trim().split(/\s+/);
-      if (tokens.length === 1) {
-        const chord = tokens[0];
+    const rowTokens = chordRowTokens(line);
+    const next = i + 1 < lines.length ? lines[i + 1] : '';
+    const allChords = rowTokens.length > 0 && lineIsChordOnly(line);
+    if (allChords && next.trim() && lineHasLyricWords(next) && !lineIsChordOnly(next)) {
+      const chords = rowTokens.map(t => t.chord);
+      const words = next.trim().split(/\s+/).filter(Boolean);
+      if (chords.length === 1) {
+        const chord = chords[0];
         const trimmedNext = next.trim();
-        const nextWords = trimmedNext.split(/\s+/);
-        if (nextWords.length === 1) {
+        if (words.length === 1) {
           out.push(`[${chord}]${trimmedNext}`);
         } else if (lineStartsWithConnector(trimmedNext)) {
           const prepped = repositionMisplacedInlineChords(trimmedNext);
@@ -178,26 +254,34 @@ function mergeChordLineAboveLyric(lines) {
         i += 1;
         continue;
       }
-      if (tokens.length === words.length) {
-        const chords = tokens.map(c => `[${c}]`);
-        const merged = words
-          .map((w, wi) => `${chords[wi]}${w}`)
-          .join(' ')
-          .replace(/\[\]/g, '');
-        out.push(merged);
+      if (/\S\s{3,}\S/.test(line)) {
+        out.push(mergeByColumns(next, rowTokens));
         i += 1;
         continue;
       }
-      if (tokens.length > words.length && words.length > 0) {
-        const merged = words
-          .map((w, wi) => `${wi < tokens.length ? `[${tokens[wi]}]` : ''}${w}`)
-          .join(' ');
-        out.push(merged);
+      if (chords.length === words.length) {
+        out.push(words.map((w, wi) => `[${chords[wi]}]${w}`).join(' '));
         i += 1;
         continue;
       }
-      out.push(line);
-      continue;
+      if (chords.length > words.length && words.length > 0) {
+        out.push(
+          words
+            .map((w, wi) =>
+              wi < words.length - 1
+                ? `[${chords[wi]}]${w}`
+                : `${chords.slice(wi).map(c => `[${c}]`).join('')}${w}`,
+            )
+            .join(' '),
+        );
+        i += 1;
+        continue;
+      }
+      if (words.length > 0) {
+        out.push(spreadChordsOnWords(next, chords));
+        i += 1;
+        continue;
+      }
     }
     out.push(line);
   }
@@ -209,10 +293,13 @@ export function normalizeLyricsChords(text, opts) {
   let normalized = normalizeLyricApostrophes(text).replace(/\r\n/g, '\n').trim();
   normalized = stripSpuriousChordBrackets(normalized);
   normalized = parenToBrackets(normalized);
-  const split = normalized.split('\n');
-  const lines = opts?.allowMerge === true ? mergeChordLineAboveLyric(split) : split;
+  const lines = mergeChordLineAboveLyric(normalized.split('\n'));
   normalized = lines
-    .map(line => repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line))))
+    .map(line =>
+      opts?.allowMerge === true
+        ? repositionMisplacedInlineChords(bracketBareChords(parenToBrackets(line)))
+        : repositionMisplacedInlineChords(parenToBrackets(line)),
+    )
     .join('\n');
   return stripSpuriousChordBrackets(normalized).trim();
 }
@@ -220,7 +307,10 @@ export function normalizeLyricsChords(text, opts) {
 function lineIsChordOnly(line) {
   const tokens = line.trim().split(/\s+/).filter(Boolean);
   if (!tokens.length) return false;
-  return tokens.every(t => isChordToken(t.replace(/^\[|\]$/g, '')));
+  return tokens.every(t => {
+    const bare = chordBare(t);
+    return Boolean(bare) && isChordToken(bare);
+  });
 }
 
 /** ASCII/OLGA guitar-tab archive headers — not ChordPro practice content (D8). */
