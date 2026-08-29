@@ -1,0 +1,14 @@
+{
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "chord-proxy",
+      "command": "node tools/chord-fetch/dev-proxy-server.mjs"
+    },
+    {
+      "name": "expo",
+      "command": "EXPO_NO_TELEMETRY=1 npx expo start --port 8081",
+      "portNumber": 8081
+    }
+  ]
+}
