@@ -4,10 +4,10 @@ import {
   Alert, Animated, TextInput, Modal, PanResponder, Pressable, Platform,
   useWindowDimensions,
 } from 'react-native';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import { Audio, AVPlaybackStatus, startMetronomeClick, stopMetronomeClick } from '../utils/audio';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { useRecordingBackground, warnExpoGoBackgroundRecording } from '../hooks/useRecordingBackground';
-import { assertPlaybackFileExists, saveAudioToPhoneLibrary } from '../utils/playbackUri';
+import { assertPlaybackFileExists, assertFreshRecordingFile, saveAudioToPhoneLibrary } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
@@ -17,8 +17,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import WebView from 'react-native-webview';
 
 import { useTabBarVisibility } from '../context/TabBarVisibility';
+import { useLocale } from '../context/LocaleContext';
+import { clampMetronomeBpm, METRONOME_BPM_DEFAULT } from '../utils/metronomeClick';
 import SeekBar from '../components/SeekBar';
 import RecordingInputPicker from '../components/RecordingInputPicker';
+import MetronomeBar from '../components/MetronomeBar';
 
 /* ─── Types ─── */
 interface Track {
@@ -49,6 +52,7 @@ import {
   applyStudioAudioMode,
   revalidateStudioRoutingOnFocus,
   applyRecordingInput,
+  routingUsesBluetoothMic,
   prerollForInput,
   prerollForOutput,
   suggestInputForOutput,
@@ -303,6 +307,7 @@ function TrackRow({
 /* ─── Main screen ─── */
 export default function StudioScreen() {
   const insets = useSafeAreaInsets();
+  const { t } = useLocale();
   const { height: windowHeight } = useWindowDimensions();
   const { setTabBarHidden } = useTabBarVisibility();
   /** Высота карточки модалки; кнопка «Закрыть» — снаружи ScrollView */
@@ -330,6 +335,8 @@ export default function StudioScreen() {
   const [mixHtml, setMixHtml]             = useState<string | null>(null);
   const [mixBitDepth, setMixBitDepth]     = useState<16|24>(16);
   const mixerRef = useRef<WebView>(null);
+  const [clickOn, setClickOn] = useState(false);
+  const [clickBpm, setClickBpm] = useState(METRONOME_BPM_DEFAULT);
 
   const [quality, setQuality]             = useState<RecQuality>(DEFAULT_QUALITY);
   const [showQuality, setShowQuality]     = useState(false);
@@ -342,11 +349,13 @@ export default function StudioScreen() {
   const [audioRouting, setAudioRouting]   = useState<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
   const audioRoutingRef = useRef<StudioAudioRouting>(DEFAULT_AUDIO_ROUTING);
   const [audioRouteSnap, setAudioRouteSnap] = useState<AudioRouteSnapshot | null>(null);
+  const audioRouteSnapRef = useRef<AudioRouteSnapshot | null>(null);
   const [audioRouteLoading, setAudioRouteLoading] = useState(false);
   /** Honest note when the OS ignored the manual mic choice during the last record. */
   const [inputApplyNote, setInputApplyNote] = useState<string | null>(null);
   useEffect(() => { qualityRef.current = quality; }, [quality]);
   useEffect(() => { prerollRef.current = prerollMs; }, [prerollMs]);
+  useEffect(() => { audioRouteSnapRef.current = audioRouteSnap; }, [audioRouteSnap]);
 
   // Master playback position
   const [allPlayPos, setAllPlayPos]       = useState(0);
@@ -543,6 +552,8 @@ export default function StudioScreen() {
       setAudioRouteSnap(snap);
     })();
     return () => {
+      stopMetronomeClick();
+      setClickOn(false);
       if (!isRecordingRef.current) {
         killAllSounds();
       }
@@ -836,22 +847,17 @@ export default function StudioScreen() {
 
       // Prepare recording
       const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
-      const inputResult = await applyRecordingInput(rec, audioRoutingRef.current);
-      if (inputResult === 'missing' || inputResult === 'rejected') {
-        // Honest feedback: the OS refused the chosen mic (old Android / device gone) — record on default.
-        setInputApplyNote(
-          inputResult === 'missing'
-            ? 'Выбранный микрофон не найден — пишем на системный. Обнови список в настройках.'
-            : 'Система не дала выбрать микрофон (Android < 9 или занят) — пишем на системный.',
-        );
-      } else {
-        setInputApplyNote(null);
-      }
+      const btMic = routingUsesBluetoothMic(audioRoutingRef.current, audioRouteSnapRef.current);
+      await rec.prepareToRecordAsync(buildRecordingOptions(
+        qualityRef.current,
+        btMic ? { audioSource: 'voice_communication' } : undefined,
+      ));
 
       // ── Прогрев плеера, затем rewind, затем mic+play вместе ─────────
       // Иначе waitForPlaybackStart (20–500 мс, плавает) остаётся в файле овердаба,
       // и на каждой новой дорожке приходится ставить другую ручную задержку (~830).
+      // BT: setInput/SCO только ПОСЛЕ прогрева — A2DP минуса иначе сбрасывает гарнитуру,
+      // и MediaRecorder пишет пустой файл.
       const warmupTimeouts: ReturnType<typeof setTimeout>[] = [];
       playbackSounds.forEach((s, i) => {
         const off = session.tracks[i]?.offsetMs ?? 0;
@@ -864,6 +870,17 @@ export default function StudioScreen() {
       }
       warmupTimeouts.forEach(clearTimeout);
       await rewindPlaybackToOffsets(playbackSounds, session.tracks);
+
+      const inputResult = await applyRecordingInput(rec, audioRoutingRef.current);
+      if (inputResult === 'missing' || inputResult === 'rejected') {
+        setInputApplyNote(
+          inputResult === 'missing'
+            ? 'Выбранный микрофон не найден — пишем на системный. Обнови список в настройках.'
+            : 'Bluetooth-микрофон не подключился — пишем на системный. Подождите гарнитуру или выберите микрофон телефона.',
+        );
+      } else {
+        setInputApplyNote(null);
+      }
 
       await rec.startAsync();
       playbackSounds.forEach((s, i) => {
@@ -907,11 +924,16 @@ export default function StudioScreen() {
       const currentSessions = sessionsRef.current;
 
       if (uri && currentSession) {
+        const btMic = routingUsesBluetoothMic(audioRoutingRef.current, audioRouteSnapRef.current);
+        const fresh = await assertFreshRecordingFile(uri, { bluetooth: btMic });
+        if (!fresh.ok) {
+          Alert.alert('Запись', fresh.reason);
+        } else {
         const ts  = Date.now();
         const ext = uri.split('.').pop() ?? 'm4a';
         const dst = `${STUDIO_DIR}track_${ts}.${ext}`;
         await FileSystem.makeDirectoryAsync(STUDIO_DIR, { intermediates: true });
-        await FileSystem.moveAsync({ from: uri, to: dst });
+        await FileSystem.moveAsync({ from: fresh.uri, to: dst });
 
         const idx   = currentSession.tracks.length;
         const track: Track = {
@@ -928,6 +950,14 @@ export default function StudioScreen() {
         setSessions(next);
         setActiveSession(updated);
         await saveSessions(next);
+        }
+      } else if (!uri) {
+        Alert.alert(
+          'Запись',
+          routingUsesBluetoothMic(audioRoutingRef.current, audioRouteSnapRef.current)
+            ? 'Файл не сохранился. Bluetooth-микрофон часто молчит, пока гарнитура не перейдёт в SCO — подождите или пишите на микрофон телефона.'
+            : 'Файл записи не сохранился.',
+        );
       }
     } catch (e) {
       setIsRecording(false);
@@ -1356,10 +1386,34 @@ function normArr(arr){
     void killAllSounds();
   }, [killSolo, killAllSounds]);
 
+  const toggleClick = useCallback(() => {
+    if (clickOn) {
+      stopMetronomeClick();
+      setClickOn(false);
+      return;
+    }
+    void startMetronomeClick(clickBpm).then(ok => setClickOn(!!ok)).catch(() => setClickOn(false));
+  }, [clickOn, clickBpm]);
+
+  const bumpClickBpm = useCallback((delta: number) => {
+    const next = clampMetronomeBpm(clickBpm + delta);
+    setClickBpm(next);
+    if (clickOn) void startMetronomeClick(next);
+  }, [clickBpm, clickOn]);
+
   /* ── Render ── */
   return (
     <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
-      <Text style={styles.title}>Studio</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>Studio</Text>
+        <MetronomeBar
+          bpm={clickBpm}
+          running={clickOn}
+          onToggle={toggleClick}
+          onBump={bumpClickBpm}
+          label={t('metronomeLabel')}
+        />
+      </View>
 
       <View style={styles.screenBody}>
         {/* Список сессий: на весь экран, пока проект не открыт */}
@@ -1980,7 +2034,8 @@ function normArr(arr){
 /* ─── Styles ─── */
 const styles = StyleSheet.create({
   container: { flex: 1, minHeight: 0, backgroundColor: '#0a0a0f', paddingHorizontal: 16 },
-  title: { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600', textAlign: 'center', marginBottom: 10, flexShrink: 0 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexShrink: 0, gap: 8 },
+  title: { color: '#888', fontSize: 13, letterSpacing: 3, textTransform: 'uppercase', fontWeight: '600', flexShrink: 0 },
   screenBody: { flex: 1, minHeight: 0 },
 
   section: { backgroundColor: '#111118', borderRadius: 20, padding: 14, borderWidth: 1, borderColor: '#222' },

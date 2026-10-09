@@ -7,9 +7,8 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
 import WebView from 'react-native-webview';
-
+import { Audio, playReferenceTone, stopReferenceTone, startMetronomeClick, stopMetronomeClick } from '../utils/audio';
 import TunerEngine, { PitchMessage } from '../components/TunerEngine';
 import {
   centsToColor, findNearestStringWithHysteresis, INSTRUMENTS, TUNINGS,
@@ -18,6 +17,7 @@ import {
 import TunerNeedle from '../components/TunerNeedle';
 import FrequencyChart, { HistoryPoint, TUNER_CHART_BLOCK_MIN_H } from '../components/FrequencyChart';
 import MiniCentsStrip from '../components/MiniCentsStrip';
+import MetronomeBar from '../components/MetronomeBar';
 import { useLocale } from '../context/LocaleContext';
 import type { RegisteredNoteEvent } from '../hooks/useSungNoteHistory';
 import { SungNoteDetector } from '../utils/sungNoteDetector';
@@ -28,6 +28,7 @@ import {
   TUNER_CHART_WINDOW_MS,
 } from '../utils/pitchChartHistory';
 import { TunerPitchDisplay, TUNER_DISPLAY_UI_MS } from '../utils/tunerDisplay';
+import { clampMetronomeBpm, METRONOME_BPM_DEFAULT } from '../utils/metronomeClick';
 
 const MAX_REGISTERED = 64;
 const INSTRUMENT_ICONS: Record<string, string> = { Guitar: '🎸', 'Guitar 7': '🎸', Ukulele: '🪗', Bass: '🎸', Mandolin: '🪕' };
@@ -77,6 +78,9 @@ export default function TunerScreen() {
   })();
 
   const webViewRef      = useRef<WebView>(null);
+  const [clickOn, setClickOn] = useState(false);
+  const [clickBpm, setClickBpm] = useState(METRONOME_BPM_DEFAULT);
+  const [soundingHz, setSoundingHz] = useState<number | null>(null);
   const pulseAnim       = useRef(new Animated.Value(1)).current;
   const signalAnim      = useRef(new Animated.Value(0)).current;
   const pulseLoop       = useRef<Animated.CompositeAnimation | null>(null);
@@ -217,7 +221,37 @@ export default function TunerScreen() {
     setIsActive(false); setNote(null); setFrequency(null); setSignalLevel(0); setActiveStringNumber(null);
   }, []);
 
-  useFocusEffect(useCallback(() => () => stop(), [stop]));
+  useFocusEffect(useCallback(() => () => {
+    stop();
+    stopMetronomeClick();
+    void stopReferenceTone();
+    setClickOn(false);
+    setSoundingHz(null);
+  }, [stop]));
+
+  const playStringTone = useCallback((hz: number) => {
+    if (soundingHz === hz) {
+      void stopReferenceTone();
+      setSoundingHz(null);
+      return;
+    }
+    void playReferenceTone(hz, { loop: true }).then(() => setSoundingHz(hz)).catch(() => setSoundingHz(null));
+  }, [soundingHz]);
+
+  const toggleClick = useCallback(() => {
+    if (clickOn) {
+      stopMetronomeClick();
+      setClickOn(false);
+      return;
+    }
+    void startMetronomeClick(clickBpm).then(ok => setClickOn(!!ok)).catch(() => setClickOn(false));
+  }, [clickOn, clickBpm]);
+
+  const bumpClickBpm = useCallback((delta: number) => {
+    const next = clampMetronomeBpm(clickBpm + delta);
+    setClickBpm(next);
+    if (clickOn) void startMetronomeClick(next);
+  }, [clickBpm, clickOn]);
 
   const signalWidth = signalAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   const displayCents = note?.displayCents ?? note?.cents ?? 0;
@@ -243,18 +277,18 @@ export default function TunerScreen() {
 
           <View style={styles.langToggle}>
             <TouchableOpacity
-              onPress={() => setLocale('ru')}
-              style={[styles.langBtn, locale === 'ru' && styles.langBtnActive]}
-              accessibilityLabel={t('langRu')}
-            >
-              <Text style={[styles.langBtnText, locale === 'ru' && styles.langBtnTextActive]}>{t('langRu')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               onPress={() => setLocale('en')}
               style={[styles.langBtn, locale === 'en' && styles.langBtnActive]}
               accessibilityLabel={t('langEn')}
             >
               <Text style={[styles.langBtnText, locale === 'en' && styles.langBtnTextActive]}>{t('langEn')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setLocale('ru')}
+              style={[styles.langBtn, locale === 'ru' && styles.langBtnActive]}
+              accessibilityLabel={t('langRu')}
+            >
+              <Text style={[styles.langBtnText, locale === 'ru' && styles.langBtnTextActive]}>{t('langRu')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -367,16 +401,34 @@ export default function TunerScreen() {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {/* ── Open strings (chromatic needle unchanged; highlight nearest string) ── */}
+        {/* ── Open strings: tap to hear the target pitch ── */}
         <View style={styles.stringsCard}>
+          <View style={styles.stringsHead}>
+            <Text style={styles.stringsHint}>Тап — эталон</Text>
+            <MetronomeBar
+              bpm={clickBpm}
+              running={clickOn}
+              onToggle={toggleClick}
+              onBump={bumpClickBpm}
+              label={t('metronomeLabel')}
+            />
+          </View>
           <View style={styles.stringsGrid}>
             {tuning.strings.map(gs => {
               const active = activeStringNumber === gs.string;
+              const sounding = soundingHz === gs.frequency;
               return (
-                <View key={`${gs.string}-${gs.note}`} style={[styles.pill, active && styles.pillActive]}>
-                  <Text style={[styles.pillNum, active && styles.pillNumActive]}>{gs.string}</Text>
-                  <Text style={[styles.pillNote, active && styles.pillNoteActive]}>{gs.note}</Text>
-                </View>
+                <TouchableOpacity
+                  key={`${gs.string}-${gs.note}`}
+                  onPress={() => playStringTone(gs.frequency)}
+                  style={[styles.pill, active && styles.pillActive, sounding && styles.pillSounding]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t('playStringNote')} ${gs.note}`}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[styles.pillNum, (active || sounding) && styles.pillNumActive]}>{gs.string}</Text>
+                  <Text style={[styles.pillNote, (active || sounding) && styles.pillNoteActive]}>{gs.note}</Text>
+                </TouchableOpacity>
               );
             })}
           </View>
@@ -491,10 +543,13 @@ const styles = StyleSheet.create({
   btnTextActive: { color: '#0a0a0f' },
   errorText:  { color: '#ff5252', fontSize: 12, marginBottom: 8, textAlign: 'center' },
 
-  stringsCard: { backgroundColor: '#111118', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#1e1e28' },
+  stringsCard: { backgroundColor: '#111118', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: '#1e1e28' },
+  stringsHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  stringsHint: { color: '#555', fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
   stringsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' },
   pill:        { alignItems: 'center', backgroundColor: '#1a1a24', borderRadius: 9, paddingVertical: 6, paddingHorizontal: 9, borderWidth: 1, borderColor: '#2a2a38', minWidth: 40 },
   pillActive:  { backgroundColor: '#00e67618', borderColor: '#00e676' },
+  pillSounding:{ backgroundColor: '#00e67633', borderColor: '#00e676' },
   pillNum:     { color: '#555', fontSize: 9, fontWeight: '700' },
   pillNumActive:{ color: '#00e676' },
   pillNote:    { color: '#888', fontSize: 12, fontWeight: '600', marginTop: 1 },

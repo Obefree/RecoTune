@@ -4,7 +4,7 @@ import {
   Alert,
 } from 'react-native';
 import SeekBar from '../components/SeekBar';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import { Audio, AVPlaybackStatus } from '../utils/audio';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import { assertPlaybackFileExists } from '../utils/playbackUri';

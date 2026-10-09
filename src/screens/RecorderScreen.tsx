@@ -3,10 +3,10 @@ import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   Alert, Animated, Modal, TextInput, ScrollView, Pressable, Platform, useWindowDimensions,
 } from 'react-native';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import { Audio, AVPlaybackStatus } from '../utils/audio';
 import { useMediaRemoteControls } from '../hooks/useMediaRemoteControls';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
-import { assertPlaybackFileExists, saveAudioToPhoneLibrary } from '../utils/playbackUri';
+import { assertPlaybackFileExists, assertFreshRecordingFile, saveAudioToPhoneLibrary } from '../utils/playbackUri';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,6 +24,7 @@ import {
   applyStudioAudioMode,
   revalidateStudioRoutingOnFocus,
   applyRecordingInput,
+  routingUsesBluetoothMic,
   loadStudioAudioRouting,
   saveStudioAudioRouting,
   type StudioAudioRouting,
@@ -424,7 +425,11 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
     killSound();
     await applyStudioAudioMode(audioRoutingRef.current, { recording: true });
     const rec = new Audio.Recording();
-    await rec.prepareToRecordAsync(buildRecordingOptions(qualityRef.current));
+    const btMic = routingUsesBluetoothMic(audioRoutingRef.current, audioRouteSnap);
+    await rec.prepareToRecordAsync(buildRecordingOptions(
+      qualityRef.current,
+      btMic ? { audioSource: 'voice_communication' } : undefined,
+    ));
     await applyRecordingInput(rec, audioRoutingRef.current);
     await rec.startAsync();
     recRef.current = rec;
@@ -448,11 +453,16 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
         await applyStudioAudioMode(audioRoutingRef.current, { recording: false });
       } catch {}
       if (uri) {
+        const btMic = routingUsesBluetoothMic(audioRoutingRef.current, audioRouteSnap);
+        const fresh = await assertFreshRecordingFile(uri, { bluetooth: btMic });
+        if (!fresh.ok) {
+          Alert.alert('Запись', fresh.reason);
+        } else {
         const ts  = Date.now();
         const ext = uri.split('.').pop() ?? 'm4a';
         const dst = RECORDINGS_DIR + `rec_${ts}.${ext}`;
         await FileSystem.makeDirectoryAsync(RECORDINGS_DIR, { intermediates: true });
-        await FileSystem.moveAsync({ from: uri, to: dst });
+        await FileSystem.moveAsync({ from: fresh.uri, to: dst });
         setRecordings(prev => [{
           id: `rec_${ts}.${ext}`, uri: dst,
           name: `Recording ${new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`,
@@ -465,6 +475,14 @@ export default function RecorderScreen({ embedded }: { embedded?: boolean } = {}
             `${saved.error ?? 'Не удалось скопировать в память телефона'}. Файл есть в RecoTune; разрешите доступ к аудио, чтобы копия переживала удаление приложения.`,
           );
         }
+        }
+      } else {
+        Alert.alert(
+          'Запись',
+          routingUsesBluetoothMic(audioRoutingRef.current, audioRouteSnap)
+            ? 'Файл не сохранился. Подождите подключения Bluetooth-гарнитуры или пишите на микрофон телефона.'
+            : 'Файл записи не сохранился.',
+        );
       }
     } catch (e) {
       setIsRecording(false);

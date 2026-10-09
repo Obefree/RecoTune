@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+- **APK 29 Sep:** release arm64 с фиксом студии (URI + BT-мик) и каталогом **3609** (без фейкового 536, A-ha 8). `dist\RecoTune-release-arm64_2026-09-29_124052.apk` (~47 MB). См. [docs/features/2026-09-29-apk.md](./features/2026-09-29-apk.md).
+
+- **Studio (Bluetooth-запись):** REC через BT-мик писал пустой файл — SCO не успевал, минус по A2DP сбивал гарнитуру. Ждём SCO после прогрева; пустой файл не кладём в сессию. См. [docs/features/2026-09-28-studio-bt-record.md](./features/2026-09-28-studio-bt-record.md).
+
+- **Chords (фейковые табы / группы):** legacy 536 больше не в офлайн-каталоге; A-ha — 8 AmDm-табов вместо выдуманного Take On Me. Склейка A-ha/Aha, The Beatles/Beatles. См. [docs/features/2026-09-28-chords-fake-aha.md](./features/2026-09-28-chords-fake-aha.md).
+
+- **Studio (запись дорожек):** после Stop файл терялся — `getURI()` был пустой из‑за обёртки expo-audio. URI сохраняется после unload. См. [docs/features/2026-09-26-studio-record-uri.md](./features/2026-09-26-studio-record-uri.md).
+
+- **Chords (больше офлайн):** **3219** verified табов в APK (было 2634): докачка Queen/Radiohead/Coldplay… с pesni + AmDm. См. [docs/features/2026-09-20-more-chords.md](./features/2026-09-20-more-chords.md).
+
+- **Chords (APK 11 Sep):** в сборке не находились табы (пустой URL без Metro); UI и каталог открывались с русского. English first, Vercel URL в extra, **2634** офлайн-таба в APK. См. [docs/features/2026-09-19-chords-en-apk.md](./features/2026-09-19-chords-en-apk.md).
+
+- **Chords (лаги):** список и таб больше не пересчитывают весь каталог на каждый кадр. См. [docs/features/2026-09-09-chords-jank.md](./features/2026-09-09-chords-jank.md).
+
+- **Пианино (практика):** детектор, метроном; hold без задержки и двойного удара, бас громче. См. [docs/features/2026-09-09-piano-practice.md](./features/2026-09-09-piano-practice.md).
+
+- **Пианино:** отдельная вкладка «Ноты», не инструмент тюнера; крупные клавиши. См. [docs/features/2026-09-09-piano-tab.md](./features/2026-09-09-piano-tab.md).
+
+- **Метроном / пианино:** клик — один луп (без наслоения), стоп сразу; в меню тюнера Piano — клавиатура C3–B4. См. [docs/features/2026-09-09-metro-piano-keys.md](./features/2026-09-09-metro-piano-keys.md).
+
+- **Studio / тюнер (SDK 57 follow-up):** красный экран `ExpoMediaLibraryNext` (Expo Go) — Tuner/Studio/Media; эталон струны + компактный метроном. См. [docs/features/2026-09-09-studio-tuner-audio-fix.md](./features/2026-09-09-studio-tuner-audio-fix.md).
+
+- **Expo SDK 57:** проект и сборщики под последний Expo Go; `expo-av` заменён на `expo-audio` + `expo-video`. См. [docs/features/2026-09-09-expo-sdk-57.md](./features/2026-09-09-expo-sdk-57.md).
+
+- **Tuner / метроном:** тап по струне в тюнере звучит эталоном; клик в тюнере, практике, студии и Melody. В студии клик не пишется в файл дорожки. См. [docs/features/2026-09-09-tuner-notes-metronome.md](./features/2026-09-09-tuner-notes-metronome.md).
+
 - **Chords (кнопки + зависание базы):** поиск в базе блокировал JS (smart-скор по 2569 песням) — пиллы и крестик «не жались». Локальный `filterSongsQuick`, metadata/шарды не грузятся при открытии вкладки. См. [docs/features/2026-08-26-chords-library-freeze-buttons.md](./features/2026-08-26-chords-library-freeze-buttons.md).
 - **Chords (текст без аккордов рвался):** строка `[Am]     [E]` не склеивалась с куплетом, если аккордов меньше, чем слов; практика ломала перенос. Merge по колонкам/spread + абзац для строк без чипов; пиллы базы снова жмутся. См. [docs/features/2026-08-26-chords-lyric-merge-wrap.md](./features/2026-08-26-chords-lyric-merge-wrap.md).
 

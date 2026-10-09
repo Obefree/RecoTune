@@ -36,9 +36,10 @@ echo [OK] ANDROID_HOME=%ANDROID_HOME%
 set "PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%"
 echo.
 
-rem --- npm install ---
+rem --- npm install (devDeps needed: patch-package). Never NODE_ENV=production here. ---
 echo [Step 1/4] npm install ...
-call npm install
+set "NODE_ENV=development"
+call npm install --include=dev
 if errorlevel 1 (
   echo [ERROR] npm install failed.
   pause
@@ -46,22 +47,26 @@ if errorlevel 1 (
 )
 echo.
 
-rem --- expo prebuild if android\ missing ---
-if not exist "android\gradlew.bat" (
-  echo [Step 2/4] android\ missing - running: npx expo prebuild --platform android
-  call npx expo prebuild --platform android
+rem --- expo prebuild: SDK 57 regenerates android/ (skip only if already stamped) ---
+set "SDK_STAMP=android\.recotune-sdk"
+set "BUILT_SDK="
+if exist "%SDK_STAMP%" set /p BUILT_SDK=<"%SDK_STAMP%"
+if not "%BUILT_SDK%"=="57" (
+  echo [Step 2/4] native tree stale/missing - running: npx expo prebuild --platform android --clean
+  call npx expo prebuild --platform android --clean
   if errorlevel 1 (
     echo [ERROR] expo prebuild failed.
     pause
     exit /b 1
   )
+  echo 57> "%SDK_STAMP%"
 ) else (
-  echo [Step 2/4] android\ present - skipping prebuild.
+  echo [Step 2/4] android\ already generated for SDK 57.
 )
 echo.
 
-rem --- Gradle: stop daemon + wipe app\build (Windows mergeReleaseResources locks) ---
-echo [Step 2b/4] Prepare Gradle: stop daemon, clear android\app\build ...
+rem --- Gradle: stop daemon + wipe Windows-locked intermediates ---
+echo [Step 2b/4] Prepare Gradle: stop daemon, clear JNI/resource build dirs ...
 if not exist "android\gradlew.bat" (
   echo [ERROR] android\gradlew.bat still missing after prebuild.
   pause
@@ -70,17 +75,22 @@ if not exist "android\gradlew.bat" (
 pushd android
 call gradlew.bat --stop >nul 2>&1
 timeout /t 3 /nobreak >nul
-if exist "app\build" (
-  rd /s /q "app\build" 2>nul
-  if exist "app\build" (
-    echo [ERROR] Could not delete android\app\build. Close Android Studio / emulator and retry.
-    popd
-    pause
-    exit /b 1
-  )
-  echo [OK] Cleared android\app\build
-)
 popd
+for %%D in (
+  "android\app\build"
+  "android\build"
+  "node_modules\react-native-music-control\android\build"
+  "node_modules\react-native-worklets\android\build"
+) do (
+  if exist %%D (
+    rd /s /q %%D 2>nul
+    if exist %%D (
+      echo [WARN] Could not fully delete %%D — close Android Studio and retry if Gradle fails on mergeJniLibFolders.
+    ) else (
+      echo [OK] Cleared %%D
+    )
+  )
+)
 echo.
 
 rem --- Gradle assembleRelease (single ABI, minify via expo-build-properties) ---
@@ -91,6 +101,7 @@ if not exist "android\gradlew.bat" (
   exit /b 1
 )
 pushd android
+set "NODE_ENV=production"
 call gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a
 set "GRADLE_EXIT=!ERRORLEVEL!"
 popd

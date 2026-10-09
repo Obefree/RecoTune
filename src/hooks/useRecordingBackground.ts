@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Alert, AppState, type AppStateStatus } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import Constants from 'expo-constants';
-import type { Audio } from 'expo-av';
+import type { Audio } from '../utils/audio';
 import { applyRecordingBackgroundAudioMode } from '../utils/recordingAudioMode';
 
 const KEEP_AWAKE_TAG = 'recotune-recording';

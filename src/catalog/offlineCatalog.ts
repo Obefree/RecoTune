@@ -1,5 +1,5 @@
 import type { SongEntry } from '../data/songDatabase';
-import { canonicalizeArtist } from '../utils/artistName';
+import { canonicalizeArtist, compareCatalogLabel } from '../utils/artistName';
 
 export type CatalogArtist = { name: string; count: number; tabCount: number };
 export type CatalogSong = {
@@ -68,7 +68,9 @@ export function catalogSongToEntry(song: CatalogSong, lyrics?: string): SongEntr
 /** Browse/search rows — no lyrics blob. */
 export function listOfflineCatalogSongs(): SongEntry[] {
   if (!songListCache) {
-    songListCache = loadCatalog().file.songs.map(s => catalogSongToEntry(s));
+    songListCache = loadCatalog().file.songs
+      .map(s => catalogSongToEntry(s))
+      .sort((a, b) => compareCatalogLabel(a.artist, b.artist) || compareCatalogLabel(a.title, b.title));
   }
   return songListCache;
 }

@@ -4,7 +4,8 @@ import {
   useWindowDimensions, Alert,
   StatusBar, Pressable,
 } from 'react-native';
-import { Video, AVPlaybackStatus } from 'expo-av';
+import { useEventListener } from 'expo';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import SeekBar from '../components/SeekBar';
 import * as DocumentPicker from 'expo-document-picker';
@@ -104,12 +105,19 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   const [playbackRate, setPlaybackRate] = useState(1);
 
   const current    = currentIdx >= 0 && currentIdx < videos.length ? videos[currentIdx] : null;
-  const videoRef   = useRef<Video>(null);
   const durRef     = useRef(0);
   const videoSeekingRef = useRef(false);
   const videoSeekCooldownUntilRef = useRef(0);
   const wasPlayingBeforeScrubRef = useRef(false);
   const hideTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentIdxRef = useRef(currentIdx);
+  const videosLenRef = useRef(videos.length);
+  currentIdxRef.current = currentIdx;
+  videosLenRef.current = videos.length;
+
+  const player = useVideoPlayer(null, p => {
+    p.timeUpdateEventInterval = 0.1;
+  });
 
   const VIDEO_H  = Math.round(width * 9 / 16);   // normal inline height
   // Fullscreen dimensions – larger axis = width when landscape
@@ -125,15 +133,47 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
 
   useEffect(() => { bumpControls(); }, [fullscreen]);
 
+  useEffect(() => {
+    if (!current?.uri) {
+      try { player.pause(); } catch {}
+      return;
+    }
+    try {
+      player.replace({ uri: current.uri });
+      player.playbackRate = playbackRate;
+      player.play();
+    } catch {}
+  }, [current?.uri, player]);
+
+  useEventListener(player, 'timeUpdate', ({ currentTime }) => {
+    if (!videoSeekingRef.current && Date.now() >= videoSeekCooldownUntilRef.current) {
+      setPos(Math.round((currentTime ?? 0) * 10) / 10);
+    }
+    const d = Math.floor(player.duration ?? 0);
+    setDur(d);
+    durRef.current = d;
+  });
+
+  useEventListener(player, 'playingChange', ({ isPlaying: next }) => {
+    setIsPlaying(next);
+  });
+
+  const playAtRef = useRef<(idx: number) => Promise<void>>(async () => {});
+
+  useEventListener(player, 'playToEnd', () => {
+    const idx = currentIdxRef.current;
+    if (idx < videosLenRef.current - 1) void playAtRef.current(idx + 1);
+  });
+
   const syncRate = useCallback((r: number) => {
     setPlaybackRate(r);
-    videoRef.current?.setRateAsync(r, true).catch(() => {});
-  }, []);
+    player.playbackRate = r;
+  }, [player]);
 
   useEffect(() => {
     setPlaybackRate(1);
-    videoRef.current?.setRateAsync(1, true).catch(() => {});
-  }, [currentIdx]);
+    player.playbackRate = 1;
+  }, [currentIdx, player]);
 
   /* ── Orientation lock ── */
   const enterFullscreen = useCallback(async () => {
@@ -144,7 +184,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
 
   const exitFullscreen = useCallback(async () => {
     setPlaybackRate(1);
-    videoRef.current?.setRateAsync(1, true).catch(() => {});
+    player.playbackRate = 1;
     setFullscreen(false);
     setShowSwitcher(false);
     StatusBar.setHidden(false, 'fade');
@@ -165,13 +205,12 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
   }, [setTabBarHidden, setMediaSegHidden]));
 
   const handleVideoSeek = useCallback(async (seconds: number) => {
-    const v = videoRef.current;
-    if (!v || durRef.current <= 0) return;
+    if (durRef.current <= 0) return;
     try {
-      await v.setPositionAsync(Math.round(seconds * 1000));
+      player.currentTime = seconds;
       setPos(Math.round(seconds * 10) / 10);
     } catch {}
-  }, []);
+  }, [player]);
 
   /* ── Pick videos ── */
   const pickVideos = useCallback(async () => {
@@ -211,37 +250,27 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
 
   const playPrev = useCallback(() => playAt(currentIdx - 1), [currentIdx, playAt]);
   const playNext = useCallback(() => playAt(currentIdx + 1), [currentIdx, playAt]);
+  playAtRef.current = playAt;
 
   const seekBackTap = useCallback(() => {
-    videoRef.current?.setPositionAsync(Math.max(0, pos - TAP_SEEK_SEC) * 1000).catch(() => {});
+    player.currentTime = Math.max(0, pos - TAP_SEEK_SEC);
     bumpControls();
-  }, [pos, bumpControls]);
+  }, [pos, bumpControls, player]);
 
   const seekForwardTap = useCallback(() => {
-    videoRef.current?.setPositionAsync(Math.min(dur, pos + TAP_SEEK_SEC) * 1000).catch(() => {});
+    player.currentTime = Math.min(dur, pos + TAP_SEEK_SEC);
     bumpControls();
-  }, [dur, pos, bumpControls]);
-
-  /* ── Playback ── */
-  const onStatus = useCallback((st: AVPlaybackStatus) => {
-    if (!st.isLoaded) return;
-    const d = Math.floor((st.durationMillis ?? 0) / 1000);
-    if (!videoSeekingRef.current && Date.now() >= videoSeekCooldownUntilRef.current) {
-      setPos(Math.round((st.positionMillis ?? 0) / 100) / 10);
-    }
-    setDur(d); durRef.current = d;
-    setIsPlaying(st.isPlaying);
-    if (st.didJustFinish && currentIdx < videos.length - 1) playNext();
-  }, [currentIdx, videos.length, playNext]);
+  }, [dur, pos, bumpControls, player]);
 
   const togglePlay = useCallback(async () => {
-    const v = videoRef.current; if (!v) return;
-    const st = await v.getStatusAsync() as AVPlaybackStatus;
-    if (!st.isLoaded) return;
-    if (!st.isPlaying) await applyPlaybackAudioMode();
-    st.isPlaying ? v.pauseAsync() : v.playAsync();
+    if (player.playing) {
+      player.pause();
+    } else {
+      await applyPlaybackAudioMode();
+      player.play();
+    }
     bumpControls();
-  }, [bumpControls]);
+  }, [bumpControls, player]);
 
   /* ── Controls overlay ── */
   function Controls({ inFullscreen }: { inFullscreen: boolean }) {
@@ -266,19 +295,13 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
               color="#40c4ff"
               onScrubStart={() => {
                 videoSeekingRef.current = true;
-                const v = videoRef.current;
-                if (!v) return;
-                void v.getStatusAsync().then(st => {
-                  if (st.isLoaded) wasPlayingBeforeScrubRef.current = st.isPlaying;
-                  if (st.isLoaded && st.isPlaying) v.pauseAsync().catch(() => {});
-                });
+                wasPlayingBeforeScrubRef.current = player.playing;
+                if (player.playing) player.pause();
               }}
               onScrubEnd={() => {
                 videoSeekCooldownUntilRef.current = Date.now() + 300;
                 videoSeekingRef.current = false;
-                if (wasPlayingBeforeScrubRef.current) {
-                  videoRef.current?.playAsync().catch(() => {});
-                }
+                if (wasPlayingBeforeScrubRef.current) player.play();
               }}
               onSeek={handleVideoSeek}
             />
@@ -293,7 +316,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity onPress={() => videoRef.current?.setPositionAsync(Math.max(0, pos - 10) * 1000)} style={styles.ctrlBtn}>
+          <TouchableOpacity onPress={() => { player.currentTime = Math.max(0, pos - 10); }} style={styles.ctrlBtn}>
             <Ionicons name="play-back" size={22} color="#ccc" />
             <Text style={styles.ctrlLabel}>−10s</Text>
           </TouchableOpacity>
@@ -302,7 +325,7 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
             <Ionicons name={isPlaying ? 'pause' : 'play'} size={28} color="#fff" />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => videoRef.current?.setPositionAsync(Math.min(dur, pos + 10) * 1000)} style={styles.ctrlBtn}>
+          <TouchableOpacity onPress={() => { player.currentTime = Math.min(dur, pos + 10); }} style={styles.ctrlBtn}>
             <Ionicons name="play-forward" size={22} color="#ccc" />
             <Text style={styles.ctrlLabel}>+10s</Text>
           </TouchableOpacity>
@@ -363,21 +386,16 @@ export default function VideoScreen({ embedded }: { embedded?: boolean } = {}) {
         <View
           style={
             fullscreen
-              ? [StyleSheet.absoluteFillObject, styles.fsOverlay]
+              ? [StyleSheet.absoluteFill, styles.fsOverlay]
               : [styles.player, { height: VIDEO_H + 90 }]
           }
         >
           <View style={[styles.videoWrap, fullscreen && styles.videoWrapFs]}>
-            <Video
-              ref={videoRef}
-              source={{ uri: current.uri }}
+            <VideoView
+              player={player}
               style={fullscreen ? styles.videoFs : [styles.video, { height: VIDEO_H }]}
-              resizeMode={'contain' as any}
-              rate={playbackRate}
-              shouldCorrectPitch
-              shouldPlay
-              progressUpdateIntervalMillis={100}
-              onPlaybackStatusUpdate={onStatus}
+              contentFit="contain"
+              nativeControls={false}
             />
             <VideoTapZones
               width={zoneW}

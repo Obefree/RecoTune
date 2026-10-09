@@ -10,7 +10,7 @@ import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
+import { Audio, startMetronomeClick, stopMetronomeClick } from '../utils/audio';
 import WebView from 'react-native-webview';
 
 import TunerEngine, { PitchMessage } from '../components/TunerEngine';
@@ -18,6 +18,7 @@ import MelodyPlayerEngine, {
   type MelodyInstrument,
   type MelodyPlayerHandle,
 } from '../components/MelodyPlayerEngine';
+import MetronomeBar from '../components/MetronomeBar';
 import { applyPlaybackAudioMode } from '../utils/playbackAudioMode';
 import {
   buildMelodyPlaybackPayload,
@@ -53,6 +54,7 @@ import DualStaffView from '../components/DualStaffView';
 import { useLocale } from '../context/LocaleContext';
 import { useSungNoteHistory } from '../hooks/useSungNoteHistory';
 import { estimateKey, estimateRhythm } from '../utils/melodyAnalysis';
+import { clampMetronomeBpm, METRONOME_BPM_DEFAULT } from '../utils/metronomeClick';
 import {
   quantizeNotesToKey,
   quantizeLabels,
@@ -116,6 +118,8 @@ export default function MelodyScreen() {
 
   const webViewRef = useRef<WebView>(null);
   const playerRef = useRef<MelodyPlayerHandle>(null);
+  const [clickOn, setClickOn] = useState(false);
+  const [clickBpm, setClickBpm] = useState(METRONOME_BPM_DEFAULT);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const signalAnim = useRef(new Animated.Value(0)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
@@ -508,6 +512,23 @@ export default function MelodyScreen() {
 
   const rhythmEst = useMemo(() => estimateRhythm(activeEvents), [activeEvents]);
 
+  const toggleClick = useCallback(() => {
+    if (clickOn) {
+      stopMetronomeClick();
+      setClickOn(false);
+      return;
+    }
+    const bpm = clampMetronomeBpm(rhythmEst?.bpmApprox ?? clickBpm);
+    setClickBpm(bpm);
+    void startMetronomeClick(bpm).then(ok => setClickOn(!!ok)).catch(() => setClickOn(false));
+  }, [clickOn, clickBpm, rhythmEst?.bpmApprox]);
+
+  const bumpClickBpm = useCallback((delta: number) => {
+    const next = clampMetronomeBpm(clickBpm + delta);
+    setClickBpm(next);
+    if (clickOn) void startMetronomeClick(next);
+  }, [clickBpm, clickOn]);
+
   const playbackPitchHistory = useMemo(
     () => pitchHistory.map(p => ({ ts: p.ts, midi: p.midi })),
     [pitchHistory],
@@ -656,7 +677,11 @@ export default function MelodyScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshSaved();
-      return () => stop();
+      return () => {
+        stop();
+        stopMetronomeClick();
+        setClickOn(false);
+      };
     }, [refreshSaved, stop]),
   );
 
@@ -793,26 +818,36 @@ export default function MelodyScreen() {
           <View style={styles.controlsCol}>
             {renderMicControl()}
 
-            <TouchableOpacity
-              onPress={handlePlayMelody}
-              style={[
-                styles.topBtn,
-                styles.playBtn,
-                (playbackPayload.notes.length === 0 && !isPlayingMelody) && styles.btnDisabled,
-                isPlayingMelody && styles.playBtnActive,
-              ]}
-              disabled={playbackPayload.notes.length === 0 && !isPlayingMelody}
-              activeOpacity={0.8}
-            >
-              <Ionicons
-                name={isPlayingMelody ? 'stop' : 'play'}
-                size={18}
-                color={isPlayingMelody ? '#0a0a0f' : '#e0e0e0'}
+            <View style={styles.playMetroRow}>
+              <TouchableOpacity
+                onPress={handlePlayMelody}
+                style={[
+                  styles.topBtn,
+                  styles.playBtn,
+                  styles.playBtnFlex,
+                  (playbackPayload.notes.length === 0 && !isPlayingMelody) && styles.btnDisabled,
+                  isPlayingMelody && styles.playBtnActive,
+                ]}
+                disabled={playbackPayload.notes.length === 0 && !isPlayingMelody}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={isPlayingMelody ? 'stop' : 'play'}
+                  size={18}
+                  color={isPlayingMelody ? '#0a0a0f' : '#e0e0e0'}
+                />
+                <Text style={[styles.topBtnText, isPlayingMelody && styles.topBtnTextActive]}>
+                  {isPlayingMelody ? t('melodyStopPlayback') : t('melodyPlay')}
+                </Text>
+              </TouchableOpacity>
+              <MetronomeBar
+                bpm={clickBpm}
+                running={clickOn}
+                onToggle={toggleClick}
+                onBump={bumpClickBpm}
+                label={t('metronomeLabel')}
               />
-              <Text style={[styles.topBtnText, isPlayingMelody && styles.topBtnTextActive]}>
-                {isPlayingMelody ? t('melodyStopPlayback') : t('melodyPlay')}
-              </Text>
-            </TouchableOpacity>
+            </View>
 
             <View style={styles.instrumentRow}>
               <Text style={styles.instrumentLabel}>{t('melodyInstrument')}</Text>
@@ -1174,7 +1209,7 @@ const styles = StyleSheet.create({
     borderColor: '#1e1e28',
   },
   noteCol: { flex: 1, minWidth: 0 },
-  controlsCol: { alignItems: 'stretch', gap: 6, minWidth: 118 },
+  controlsCol: { alignItems: 'stretch', gap: 6, minWidth: 148, flex: 1 },
   pitchLabel: { color: '#444', fontSize: 8, fontWeight: '800', letterSpacing: 1.2 },
   pitchNoteBig: { fontSize: 40, fontWeight: '800', lineHeight: 44, marginTop: 2 },
   pitchMeta: { fontSize: 15, fontWeight: '600', marginTop: 2 },
@@ -1193,6 +1228,8 @@ const styles = StyleSheet.create({
   },
   topBtnActive: { backgroundColor: '#7c4dff', borderColor: '#7c4dff' },
   playBtn: { backgroundColor: '#15151e' },
+  playBtnFlex: { flex: 1, minWidth: 0 },
+  playMetroRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   playBtnActive: { backgroundColor: '#00e676', borderColor: '#00e676' },
   topBtnText: { color: '#e0e0e0', fontSize: 11, fontWeight: '800', letterSpacing: 1 },
   topBtnTextActive: { color: '#0a0a0f' },

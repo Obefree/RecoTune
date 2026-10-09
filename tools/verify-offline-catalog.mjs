@@ -19,6 +19,7 @@ function check(name, ok) {
 check('index has songs', index.songCount > 0 && index.songs.length === index.songCount);
 check('index has artists', index.artistCount > 0 && index.artists.length === index.artistCount);
 check('artist count matches unique names', index.artistCount === new Set(index.songs.map(s => s.artist.trim().toLowerCase())).size);
+check('legacy Take On Me not in catalog', !index.songs.some(s => s.id === '80s02'));
 
 const sample = index.songs.slice(0, 8).concat(index.songs.slice(-4));
 for (const song of sample) {

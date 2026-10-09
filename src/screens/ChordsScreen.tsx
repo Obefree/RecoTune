@@ -26,7 +26,6 @@ import { importLegacyArchiveCatalog } from '../db/legacyArchiveImport';
 import {
   hasCatalogTab,
   hasVerifiedPracticeLyrics,
-  libraryListChordSnippet,
   needsOnDemandChordFetch,
   PROGRESSION_ONLY_HINT,
   resolveLyricsText,
@@ -117,16 +116,17 @@ import { ensureSongInUserLibrary } from '../library/persistProviderSong';
 import { CHORD_DIAGRAM_OPTIONS, getDiagramOption } from '../data/chordShapes';
 import { getFullChordReferenceCatalog } from '../data/basicChordCatalog';
 import { resolveChordShape } from '../data/chordShapeResolve';
-import { Audio } from 'expo-av';
+import { Audio, startMetronomeClick, stopMetronomeClick } from '../utils/audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 
 import FrequencyChart, { type HistoryPoint, type PitchSegmentOverlay } from '../components/FrequencyChart';
 import { useLocale } from '../context/LocaleContext';
+import { clampMetronomeBpm } from '../utils/metronomeClick';
 import { frequencyToNote } from '../utils/noteUtils';
 import { findBestSongMatch, findBuiltinVerifiedMatch, findVerifiedCatalogMatch } from '../utils/songMatch';
 import { extractChordSequence, findNextBracketChord } from '../utils/chordProgression';
-import { canonicalizeArtist } from '../utils/artistName';
+import { canonicalizeArtist, compareCatalogLabel, preferArtistLabel } from '../utils/artistName';
 import { fetchLyricsForTrack } from '../utils/lyricsApi';
 import {
   formatHintCandidateLabel,
@@ -571,6 +571,30 @@ function normalizeLine(raw: string): string {
   });
 }
 
+function parseChordLyricSegs(line: string): { chord?: string; text: string }[] {
+  const normalized = normalizeLine(line);
+  const segs: { chord?: string; text: string }[] = [];
+  let remaining = normalized;
+  while (remaining.length > 0) {
+    const hit = findNextBracketChord(remaining);
+    if (!hit) {
+      if (remaining) segs.push({ text: remaining });
+      break;
+    }
+    if (hit.index > 0) {
+      segs.push({ text: remaining.slice(0, hit.index) });
+      remaining = remaining.slice(hit.index);
+      continue;
+    }
+    const afterChord = remaining.slice(hit.end);
+    const next = findNextBracketChord(afterChord);
+    const word = next ? afterChord.slice(0, next.index) : afterChord;
+    segs.push({ chord: hit.chord, text: word });
+    remaining = next ? afterChord.slice(next.index) : '';
+  }
+  return segs;
+}
+
 // Input: "[Am]Hello [F]world" → renders chord names (orange/green) above words
 // activeChordPos: if provided and matches a chord in this line, that chord glows green
 /** Fixed row above lyric syllable — A, Am, C#m and empty spacer share the same box. */
@@ -604,14 +628,14 @@ function chordChipTextStyle(
   };
 }
 
-function ChordLyricsLine({
-  line, currentChord, onChordTap, lineIdx, activeChordPos, chordPressDelay = 200, displayScale = 1,
+const ChordLyricsLine = React.memo(function ChordLyricsLine({
+  line, currentChord, onChordTap, lineIdx, activePosInLine, chordPressDelay = 200, displayScale = 1,
 }: {
   line: string;
   currentChord: string;
   onChordTap: (c: string) => void;
   lineIdx: number;
-  activeChordPos: { lineIdx: number; posInLine: number } | null;
+  activePosInLine: number | null;
   /** Higher delay when auto-scroll off — vertical swipe wins over chord tap. */
   chordPressDelay?: number;
   /** Pinch / A± zoom for lyrics + chord row alignment */
@@ -627,6 +651,7 @@ function ChordLyricsLine({
   };
   const lyricFs = Math.round(16 * displayScale);
   const lyricLh = Math.round(24 * displayScale);
+  const segs = useMemo(() => parseChordLyricSegs(line), [line]);
   if (isTablatureLine(line)) {
     return (
       <ScrollView
@@ -652,26 +677,6 @@ function ChordLyricsLine({
   }
 
   const chordTapDelay = chordPressDelay ?? 200;
-  const normalized = normalizeLine(line);
-  const segs: { chord?: string; text: string }[] = [];
-  let remaining = normalized;
-  while (remaining.length > 0) {
-    const hit = findNextBracketChord(remaining);
-    if (!hit) {
-      if (remaining) segs.push({ text: remaining });
-      break;
-    }
-    if (hit.index > 0) {
-      segs.push({ text: remaining.slice(0, hit.index) });
-      remaining = remaining.slice(hit.index);
-      continue;
-    }
-    const afterChord = remaining.slice(hit.end);
-    const next = findNextBracketChord(afterChord);
-    const word = next ? afterChord.slice(0, next.index) : afterChord;
-    segs.push({ chord: hit.chord, text: word });
-    remaining = next ? afterChord.slice(next.index) : '';
-  }
   if (segs.length === 0) return <View style={{ height: 8 }} />;
 
   const allChordsOnly = segs.every(s => s.chord && !s.text.trim());
@@ -680,7 +685,7 @@ function ChordLyricsLine({
   let posCounter = 0;
   const getChordStyle = (chord: string) => {
     const pos = posCounter++;
-    const isActive = activeChordPos?.lineIdx === lineIdx && activeChordPos?.posInLine === pos;
+    const isActive = activePosInLine === pos;
     const isCurrent = chord === currentChord;
     if (isActive) return { color: '#00e676', bg: '#00e67630' };
     if (isCurrent) return { color: '#ff9800', bg: '#ff980022' };
@@ -787,7 +792,7 @@ function ChordLyricsLine({
       })}
     </View>
   );
-}
+});
 
 type Mode = 'live' | 'practice' | 'identify';
 const CHORDS_DEV_BUILD = 'search-scroll-2026-05-24b';
@@ -912,6 +917,7 @@ export default function ChordsScreen() {
   /* ── Auto-scroll ── */
   const [autoScroll, setAutoScroll]       = useState(false);
   const [practiceBpm, setPracticeBpm]     = useState(80);
+  const [practiceClickOn, setPracticeClickOn] = useState(false);
   const practiceLyricsZoomRef             = useRef(1);
   const lyricsPinchOriginRef              = useRef(1);
   const lyricsScrollRef                   = useRef<GestureScrollView>(null);
@@ -1003,12 +1009,22 @@ export default function ChordsScreen() {
   }, [autoScroll, practiceBpm, scrollLyricsTo, startAutoScroll, stopAutoScroll]);
 
   const bumpPracticeBpm = useCallback((delta: number) => {
-    const next = Math.min(240, Math.max(30, practiceBpm + delta));
+    const next = clampMetronomeBpm(practiceBpm + delta);
     setPracticeBpm(next);
     if (autoScrollFrameRef.current != null) {
       startAutoScroll(next);
     }
-  }, [practiceBpm, startAutoScroll]);
+    if (practiceClickOn) void startMetronomeClick(next);
+  }, [practiceBpm, startAutoScroll, practiceClickOn]);
+
+  const togglePracticeClick = useCallback(() => {
+    if (practiceClickOn) {
+      stopMetronomeClick();
+      setPracticeClickOn(false);
+      return;
+    }
+    void startMetronomeClick(practiceBpm).then(ok => setPracticeClickOn(!!ok)).catch(() => setPracticeClickOn(false));
+  }, [practiceClickOn, practiceBpm]);
 
   const handleLyricsScrollEnd = useCallback(() => {
     lyricsUserScrollRef.current = false;
@@ -1038,9 +1054,13 @@ export default function ChordsScreen() {
 
   /* ── Lyric chord-following (mic-driven scroll) ── */
   // Flat list of every chord in lyrics with line index and position within line
+  const practiceLyricLines = useMemo(
+    () => (practiceLyricsDisplay ? practiceLyricsDisplay.split('\n') : []),
+    [practiceLyricsDisplay],
+  );
   const lyricChordList = useMemo(() => {
-    if (!practiceLyricsDisplay) return [];
-    return practiceLyricsDisplay.split('\n').flatMap((rawLine, li) => {
+    if (!practiceLyricLines.length) return [];
+    return practiceLyricLines.flatMap((rawLine, li) => {
       const normalized = normalizeLine(rawLine);
       const found: { lineIdx: number; posInLine: number; chord: string }[] = [];
       let rest = normalized;
@@ -1054,7 +1074,7 @@ export default function ChordsScreen() {
       }
       return found;
     });
-  }, [practiceLyricsDisplay]);
+  }, [practiceLyricLines]);
 
   const [activeLyricIdx, setActiveLyricIdx] = useState(-1);
   const activeLyricIdxRef = useRef(-1);
@@ -1135,6 +1155,8 @@ export default function ChordsScreen() {
 
   useFocusEffect(useCallback(() => {
     return () => {
+      stopMetronomeClick();
+      setPracticeClickOn(false);
       stopLive();
       stopRec();
       stopPracticeRec();
@@ -1681,10 +1703,10 @@ export default function ChordsScreen() {
       const key = artistCatalogKey(libArtistFilter);
       list = list.filter(s => artistCatalogKey(s.artist) === key);
     }
-    if (q) {
-      list = [...list].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
-    } else {
-      list = [...list].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+    if (list.length > 1) {
+      list = [...list].sort(
+        (a, b) => compareCatalogLabel(a.artist, b.artist) || compareCatalogLabel(a.title, b.title),
+      );
     }
     return list;
   }, [
@@ -1706,22 +1728,26 @@ export default function ChordsScreen() {
       const name = artistCatalogLabel(s.artist);
       const key = artistCatalogKey(s.artist);
       const prev = map.get(key) ?? { name, count: 0, tabCount: 0 };
+      if (preferArtistLabel(name, prev.name)) prev.name = name;
       prev.count += 1;
       if (hasCatalogTab(s)) prev.tabCount += 1;
       map.set(key, prev);
     }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    return [...map.values()].sort((a, b) => compareCatalogLabel(a.name, b.name));
   }, [showArtistIndex, libSongList]);
 
-  const libListRows: LibListRow[] = showArtistIndex
-    ? libArtistRows.map(a => ({
-        kind: 'artist' as const,
-        id: `artist:${artistCatalogKey(a.name)}`,
-        name: a.name,
-        count: a.count,
-        tabCount: a.tabCount,
-      }))
-    : libSongList.map(s => ({ kind: 'song' as const, id: s.id, song: s }));
+  const libListRows: LibListRow[] = useMemo(
+    () => showArtistIndex
+      ? libArtistRows.map(a => ({
+          kind: 'artist' as const,
+          id: `artist:${artistCatalogKey(a.name)}`,
+          name: a.name,
+          count: a.count,
+          tabCount: a.tabCount,
+        }))
+      : libSongList.map(s => ({ kind: 'song' as const, id: s.id, song: s })),
+    [showArtistIndex, libArtistRows, libSongList],
+  );
 
   const libCountLabel = (() => {
     const q = libSearch.trim();
@@ -2320,6 +2346,11 @@ export default function ChordsScreen() {
 
   /* ── Practice: voice vs manually-selected chord ── */
   const practiceCurrentChord = displayPracticeChords[practiceChordIdx] ?? '—';
+  const onPracticeChordTap = useCallback((c: string) => {
+    if (autoScrollFrameRef.current != null) stopAutoScroll();
+    const idx = displayPracticeChords.findIndex(ch => ch === c);
+    if (idx >= 0) setPracticeChordIdx(idx);
+  }, [displayPracticeChords, stopAutoScroll]);
 
   const applyPracticeLyricsZoom = useCallback((zoom: number) => {
     const z = Math.min(PRACTICE_LYRICS_ZOOM_MAX, Math.max(PRACTICE_LYRICS_ZOOM_MIN, zoom));
@@ -2381,8 +2412,10 @@ export default function ChordsScreen() {
   const col = chordColor(confidence);
 
   const fullChordSections = useMemo(
-    () => getFullChordReferenceCatalog(chordDiagramId).map(s => ({ title: s.title, data: s.entries })),
-    [chordDiagramId],
+    () => showBasicChordsModal
+      ? getFullChordReferenceCatalog(chordDiagramId).map(s => ({ title: s.title, data: s.entries }))
+      : [],
+    [chordDiagramId, showBasicChordsModal],
   );
   const fullChordCount = useMemo(
     () => fullChordSections.reduce((n, s) => n + s.data.length, 0),
@@ -2926,21 +2959,38 @@ export default function ChordsScreen() {
               </View>
             ) : null}
 
-            {practiceLyrics && !lyricsEditMode && (
+            {!lyricsEditMode && (
               <View style={styles.practiceAutoScrollRow}>
+                {practiceLyrics ? (
+                  <TouchableOpacity
+                    onPress={toggleAutoScroll}
+                    style={[
+                      styles.practiceAutoScrollPlayBtn,
+                      autoScroll && styles.practiceAutoScrollPlayBtnOn,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={autoScroll ? 'Остановить автопрокрутку' : 'Запустить автопрокрутку'}
+                  >
+                    <Ionicons
+                      name={autoScroll ? 'pause' : 'play'}
+                      size={22}
+                      color={autoScroll ? '#00e676' : '#aaa'}
+                    />
+                  </TouchableOpacity>
+                ) : null}
                 <TouchableOpacity
-                  onPress={toggleAutoScroll}
+                  onPress={togglePracticeClick}
                   style={[
                     styles.practiceAutoScrollPlayBtn,
-                    autoScroll && styles.practiceAutoScrollPlayBtnOn,
+                    practiceClickOn && styles.practiceAutoScrollPlayBtnOn,
                   ]}
                   accessibilityRole="button"
-                  accessibilityLabel={autoScroll ? 'Остановить автопрокрутку' : 'Запустить автопрокрутку'}
+                  accessibilityLabel={practiceClickOn ? t('metronomeLabel') + ' stop' : t('metronomeLabel')}
                 >
                   <Ionicons
-                    name={autoScroll ? 'pause' : 'play'}
-                    size={22}
-                    color={autoScroll ? '#00e676' : '#aaa'}
+                    name="pulse"
+                    size={20}
+                    color={practiceClickOn ? '#00e676' : '#aaa'}
                   />
                 </TouchableOpacity>
                 <Text style={styles.practiceAutoScrollBpmLabel}>BPM</Text>
@@ -3012,10 +3062,10 @@ export default function ChordsScreen() {
                   startAutoScroll(practiceBpm);
                 }
               }}>
-              {practiceLyricsDisplay.split('\n').map((line, li) => {
+              {practiceLyricLines.map((line, li) => {
                 const activeLyricEntry = activeLyricIdx >= 0 ? lyricChordList[activeLyricIdx] : null;
-                const activeChordPos = activeLyricEntry?.lineIdx === li
-                  ? { lineIdx: li, posInLine: activeLyricEntry.posInLine }
+                const activePosInLine = activeLyricEntry?.lineIdx === li
+                  ? activeLyricEntry.posInLine
                   : null;
                 return (
                   <View key={li} onLayout={e => { lineYRef.current[li] = e.nativeEvent.layout.y; }}>
@@ -3023,18 +3073,10 @@ export default function ChordsScreen() {
                       line={line}
                       currentChord={practiceCurrentChord}
                       lineIdx={li}
-                      activeChordPos={activeChordPos}
+                      activePosInLine={activePosInLine}
                       displayScale={practiceLyricsZoom}
                       chordPressDelay={autoScroll ? 140 : 420}
-                      onChordTap={(c) => {
-                        if (autoScrollFrameRef.current != null) stopAutoScroll();
-                        const idx = practiceChords.findIndex(ch =>
-                          (practiceTranspose
-                            ? transposeChordSymbol(ch, practiceTranspose)
-                            : ch) === c,
-                        );
-                        if (idx >= 0) setPracticeChordIdx(idx);
-                      }}
+                      onChordTap={onPracticeChordTap}
                     />
                   </View>
                 );
@@ -3607,6 +3649,11 @@ export default function ChordsScreen() {
             data={libListRows}
             extraData={`${libBrowse}|${libArtistFilter ?? ''}|${libSearch}|${favorites.size}|${libFavOnly}|${libFullTabsOnly}`}
             keyExtractor={item => item.id}
+            initialNumToRender={14}
+            maxToRenderPerBatch={10}
+            windowSize={7}
+            updateCellsBatchingPeriod={50}
+            removeClippedSubviews={Platform.OS === 'android'}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="on-drag"
             ListFooterComponent={null}
@@ -3655,7 +3702,8 @@ export default function ChordsScreen() {
               const diffColor = song.difficulty === 1 ? '#00e676' : song.difficulty === 2 ? '#ffeb3b' : '#ff5252';
               const isFav = favorites.has(song.id);
               const isCustom = song.id.startsWith('custom_');
-              const resolved = resolveSongEntry(song);
+              const badge = songContentBadge(song);
+              const chordSnippet = song.chords?.trim() ?? '';
               return (
                 <TouchableOpacity style={styles.libItem} onPress={() => pickSong(song)} activeOpacity={0.7}>
                   <View style={[styles.libItemDot, { backgroundColor: diffColor }]} />
@@ -3666,8 +3714,6 @@ export default function ChordsScreen() {
                     </View>
                     <Text style={styles.libItemArtist}>{song.artist}</Text>
                     {(() => {
-                      const badge = songContentBadge(resolved);
-                      const chordSnippet = libraryListChordSnippet(resolved);
                       const label =
                         badge === 'progression' && chordSnippet
                           ? `прогр.: ${chordSnippet}`
@@ -3686,10 +3732,10 @@ export default function ChordsScreen() {
                     <Text
                       style={[
                         styles.libItemHasLyrics,
-                        songContentBadge(resolved) === 'chords' && { color: '#00e676' },
+                        badge === 'chords' && { color: '#00e676' },
                       ]}
                     >
-                      {songContentBadgeLabel(songContentBadge(resolved))}
+                      {songContentBadgeLabel(badge)}
                     </Text>
                     <Text style={styles.libItemGenre}>{song.genre}</Text>
                     {song.bpm ? <Text style={styles.libItemBpm}>{song.bpm} BPM</Text> : null}
@@ -5097,7 +5143,7 @@ const styles = StyleSheet.create({
 
   /* Song Library — full-screen overlay (not RN Modal) */
   libOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 40,
     elevation: 40,
     backgroundColor: '#0a0a0f',

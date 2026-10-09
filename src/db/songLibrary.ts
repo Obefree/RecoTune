@@ -10,6 +10,16 @@ const DB_NAME = 'recotune_song_library.db';
 const SCHEMA_VERSION = 4;
 /** Bump when bundled builtin catalog (chords/lyrics) changes — re-upserts builtin rows only. */
 export const BUILTIN_SEED_VERSION = '2026-05-24-verified-chordpro-only';
+const BUILTIN_SEED_IDS = new Set(SONGS.map(s => s.id));
+
+/** User > AmDm/overlay parse > pesni > 32-song seed. Never let leftover 536 (80s02…) beat a real tab. */
+function tabSourceRank(id: string, source?: string): number {
+  if (source === 'user' || id.startsWith('custom_')) return 40;
+  if (id.startsWith('parsed_')) return 30;
+  if (id.startsWith('pesni_ru_')) return 20;
+  if (BUILTIN_SEED_IDS.has(id)) return 10;
+  return 0;
+}
 /** Dev-only bundle marker; not shown in production Chords UI. */
 export const CHORD_LIBRARY_BUILD = 'chord-v6-index-shards';
 
@@ -461,13 +471,15 @@ export async function setSchemaMeta(key: string, value: string): Promise<void> {
 }
 
 /**
- * The legacy seed (`sNNN`) and the bundled pesni.ru archive (`pesni_ru_*`) are
- * imported into `songs` under different ids, so the same artist+title (e.g.
- * "Blowin' in the Wind" — Bob Dylan) can land in the table twice. Collapse
- * those to one row per song so "База песен" doesn't show duplicates
- * (user report: «повторы аккордов»); prefer the curated non-pesni row when
- * both exist, keep title-sorted order otherwise.
+ * Same artist+title can exist as pesni_ru_* / parsed_* / seed. Collapse to one row.
+ * Prefer verified pesni/overlay over leftover 536 (Take On Me A–D, etc.).
  */
+function keepBetterSong<T extends { id: string; source?: string }>(existing: T, incoming: T): T {
+  return tabSourceRank(incoming.id, incoming.source) > tabSourceRank(existing.id, existing.source)
+    ? incoming
+    : existing;
+}
+
 function dedupeSongRows<T extends SongRow>(rows: T[]): T[] {
   const byKey = new Map<string, T>();
   const order: string[] = [];
@@ -479,9 +491,7 @@ function dedupeSongRows<T extends SongRow>(rows: T[]): T[] {
       order.push(key);
       continue;
     }
-    if (existing.id.startsWith('pesni_ru_') && !row.id.startsWith('pesni_ru_')) {
-      byKey.set(key, row);
-    }
+    byKey.set(key, keepBetterSong(existing, row));
   }
   return order.map(key => byKey.get(key)!);
 }
@@ -499,9 +509,7 @@ function dedupeSongEntries(songs: SongEntry[]): SongEntry[] {
       order.push(key);
       continue;
     }
-    if (existing.id.startsWith('pesni_ru_') && !song.id.startsWith('pesni_ru_')) {
-      byKey.set(key, song);
-    }
+    byKey.set(key, keepBetterSong(existing, song));
   }
   return order.map(k => byKey.get(k)!);
 }
@@ -520,10 +528,12 @@ export async function listSongs(): Promise<SongEntry[]> {
         OR (id NOT LIKE 'pesni_ru_%' AND id NOT LIKE 'parsed_%')
      ORDER BY artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC`,
   );
-  const local = rows.map(r => ({
-    ...rowToEntry({ ...r, lyrics: null }),
-    chordProVerified: r.has_tab === 1,
-  }));
+  const local = rows
+    .filter(r => r.source === 'user' || BUILTIN_SEED_IDS.has(r.id))
+    .map(r => ({
+      ...rowToEntry({ ...r, lyrics: null }),
+      chordProVerified: r.has_tab === 1,
+    }));
   return dedupeSongEntries([...catalog, ...local]);
 }
 

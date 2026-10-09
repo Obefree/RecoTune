@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { loadAppLocale, saveAppLocale } from '../i18n/appLocale';
+import { loadAppLocale, saveAppLocale, DEFAULT_LOCALE } from '../i18n/appLocale';
 import { t as translate, type AppLocale, type TStringKey } from '../i18n/strings';
 
 interface LocaleContextValue {
@@ -12,7 +12,7 @@ interface LocaleContextValue {
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<AppLocale>('ru');
+  const [locale, setLocaleState] = useState<AppLocale>(DEFAULT_LOCALE);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {

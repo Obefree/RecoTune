@@ -11,6 +11,19 @@
 
 | Дата       | Тема | Файл |
 |------------|------|------|
+| 2026-09-29 | APK: студия + каталог 3609 на телефон | [2026-09-29-apk.md](./2026-09-29-apk.md) |
+| 2026-09-28 | Studio: запись через Bluetooth не пустая | [2026-09-28-studio-bt-record.md](./2026-09-28-studio-bt-record.md) |
+| 2026-09-28 | Chords: без фейкового legacy, A-ha с AmDm | [2026-09-28-chords-fake-aha.md](./2026-09-28-chords-fake-aha.md) |
+| 2026-09-26 | Studio: запись снова сохраняет дорожки | [2026-09-26-studio-record-uri.md](./2026-09-26-studio-record-uri.md) |
+| 2026-09-20 | Chords: больше офлайн-табов в APK | [2026-09-20-more-chords.md](./2026-09-20-more-chords.md) |
+| 2026-09-19 | Chords: English first + URL табов в APK | [2026-09-19-chords-en-apk.md](./2026-09-19-chords-en-apk.md) |
+| 2026-09-09 | Chords: лаги списка и таба | [2026-09-09-chords-jank.md](./2026-09-09-chords-jank.md) |
+| 2026-09-09 | Пианино: детектор, метроном, hold, 1 окт | [2026-09-09-piano-practice.md](./2026-09-09-piano-practice.md) |
+| 2026-09-09 | Пианино: вкладка «Ноты», не тюнер | [2026-09-09-piano-tab.md](./2026-09-09-piano-tab.md) |
+| 2026-09-09 | Метроном без наслоения + клавиатура Piano | [2026-09-09-metro-piano-keys.md](./2026-09-09-metro-piano-keys.md) |
+| 2026-09-09 | Studio/тюнер: expo-audio эталон + компактный метроном | [2026-09-09-studio-tuner-audio-fix.md](./2026-09-09-studio-tuner-audio-fix.md) |
+| 2026-09-09 | Expo SDK 57: Go + сборщики, expo-audio/video | [2026-09-09-expo-sdk-57.md](./2026-09-09-expo-sdk-57.md) |
+| 2026-09-09 | Tuner: звук струн + метроном (практика/студия) | [2026-09-09-tuner-notes-metronome.md](./2026-09-09-tuner-notes-metronome.md) |
 | 2026-08-26 | Chords: кнопки базы и зависание всего | [2026-08-26-chords-library-freeze-buttons.md](./2026-08-26-chords-library-freeze-buttons.md) |
 | 2026-08-26 | Chords: склейка аккордов с текстом, перенос строк без чипов | [2026-08-26-chords-lyric-merge-wrap.md](./2026-08-26-chords-lyric-merge-wrap.md) |
 | 2026-08-23 | Chords: H/Hm7/5- чипы, канон исполнителей | [2026-08-23-chords-h-parse-artists.md](./2026-08-23-chords-h-parse-artists.md) |

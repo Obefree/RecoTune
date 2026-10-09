@@ -36,6 +36,8 @@ export function buildChordFetchProxyUrl(host: string): string {
 /** Vercel serverless path (optional deploy — not the default path). */
 export const CHORD_FETCH_API_PATH = '/api/fetch-chords';
 export const CHORD_SEARCH_API_PATH = '/api/search-chords';
+/** Phone APK fallback when Metro/env URL is absent. */
+export const DEFAULT_CHORD_FETCH_URL = 'https://recotune-chords.vercel.app/api/fetch-chords';
 
 /** POST endpoint for live AmDm/UG catalog search (paired with /fetch). */
 export function buildChordSearchProxyUrl(proxyFetchUrl: string): string {
@@ -144,8 +146,28 @@ export function getEffectiveChordFetchUrl(
   return auto.url;
 }
 
+function resolveBundledChordFetchUrl(): ResolvedChordFetchUrl {
+  const extra = Constants.expoConfig?.extra as
+    | { chordFetchApiUrl?: string; chordFetchUrl?: string }
+    | undefined;
+  const fromExtra = (extra?.chordFetchApiUrl || extra?.chordFetchUrl || '').trim();
+  if (fromExtra) {
+    return {
+      url: normalizeChordFetchUrl(fromExtra),
+      source: 'app_extra',
+      sourceLabel: 'сборка APK (EXPO_PUBLIC_CHORD_FETCH_URL)',
+    };
+  }
+
+  return {
+    url: DEFAULT_CHORD_FETCH_URL,
+    source: 'app_extra',
+    sourceLabel: 'Vercel recotune-chords',
+  };
+}
+
 /**
- * Auto-fill / «Подставить авто» — env and Metro only (no bundled Vercel URL).
+ * Auto-fill / «Подставить авто» — env → Metro :8787 → APK extra / Vercel.
  */
 export function resolveChordFetchUrlForAutoFill(): string {
   return resolveChordFetchUrlForAutoFillDetailed().url;
@@ -170,7 +192,7 @@ export function resolveChordFetchUrlForAutoFillDetailed(): ResolvedChordFetchUrl
     };
   }
 
-  return { url: '', source: 'none', sourceLabel: 'не найден' };
+  return resolveBundledChordFetchUrl();
 }
 
 export function resolveChordFetchUrl(): string {
@@ -178,22 +200,7 @@ export function resolveChordFetchUrl(): string {
 }
 
 export function resolveChordFetchUrlDetailed(): ResolvedChordFetchUrl {
-  const auto = resolveChordFetchUrlForAutoFillDetailed();
-  if (auto.url) return auto;
-
-  const extra = Constants.expoConfig?.extra as
-    | { chordFetchApiUrl?: string; chordFetchUrl?: string }
-    | undefined;
-  const fromExtra = (extra?.chordFetchApiUrl || extra?.chordFetchUrl || '').trim();
-  if (fromExtra) {
-    return {
-      url: normalizeChordFetchUrl(fromExtra),
-      source: 'app_extra',
-      sourceLabel: 'сборка APK (EXPO_PUBLIC_CHORD_FETCH_URL)',
-    };
-  }
-
-  return { url: '', source: 'none', sourceLabel: 'не задан' };
+  return resolveChordFetchUrlForAutoFillDetailed();
 }
 
 export function readExpoDebuggerHost(): string | null {
@@ -246,9 +253,9 @@ export function readExpoDebuggerHost(): string | null {
 export function chordFetchSetupHint(): string {
   return (
     'Табы подгружаются автоматически при выборе песни.\n' +
-    'AmDm / UG / GitHub — прокси: RecoTune.bat на ПК (окно можно свернуть, ПК не выключать) или HTTPS URL удалённого сервера в ⚙.\n' +
-    'APK ≠ Expo Go: вставьте URL вручную (http://IP-ПК:8787/fetch или https://…/api/fetch-chords).\n' +
-    'Без прокси — pesni.ru с телефона.'
+    'AmDm / UG / GitHub — LAN: RecoTune.bat на ПК (`:8787`) или HTTPS recotune-chords в сборке.\n' +
+    'В APK URL уже зашит; свой прокси можно указать в ⚙.\n' +
+    'Без сети — только офлайн-табы в базе.'
   );
 }
 

@@ -1,6 +1,7 @@
 import { listSongs } from './songLibrary';
 import type { SongEntry } from '../data/songDatabase';
 import { contentQualityScore } from '../utils/songContent';
+import { compareCatalogLabel } from '../utils/artistName';
 import {
   extractChordSequence,
   looksLikeChordQuery,
@@ -28,7 +29,7 @@ export async function searchSongsSmart(
     const all = await listSongs();
     return all
       .map(s => ({ ...s, score: contentQualityScore(s), matchKind: 'none' as MatchKind }))
-      .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+      .sort((a, b) => b.score - a.score || compareCatalogLabel(a.title, b.title));
   }
 
   const qForms = searchQueryForms(q);

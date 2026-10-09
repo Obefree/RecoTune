@@ -43,6 +43,7 @@ const RU_TO_EN = 'йцукенгшщзхъфывапролджэячсмитьб
 /** Extra AmDm search phrases when the band has a common alias on tab sites. */
 const ARTIST_SEARCH_ALIASES = {
   кино: ['цой', 'виктор цой', 'viktor tsoi'],
+  aha: ['a-ha'],
 };
 
 function slugify(s) {

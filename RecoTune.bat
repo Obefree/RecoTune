@@ -12,9 +12,9 @@ if errorlevel 1 (
 echo.
 echo  === RecoTune Metro (live JS over LAN) ===
 echo.
-echo  Expo Go SDK 54: should start (expo-av + expo-font ~14.0.12).
-echo  Expo Go SDK 55+: in-app screen explains dev build (no blue crash).
-echo  Full audio / lock-screen controls: dev build (build-apk.bat -^> app-debug.apk).
+echo  Expo Go SDK 57: scan QR (project matches the latest Go).
+echo  Older Expo Go will not load this project — update Go from the store.
+echo  Full lock-screen / background mic: dev APK (build-apk.bat).
 echo.
 echo  Working dir: %CD%
 echo  Git:

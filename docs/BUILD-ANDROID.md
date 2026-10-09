@@ -27,9 +27,9 @@ npm run build:android:release
 ### What the script does
 
 1. `npm install`
-2. `npx expo prebuild --platform android` if `android\gradlew.bat` is missing
-3. Stops Gradle, deletes `android\app\build` (avoids Windows `mergeReleaseResources` / `AccessDenied` on stale intermediates)
-4. `gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a`
+2. `npx expo prebuild --platform android --clean` if native tree is missing or not stamped for SDK 57
+3. Stops Gradle, deletes `android\app\build`, `android\build`, and `node_modules\*\android\build` for `react-native-music-control` / `react-native-worklets` (Windows `mergeReleaseJniLibFolders` / `AccessDenied`)
+4. `gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a` — `NODE_ENV=production` **только здесь**, не на `npm install`
 
 ### Manual steps (same result)
 
@@ -65,7 +65,8 @@ Release Gradle flags (minify, shrink, ProGuard keeps) are set via `expo-build-pr
 | Symptom | Fix |
 |--------|-----|
 | `android\gradlew.bat` missing | Run `npx expo prebuild --platform android` |
-| `mergeReleaseResources` / `AccessDenied` / cannot delete `app\build` | Close Android Studio, stop emulators, run `gradlew --stop`, delete `android\app\build`, retry `build-apk-release.bat` |
+| `patch-package is not recognized` на `npm install` | `NODE_ENV=production` до install пропускает devDeps. Скрипт ставит `development` на install и `production` только на Gradle. Повтори `build-apk-release.bat` |
+| `mergeReleaseResources` / `mergeReleaseJniLibFolders` / `Unable to delete directory` under `node_modules\...\android\build` | Close Android Studio, `gradlew --stop`, delete the locked `android\build` (script now clears music-control + worklets). Retry `build-apk-release.bat` |
 | `JAVA_HOME` invalid | Install Android Studio; script searches `%ProgramFiles%\Android\Android Studio*\jbr` |
 | CMake path length warning | Prefer shorter clone path (e.g. `C:\dev\RecoTune`) or `subst R: C:\Users\...\RecoTune` |
 | `ContextCompat.RECEIVER_NOT_EXPORTED` / `compileReleaseJavaWithJavac` in `react-native-music-control` | Patch `patches/react-native-music-control+1.4.1.patch`: `registerReceiver` with `Context.RECEIVER_NOT_EXPORTED` on API 33+ (do not use `ContextCompat.RECEIVER_NOT_EXPORTED` with the module's old `androidx.core:1.0.2`). Re-run `npm install`. |

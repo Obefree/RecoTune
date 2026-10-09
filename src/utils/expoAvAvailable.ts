@@ -2,10 +2,12 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 
 let cached: boolean | null = null;
 
-/** True when native ExponentAV exists (dev/standalone APK, Expo Go SDK 54). */
+/** True when native ExpoAudio exists (Expo Go SDK 57, dev/standalone APK). */
 export function isExpoAvNativeAvailable(): boolean {
   if (cached === null) {
-    cached = requireOptionalNativeModule('ExponentAV') != null;
+    cached =
+      requireOptionalNativeModule('ExpoAudio') != null
+      || requireOptionalNativeModule('ExponentAV') != null;
   }
   return cached;
 }

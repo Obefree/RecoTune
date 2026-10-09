@@ -53,7 +53,7 @@ export function micMonitorRouteHint(snapListen: string | undefined, routing: Stu
     return 'Выход: верхний динамик (трубка). BT/AUX — переключи выход в настройках Studio/Recorder.';
   }
   if (routing.mode === 'manual' && routing.output === 'speaker') {
-    return 'Выход: нижний динамик телефона (expo-av). BT — подключи до старта и выбери «Система».';
+    return 'Выход: нижний динамик телефона. BT — подключи до старта и выбери «Система».';
   }
   return `${base}. RecoTune не выбирает колонку по имени — маршрут задаёт телефон.`;
 }
@@ -73,10 +73,10 @@ export function micMonitorLimitationsText(): string {
       : `Ожидаемая задержка: ~${MIC_MONITOR_LATENCY_WIRED_MS}–200 мс; Bluetooth зависит от гарнитуры.`;
 
   const expoGo =
-    'Expo Go SDK 55+ без expo-av: вкладка Media недоступна — нужен dev build (npx expo run:android).';
+    'Если вкладка Media недоступна — обновите Expo Go до SDK 57 или соберите APK (npx expo run:android).';
 
   const micSrc =
-    'Микрофон — захват WebView (обычно встроенный телефона). BT-мик через setPreferredDevice — только в Studio/Recorder при записи expo-av, не в режиме монитора.';
+    'Микрофон — захват WebView (обычно встроенный телефона). BT-мик через setInput — только в Studio/Recorder при записи, не в режиме монитора.';
 
   const echo =
     'Петля колонка→mic→колонка рвётся сдвигом частоты (антивой) и AEC; в паузах гейт глушит выход.';

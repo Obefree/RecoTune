@@ -8,7 +8,7 @@ const TEXT = '#e0e0e0';
 const MUTED = '#8888a0';
 const ACCENT = '#00e676';
 
-/** Honest blocker when Expo Go lacks ExponentAV (SDK 55+). Not a fake tab. */
+/** Honest blocker when the client lacks ExpoAudio (wrong Expo Go SDK). */
 export default function ExpoAvRequiredScreen() {
   const insets = useSafeAreaInsets();
   const sdk = Constants.expoConfig?.sdkVersion ?? 'unknown';
@@ -20,25 +20,23 @@ export default function ExpoAvRequiredScreen() {
     >
       <Text style={styles.title}>RecoTune</Text>
       <Text style={styles.lead}>
-        В этом Expo Go нет нативного модуля аудио{' '}
-        <Text style={styles.mono}>ExponentAV</Text> (expo-av). Приложение не может
+        В этом клиенте нет нативного модуля аудио{' '}
+        <Text style={styles.mono}>ExpoAudio</Text>. Приложение не может
         запустить Tuner/Studio/Media — это не баг батника и не сеть.
       </Text>
       <Text style={styles.body}>
-        Проект: SDK {sdk}. В Expo Go SDK 54 expo-av ещё есть; в SDK 55+ его убрали —
-        нужна dev-сборка или миграция на expo-audio (отдельная задача).
+        Проект: SDK {sdk}. RecoTune собран под Expo SDK 57 (expo-audio / expo-video).
+        Обновите Expo Go из магазина до SDK 57 или соберите APK.
       </Text>
       <View style={styles.steps}>
-        <Text style={styles.stepTitle}>Как работать с live JS (рекомендуется)</Text>
-        <Text style={styles.step}>1. Один раз: build-apk.bat → app-debug.apk</Text>
-        <Text style={styles.step}>2. Установить APK на телефон</Text>
-        <Text style={styles.step}>3. Запустить RecoTune.bat (Metro на порту 8081)</Text>
-        <Text style={styles.step}>4. Открыть RecoTune на телефоне (та же Wi‑Fi)</Text>
+        <Text style={styles.stepTitle}>Как работать с live JS</Text>
+        <Text style={styles.step}>1. Expo Go SDK 57: RecoTune.bat → QR</Text>
+        <Text style={styles.step}>2. Или один раз: build-apk.bat → app-debug.apk</Text>
+        <Text style={styles.step}>3. Metro: RecoTune.bat (порт 8081), та же Wi‑Fi</Text>
       </View>
       {Platform.OS === 'android' ? (
         <Text style={styles.hint}>
-          Если Expo Go на SDK 54 — обновите зависимости (npm install) и перезапустите Metro
-          без --offline; expo-font уже закреплён на ~14.0.12.
+          Старый Expo Go (SDK 54/55/56) этот проект не откроет — только 57.
         </Text>
       ) : null}
     </ScrollView>

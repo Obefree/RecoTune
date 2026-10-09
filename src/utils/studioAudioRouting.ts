@@ -1,4 +1,5 @@
-import { Audio } from 'expo-av';
+import { Audio } from './audio';
+import { setMappedAudioModeAsync } from './playbackAudioMode';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { buildRecordingOptions, DEFAULT_QUALITY } from './qualitySettings';
@@ -165,8 +166,9 @@ export async function probeRecordingInputs(): Promise<AudioRouteSnapshot> {
   };
   if (Platform.OS === 'web') return empty;
 
-  const rec = new Audio.Recording();
+  let rec: Audio.Recording | null = null;
   try {
+    rec = new Audio.Recording();
     await rec.prepareToRecordAsync(buildRecordingOptions(DEFAULT_QUALITY));
     const rawInputs = await rec.getAvailableInputs();
     let current: RecordingInputInfo | null = null;
@@ -175,7 +177,9 @@ export async function probeRecordingInputs(): Promise<AudioRouteSnapshot> {
     } catch {
       current = null;
     }
-    const inputs = rawInputs.map(mapInput);
+    const inputs = (Array.isArray(rawInputs) ? rawInputs : [])
+      .filter((i): i is { name: string; type: string; uid: string } => !!i && typeof i.uid === 'string')
+      .map(mapInput);
     const hasBluetooth = inputs.some(i => i.kind === 'bluetooth');
     const hasWired = inputs.some(i => i.kind === 'wired' || i.kind === 'usb');
 
@@ -195,7 +199,7 @@ export async function probeRecordingInputs(): Promise<AudioRouteSnapshot> {
     return empty;
   } finally {
     try {
-      await rec.stopAndUnloadAsync();
+      await rec?.stopAndUnloadAsync();
     } catch {}
   }
 }
@@ -243,24 +247,56 @@ export async function applyStudioAudioMode(
   // Single studio playback session setter. staysActiveInBackground keeps Play all / solo
   // alive when the screen is backgrounded; playThroughEarpieceAndroid honours the manual
   // "Трубка" route (was previously reset to false by a separate playback-mode setter).
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: true,
-    playThroughEarpieceAndroid,
-    shouldDuckAndroid: false,
-    interruptionModeAndroid: 1,
-    interruptionModeIOS: 1,
-  });
+  try {
+    await setMappedAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+      playThroughEarpieceAndroid,
+      interruptionMode: 'doNotMix',
+    });
+  } catch {}
+}
+
+export function routingUsesBluetoothMic(
+  routing: StudioAudioRouting,
+  snap: AudioRouteSnapshot | null,
+): boolean {
+  if (routing.mode !== 'manual' || !routing.inputUid) return false;
+  const inp = snap?.inputs.find(i => i.uid === routing.inputUid);
+  if (inp) return inp.kind === 'bluetooth';
+  return routing.output === 'bluetooth';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForRecordingInput(
+  rec: Audio.Recording,
+  uid: string,
+  kind: RecordingInputInfo['kind'],
+): Promise<boolean> {
+  const budget = kind === 'bluetooth' ? 1500 : 400;
+  const t0 = Date.now();
+  while (Date.now() - t0 < budget) {
+    try {
+      const cur = await rec.getCurrentInput();
+      if (cur?.uid === uid) return true;
+    } catch {}
+    await sleep(80);
+  }
+  return false;
 }
 
 export type RecordingInputResult = 'default' | 'applied' | 'missing' | 'rejected';
 
 /**
- * Apply the chosen mic to a prepared recording. On Android 9+ expo-av maps this to
+ * Apply the chosen mic to a prepared recording. On Android 9+ expo-audio maps this to
  * AudioRecord.setPreferredDevice (and startBluetoothSco for BT), so it genuinely works —
  * we return a status instead of swallowing errors so the UI can be honest when the OS
  * ignores the request (older Android, device vanished).
+ * Bluetooth SCO is async: start() before the headset is up writes an empty file.
  */
 export async function applyRecordingInput(
   rec: Audio.Recording,
@@ -272,6 +308,10 @@ export async function applyRecordingInput(
     const found = inputs.find(i => i.uid === routing.inputUid);
     if (!found) return 'missing';
     await rec.setInput(found.uid);
+    const kind = classifyInput(found.type, found.name);
+    if (kind === 'bluetooth') await sleep(700);
+    const ready = await waitForRecordingInput(rec, found.uid, kind);
+    if (!ready && kind === 'bluetooth') return 'rejected';
     return 'applied';
   } catch {
     return 'rejected';

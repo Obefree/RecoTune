@@ -30,7 +30,13 @@ const ru = {
   sungNotesLabel: 'СПЕТО',
   sungNotesHint: 'напевайте — ноты появятся здесь',
   sungNotesClear: 'Очистить ленту нот',
+  pianoTimbrePiano: 'Пианино',
+  pianoTimbreSine: 'Синус',
+  pianoOct1: '1 окт',
+  pianoOct2: '2 окт',
+  pianoTarget: 'Цель',
   tabMelody: 'Мелодия',
+  tabKeys: 'Ноты',
   tabMedia: 'Медиа',
   mediaRecord: 'ЗАПИСЬ',
   mediaPlay: 'ПЛЕЕР',
@@ -82,6 +88,9 @@ const ru = {
   melodyPlaySungTiming: 'ваш темп',
   melodyQuantizeRhythm: 'Квантовать ритм',
   melodyRawPreviewLabel: 'КАК СПЕЛИ',
+  metronomeLabel: 'МЕТРОНОМ',
+  playStringNote: 'Сыграть струну',
+  studioMetronomeHint: 'Клик идёт в наушники/динамик, не в файл дорожки. С колонки микрофон может слышать.',
 } as const;
 
 const en: Record<keyof typeof ru, string> = {
@@ -114,7 +123,13 @@ const en: Record<keyof typeof ru, string> = {
   sungNotesLabel: 'SUNG',
   sungNotesHint: 'hum or sing — notes appear here',
   sungNotesClear: 'Clear sung notes',
+  pianoTimbrePiano: 'Piano',
+  pianoTimbreSine: 'Sine',
+  pianoOct1: '1 oct',
+  pianoOct2: '2 oct',
+  pianoTarget: 'Target',
   tabMelody: 'Melody',
+  tabKeys: 'Keys',
   tabMedia: 'Media',
   mediaRecord: 'RECORD',
   mediaPlay: 'PLAYER',
@@ -166,6 +181,9 @@ const en: Record<keyof typeof ru, string> = {
   melodyPlaySungTiming: 'your timing',
   melodyQuantizeRhythm: 'Quantize rhythm',
   melodyRawPreviewLabel: 'AS SUNG',
+  metronomeLabel: 'METRONOME',
+  playStringNote: 'Play string',
+  studioMetronomeHint: 'Click goes to headphones/speaker, not into the track file. A speaker may bleed into the mic.',
 };
 
 export const STRINGS = { ru, en } as const;

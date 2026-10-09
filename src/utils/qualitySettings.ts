@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { Audio } from 'expo-av';
+import { AudioQuality, IOSOutputFormat, type RecordingOptions, type RecordingSource } from 'expo-audio';
 
 export interface RecQuality {
   sampleRate: 22050 | 44100 | 48000;
@@ -36,34 +36,42 @@ export async function saveQualitySettings(q: RecQuality): Promise<void> {
   await FileSystem.writeAsStringAsync(QUALITY_FILE, JSON.stringify(q));
 }
 
-/** Build expo-av recording options from a quality preset */
-export function buildRecordingOptions(q: RecQuality): Audio.RecordingOptions {
+/** Build expo-audio recording options from a quality preset */
+export function buildRecordingOptions(
+  q: RecQuality,
+  opts?: { audioSource?: RecordingSource },
+): RecordingOptions {
   const iosQ = q.bitRate >= 256000
-    ? Audio.IOSAudioQuality.MAX
+    ? AudioQuality.MAX
     : q.bitRate >= 128000
-    ? Audio.IOSAudioQuality.HIGH
-    : Audio.IOSAudioQuality.MEDIUM;
+    ? AudioQuality.HIGH
+    : AudioQuality.MEDIUM;
 
   return {
+    extension: '.m4a',
+    sampleRate: q.sampleRate,
+    numberOfChannels: q.channels,
+    bitRate: q.bitRate,
+    directory: 'document',
     android: {
       extension: '.m4a',
-      outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-      audioEncoder: Audio.AndroidAudioEncoder.AAC,
+      outputFormat: 'mpeg4',
+      audioEncoder: 'aac',
       sampleRate: q.sampleRate,
-      numberOfChannels: q.channels,
-      bitRate: q.bitRate,
+      ...(opts?.audioSource ? { audioSource: opts.audioSource } : {}),
     },
     ios: {
       extension: '.m4a',
-      outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+      outputFormat: IOSOutputFormat.MPEG4AAC,
       audioQuality: iosQ,
       sampleRate: q.sampleRate,
-      numberOfChannels: q.channels,
-      bitRate: q.bitRate,
       linearPCMBitDepth: 16,
       linearPCMIsBigEndian: false,
       linearPCMIsFloat: false,
     },
-    web: {},
+    web: {
+      mimeType: 'audio/mp4',
+      bitsPerSecond: q.bitRate,
+    },
   };
 }

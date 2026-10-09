@@ -23,6 +23,9 @@ export interface MelodyPlayerMessage {
 export interface MelodyPlayerHandle {
   playMelody(payload: MelodyPlaybackPayload, instrument: MelodyInstrument): void;
   stopMelody(): void;
+  playTone(frequencyHz: number, durationMs?: number): void;
+  startClick(bpm: number): void;
+  stopClick(): void;
   renderMelodyWav(payload: MelodyPlaybackPayload): Promise<{ b64: string; durationMs: number }>;
 }
 
@@ -190,10 +193,105 @@ const HTML = `<!DOCTYPE html>
   }
 
   window.unlockWebAudio = function() {
+    if (clickCtx && clickCtx.state !== 'closed') return resumeCtx(clickCtx);
     if (ctx) return resumeCtx(ctx);
     var tmp = new (window.AudioContext || window.webkitAudioContext)();
     return resumeCtx(tmp).then(function() {
       try { tmp.close(); } catch (e) {}
+    });
+  };
+
+  var clickCtx = null;
+  var clickTimer = null;
+  var clickNextTime = 0;
+  var clickBeat = 0;
+  var clickInterval = 0.75;
+  var clickRunning = false;
+  var toneNodes = [];
+
+  function ensureClickCtx() {
+    if (clickCtx && clickCtx.state !== 'closed') return resumeCtx(clickCtx);
+    clickCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return resumeCtx(clickCtx);
+  }
+
+  function stopToneNodes() {
+    for (var ti = 0; ti < toneNodes.length; ti++) {
+      try { toneNodes[ti].stop && toneNodes[ti].stop(0); toneNodes[ti].disconnect && toneNodes[ti].disconnect(); } catch (e) {}
+    }
+    toneNodes = [];
+  }
+
+  window.stopTone = function() { stopToneNodes(); };
+
+  window.playTone = function(freq, durMs) {
+    stopToneNodes();
+    freq = Number(freq);
+    durMs = durMs || 900;
+    if (!(freq > 20 && freq < 4000)) return;
+    ensureClickCtx().then(function() {
+      if (!clickCtx) return;
+      var start = clickCtx.currentTime + 0.02;
+      var durSec = Math.min(3, Math.max(0.12, durMs / 1000));
+      var osc = clickCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      var g = clickCtx.createGain();
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.22, start + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.12, start + 0.08);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + durSec);
+      osc.connect(g);
+      g.connect(clickCtx.destination);
+      osc.start(start);
+      osc.stop(start + durSec + 0.05);
+      toneNodes.push(osc, g);
+    });
+  };
+
+  function scheduleClickAt(t, accent) {
+    if (!clickCtx) return;
+    var osc = clickCtx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = accent ? 1320 : 880;
+    var g = clickCtx.createGain();
+    var peak = accent ? 0.22 : 0.12;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+    osc.connect(g);
+    g.connect(clickCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.05);
+  }
+
+  function pumpClicks() {
+    if (!clickRunning || !clickCtx) return;
+    var now = clickCtx.currentTime;
+    var horizon = now + 0.25;
+    while (clickNextTime < horizon) {
+      scheduleClickAt(clickNextTime, clickBeat === 0);
+      clickNextTime += clickInterval;
+      clickBeat = (clickBeat + 1) % 4;
+    }
+    clickTimer = setTimeout(pumpClicks, 80);
+  }
+
+  window.stopClick = function() {
+    clickRunning = false;
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+  };
+
+  window.startClick = function(bpm) {
+    window.stopClick();
+    bpm = Math.max(30, Math.min(240, Number(bpm) || 80));
+    clickInterval = 60 / bpm;
+    clickBeat = 0;
+    clickRunning = true;
+    ensureClickCtx().then(function() {
+      if (!clickRunning || !clickCtx) return;
+      clickNextTime = clickCtx.currentTime + 0.05;
+      pumpClicks();
     });
   };
 
@@ -357,6 +455,31 @@ const MelodyPlayerEngine = forwardRef<MelodyPlayerHandle, Props>(({ onMessage },
     webRef.current?.injectJavaScript('window.stopMelody && window.stopMelody(); true;');
   }, []);
 
+  const runUnlocked = useCallback((js: string) => {
+    webRef.current?.injectJavaScript(
+      `(function(){
+        var run=function(){ ${js} };
+        if(window.unlockWebAudio){
+          Promise.resolve(window.unlockWebAudio()).then(run).catch(run);
+        }else run();
+      })();true;`,
+    );
+  }, []);
+
+  const playTone = useCallback((frequencyHz: number, durationMs = 900) => {
+    const freq = JSON.stringify(frequencyHz);
+    const dur = JSON.stringify(durationMs);
+    runUnlocked(`window.playTone&&window.playTone(${freq},${dur});`);
+  }, [runUnlocked]);
+
+  const startClick = useCallback((bpm: number) => {
+    runUnlocked(`window.startClick&&window.startClick(${JSON.stringify(bpm)});`);
+  }, [runUnlocked]);
+
+  const stopClick = useCallback(() => {
+    webRef.current?.injectJavaScript('window.stopClick&&window.stopClick(); true;');
+  }, []);
+
   const playMelody = useCallback((payload: MelodyPlaybackPayload, instrument: MelodyInstrument) => {
     const json = JSON.stringify(payload);
     const inst = instrument === 'sine' ? 'sine' : 'piano';
@@ -407,8 +530,8 @@ const MelodyPlayerEngine = forwardRef<MelodyPlayerHandle, Props>(({ onMessage },
 
   useImperativeHandle(
     ref,
-    () => ({ playMelody, stopMelody, renderMelodyWav }),
-    [playMelody, stopMelody, renderMelodyWav],
+    () => ({ playMelody, stopMelody, playTone, startClick, stopClick, renderMelodyWav }),
+    [playMelody, stopMelody, playTone, startClick, stopClick, renderMelodyWav],
   );
 
   const handleMessage = (e: WebViewMessageEvent) => {

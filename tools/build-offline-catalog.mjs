@@ -1,5 +1,6 @@
 /**
- * Rebuild the phone catalog from pesni + overlay archives.
+ * Rebuild the phone catalog from pesni + overlay + local parses.
+ * Legacy 536 stays opt-in import only — those rows are simplified/fake ChordPro.
  *
  * Runtime must NOT require the monolith JSON (that freezes the Chords tab).
  * This writes:
@@ -19,6 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const PESNI_PATH = join(ROOT, 'assets/archive/pesni-chordpro.json');
 const OVERLAY_PATH = join(ROOT, 'assets/archive/proxy-parsed-chords.json');
+const LOCAL_PATH = join(ROOT, 'tools/chord-fetch/data/parsed-chords.local.json');
 const OUT_DIR = join(ROOT, 'assets/catalog');
 const LYRICS_DIR = join(OUT_DIR, 'lyrics');
 const INDEX_PATH = join(OUT_DIR, 'index.json');
@@ -32,7 +34,35 @@ function canonicalizeArtist(raw) {
   name = name.replace(/\s*[(\[]\s*(?:feat\.?|ft\.?|featuring)\b[^)\]]*[)\]]\s*$/i, '').trim();
   name = name.replace(/\s*\([^)]{1,50}\)\s*$/g, '').trim();
   name = name.replace(/\s*\[[^\]]{1,50}\]\s*$/g, '').trim();
-  return name || 'Неизвестный';
+  return name || 'Unknown';
+}
+
+function artistGroupKey(name) {
+  let k = name
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-z0-9а-я]+/g, '');
+  if (k.startsWith('the') && k.length > 6) k = k.slice(3);
+  return k || name.toLowerCase();
+}
+
+function preferArtistLabel(candidate, current) {
+  const score = s => (/[-'’&./]/.test(s) ? 2 : 0) + Math.min(s.length, 40) / 40;
+  return score(candidate) > score(current);
+}
+
+function compareCatalogLabel(a, b) {
+  const rank = s => {
+    const c = (s.trim().codePointAt(0) ?? 0);
+    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) return 0;
+    if (c >= 0x0400 && c <= 0x04FF) return 2;
+    return 1;
+  };
+  const d = rank(a) - rank(b);
+  if (d !== 0) return d;
+  return a.localeCompare(b, 'en', { sensitivity: 'base' });
 }
 
 function normalizeKey(artist, title) {
@@ -90,8 +120,12 @@ function readJson(path) {
 
 const pesni = readJson(PESNI_PATH);
 const overlay = readJson(OVERLAY_PATH);
+const local = readJson(LOCAL_PATH);
 const pesniSongs = Array.isArray(pesni?.songs) ? pesni.songs : [];
-const overlaySongs = Array.isArray(overlay?.songs) ? overlay.songs : [];
+const overlaySongs = [
+  ...(Array.isArray(overlay?.songs) ? overlay.songs : []),
+  ...(Array.isArray(local?.songs) ? local.songs : []),
+];
 
 const seen = new Set();
 const kept = [];
@@ -158,11 +192,19 @@ for (const raw of overlaySongs) {
   });
 }
 
-kept.sort((a, b) => {
-  const artistCmp = a.artist.localeCompare(b.artist, 'ru');
-  if (artistCmp !== 0) return artistCmp;
-  return a.title.localeCompare(b.title, 'ru');
-});
+const groupName = new Map();
+for (const song of kept) {
+  const key = artistGroupKey(song.artist);
+  const prev = groupName.get(key);
+  if (!prev || preferArtistLabel(song.artist, prev)) groupName.set(key, song.artist);
+}
+for (const song of kept) {
+  const key = artistGroupKey(song.artist);
+  const name = groupName.get(key);
+  if (name) song.artist = name;
+}
+
+kept.sort((a, b) => compareCatalogLabel(a.artist, b.artist) || compareCatalogLabel(a.title, b.title));
 
 const shards = new Map();
 const indexSongs = kept.map(song => {
@@ -186,13 +228,14 @@ const indexSongs = kept.map(song => {
 const artistMap = new Map();
 for (const song of indexSongs) {
   const name = song.artist.trim() || 'Unknown';
-  const key = name.toLowerCase();
+  const key = artistGroupKey(name);
   const prev = artistMap.get(key) ?? { name, count: 0, tabCount: 0 };
+  if (preferArtistLabel(name, prev.name)) prev.name = name;
   prev.count += 1;
   if (song.hasTab) prev.tabCount += 1;
   artistMap.set(key, prev);
 }
-const artists = [...artistMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+const artists = [...artistMap.values()].sort((a, b) => compareCatalogLabel(a.name, b.name));
 
 if (existsSync(LYRICS_DIR)) rmSync(LYRICS_DIR, { recursive: true, force: true });
 mkdirSync(LYRICS_DIR, { recursive: true });

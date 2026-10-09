@@ -31,6 +31,19 @@ function combinedArtistTitle(artist, title) {
   return normalizeSearchText(`${artist} ${title}`);
 }
 
+function tabSourceRank(id, source) {
+  if (source === 'user' || String(id).startsWith('custom_')) return 40;
+  if (String(id).startsWith('parsed_')) return 30;
+  if (String(id).startsWith('pesni_ru_')) return 20;
+  return 10;
+}
+
+function keepBetterSong(existing, incoming) {
+  return tabSourceRank(incoming.id, incoming.source) > tabSourceRank(existing.id, existing.source)
+    ? incoming
+    : existing;
+}
+
 // Mirror of dedupeSongRows in src/db/songLibrary.ts
 function dedupeSongRows(rows) {
   const byKey = new Map();
@@ -43,9 +56,7 @@ function dedupeSongRows(rows) {
       order.push(key);
       continue;
     }
-    if (existing.id.startsWith('pesni_ru_') && !row.id.startsWith('pesni_ru_')) {
-      byKey.set(key, row);
-    }
+    byKey.set(key, keepBetterSong(existing, row));
   }
   return order.map(key => byKey.get(key));
 }
@@ -59,8 +70,17 @@ function dedupeSongRows(rows) {
   ];
   const out = dedupeSongRows(rows);
   assert.equal(out.length, 2, 'exact artist+title dup collapses to one row');
-  assert.equal(out[0].id, 's002', 'curated non-pesni row wins over pesni_ru duplicate');
+  assert.equal(out[0].id, 'pesni_ru_blowin-in-the-wind', 'verified pesni wins over seed');
   assert.equal(out[1].id, 'pesni_ru_180-santimetrov', 'unique song untouched');
+}
+{
+  const rows = [
+    { id: '80s02', title: 'Take On Me', artist: 'A-ha' },
+    { id: 'pesni_ru_take-on-me', title: 'Take On Me', artist: 'A-ha' },
+  ];
+  const out = dedupeSongRows(rows);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'pesni_ru_take-on-me', 'legacy 536 loses to pesni');
 }
 {
   // Different titles must never merge, even if they share an artist.

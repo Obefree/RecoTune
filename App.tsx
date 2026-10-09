@@ -8,7 +8,7 @@ import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { TabBarVisibilityProvider, useTabBarVisibility } from './src/context/TabBarVisibility';
-import { LocaleProvider } from './src/context/LocaleContext';
+import { LocaleProvider, useLocale } from './src/context/LocaleContext';
 import SnippetAnalyzerEngine from './src/components/SnippetAnalyzerEngine';
 import ExpoAvRequiredScreen from './src/screens/ExpoAvRequiredScreen';
 import { initMediaRemoteControls } from './src/utils/mediaRemoteControls';
@@ -16,13 +16,28 @@ import { initSongLibrary } from './src/services/initSongLibrary';
 import { ensureAutoChordProxySettings } from './src/providers/autoChordProxy';
 import { isExpoAvNativeAvailable } from './src/utils/expoAvAvailable';
 
-/** Lazy tabs — expo-av throws at import when ExponentAV is missing (Expo Go SDK 55+). */
+/** Lazy tabs — native audio is gated in App() before these modules load. */
 const TunerScreen = React.lazy(() => import('./src/screens/TunerScreen'));
+const PianoScreen = React.lazy(() => import('./src/screens/PianoScreen'));
 const StudioScreen = React.lazy(() => import('./src/screens/StudioScreen'));
 const ChordsScreen = React.lazy(() => import('./src/screens/ChordsScreen'));
 const MelodyScreen = React.lazy(() => import('./src/screens/MelodyScreen'));
 const MediaScreen = React.lazy(() => import('./src/screens/MediaScreen'));
 const AILabScreen = React.lazy(() => import('./src/screens/AILabScreen'));
+
+function PianoTabIcon({ color, size }: { color: string; size: number }) {
+  const w = size + 2;
+  const h = Math.max(14, size - 6);
+  return (
+    <View style={{ width: w, height: h, flexDirection: 'row', backgroundColor: color, borderRadius: 2, overflow: 'visible' }}>
+      {[0, 1, 2].map(i => (
+        <View key={i} style={{ flex: 1, borderRightWidth: i < 2 ? 1 : 0, borderRightColor: '#0a0a0f88' }} />
+      ))}
+      <View style={{ position: 'absolute', left: w * 0.2, top: 0, width: w * 0.18, height: h * 0.58, backgroundColor: '#0a0a0f', borderBottomLeftRadius: 1, borderBottomRightRadius: 1 }} />
+      <View style={{ position: 'absolute', left: w * 0.54, top: 0, width: w * 0.18, height: h * 0.58, backgroundColor: '#0a0a0f', borderBottomLeftRadius: 1, borderBottomRightRadius: 1 }} />
+    </View>
+  );
+}
 
 const Tab = createBottomTabNavigator();
 
@@ -36,6 +51,7 @@ const INACTIVE = '#3a3a4a';
 function AppInner() {
   const insets = useSafeAreaInsets();
   const { tabBarHidden } = useTabBarVisibility();
+  const { t } = useLocale();
 
   React.useEffect(() => {
     initMediaRemoteControls();
@@ -100,13 +116,29 @@ function AppInner() {
             },
             tabBarInactiveTintColor: INACTIVE,
             tabBarLabelStyle: {
-              fontSize: 11,
+              fontSize: 10,
               fontWeight: '600',
-              letterSpacing: 1,
+              letterSpacing: 0.4,
               textTransform: 'uppercase',
             },
             tabBarIcon: ({ focused, color, size }) => {
               type IoniconName = keyof typeof Ionicons.glyphMap;
+              const activeColor = route.name === 'Melody' ? '#7c4dff'
+                : route.name === 'Media'   ? '#40c4ff'
+                : route.name === 'Chords'  ? '#ff9800'
+                : route.name === 'Keys'    ? '#e8e6df'
+                : route.name === 'AILab'   ? '#00bcd4' : ACTIVE;
+              if (route.name === 'Keys') {
+                return (
+                  <View style={{
+                    width: 36, height: 26, alignItems: 'center', justifyContent: 'center',
+                    borderRadius: 10,
+                    backgroundColor: focused ? `${activeColor}22` : 'transparent',
+                  }}>
+                    <PianoTabIcon color={color} size={size - 2} />
+                  </View>
+                );
+              }
               const icons: Record<string, [IoniconName, IoniconName]> = {
                 Tuner:    ['musical-notes', 'musical-notes-outline'],
                 Studio:   ['layers', 'layers-outline'],
@@ -117,10 +149,6 @@ function AppInner() {
               };
               const [on, off] = icons[route.name] ?? ['ellipse', 'ellipse-outline'];
               const iconName = focused ? on : off;
-              const activeColor = route.name === 'Melody' ? '#7c4dff'
-                : route.name === 'Media'   ? '#40c4ff'
-                : route.name === 'Chords'  ? '#ff9800'
-                : route.name === 'AILab'   ? '#00bcd4' : ACTIVE;
               return (
                 <View style={{
                   width: 36, height: 26, alignItems: 'center', justifyContent: 'center',
@@ -135,12 +163,14 @@ function AppInner() {
               if (route.name === 'Melody') return '#7c4dff';
               if (route.name === 'Media')  return '#40c4ff';
               if (route.name === 'Chords') return '#ff9800';
+              if (route.name === 'Keys')   return '#e8e6df';
               if (route.name === 'AILab')  return '#00bcd4';
               return ACTIVE;
             })(),
           })}
         >
           <Tab.Screen name="Tuner"    component={TunerScreen} />
+          <Tab.Screen name="Keys"     component={PianoScreen} options={{ title: t('tabKeys') }} />
           <Tab.Screen name="Studio"   component={StudioScreen} />
           <Tab.Screen name="Chords"   component={ChordsScreen} />
           <Tab.Screen name="Melody"   component={MelodyScreen} options={{ title: 'Melody' }} />

@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import type { AppLocale } from './strings';
 
-export const LOCALE_FILE = (FileSystem.documentDirectory ?? '') + 'app_locale.json';
+export const LOCALE_FILE = (FileSystem.documentDirectory ?? '') + 'app_locale_v2.json';
 
 export const DEFAULT_LOCALE: AppLocale = 'en';
 

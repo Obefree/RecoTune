@@ -1,3 +1,4 @@
+import { compareCatalogLabel } from './artistName';
 import { normalizeSearchText, searchQueryVariants, tokenizeQuery } from './searchNormalize';
 
 export type MatchKind = 'exact' | 'prefix' | 'contains' | 'fuzzy' | 'none';
@@ -121,5 +122,5 @@ export function compareSearchHits(
   const kd = kindRank[b.kind] - kindRank[a.kind];
   if (kd !== 0) return kd;
   if (b.score !== a.score) return b.score - a.score;
-  return a.title.localeCompare(b.title);
+  return compareCatalogLabel(a.title, b.title);
 }

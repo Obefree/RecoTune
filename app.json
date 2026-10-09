@@ -58,13 +58,23 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "chordFetchApiUrl": ""
+      "chordFetchApiUrl": "https://recotune-chords.vercel.app/api/fetch-chords"
     },
     "plugins": [
+      "expo-asset",
       [
-        "expo-av",
+        "expo-audio",
         {
-          "microphonePermission": "RecoTune needs microphone access for the tuner and recorder."
+          "microphonePermission": "RecoTune needs microphone access for the tuner and recorder.",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": true
+        }
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": false
         }
       ],
       [

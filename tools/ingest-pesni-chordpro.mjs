@@ -53,6 +53,7 @@ function parseArgs(argv) {
     perArtist: 8,
     resume: false,
     fromStart: false,
+    startArtist: 0,
     dryRun: false,
     searchLimit: 25,
   };
@@ -62,6 +63,7 @@ function parseArgs(argv) {
     else if (a === '--from-start') o.fromStart = true;
     else if (a === '--dry-run') o.dryRun = true;
     else if ((m = a.match(/^--target=(\d+)$/))) o.target = Number(m[1]);
+    else if ((m = a.match(/^--start-artist=(\d+)$/))) o.startArtist = Number(m[1]);
     else if ((m = a.match(/^--limit-artists=(\d+)$/))) o.limitArtists = Number(m[1]);
     else if ((m = a.match(/^--per-artist=(\d+)$/))) o.perArtist = Number(m[1]);
     else if ((m = a.match(/^--search-limit=(\d+)$/))) o.searchLimit = Number(m[1]);
@@ -215,6 +217,7 @@ async function main() {
     cp = { artistIndex: 0, songs: [], seenSlugs: [], seenKeys: [], doneArtists: [] };
   }
   if (opts.fromStart) cp.artistIndex = 0;
+  if (opts.startArtist > 0) cp.artistIndex = Math.max(cp.artistIndex, opts.startArtist);
   const seenSlugs = new Set(cp.seenSlugs);
   const seenKeys = new Set(cp.seenKeys);
   const doneArtists = new Set(cp.doneArtists ?? []);

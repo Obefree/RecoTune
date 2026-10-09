@@ -41,7 +41,9 @@ export async function ensureAutoChordProxySettings(): Promise<AutoChordProxyResu
     }
 
     if (shouldUpgrade || !settings.chordFetchProxyUrl.trim()) {
-      const url = normalizeChordFetchUrl(shouldUpgrade ? auto.url : resolveChordFetchUrlForAutoFill());
+      const url = normalizeChordFetchUrl(
+        shouldUpgrade ? auto.url : (resolveChordFetchUrlForAutoFill() || effective),
+      );
       if (!url) {
         return { configured: false, autoFilled: false };
       }
